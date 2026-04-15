@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Lead",
+  "type": "object",
+  "required": [
+    "lead_id",
+    "fingerprint",
+    "source",
+    "application_url",
+    "company",
+    "title",
+    "location",
+    "raw_description",
+    "normalized_requirements",
+    "status"
+  ],
+  "properties": {
+    "lead_id": { "type": "string" },
+    "fingerprint": { "type": "string" },
+    "source": { "type": "string" },
+    "application_url": { "type": "string" },
+    "company": { "type": "string" },
+    "title": { "type": "string" },
+    "location": { "type": "string" },
+    "compensation": { "type": "string" },
+    "employment_type": { "type": "string" },
+    "raw_description": { "type": "string" },
+    "normalized_requirements": {
+      "type": "object",
+      "required": ["required", "preferred", "keywords"],
+      "properties": {
+        "required": { "type": "array", "items": { "type": "string" } },
+        "preferred": { "type": "array", "items": { "type": "string" } },
+        "keywords": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "fit_assessment": { "type": "object" },
+    "status": { "type": "string" }
+  }
+}
+

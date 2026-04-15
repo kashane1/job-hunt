@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApplicationDraft",
+  "type": "object",
+  "required": [
+    "draft_id",
+    "lead_id",
+    "created_at",
+    "approval",
+    "selected_assets",
+    "prepared_answers",
+    "missing_facts",
+    "runtime_policy_snapshot"
+  ],
+  "properties": {
+    "draft_id": { "type": "string" },
+    "lead_id": { "type": "string" },
+    "created_at": { "type": "string" },
+    "approval": {
+      "type": "object",
+      "required": ["required", "approved"],
+      "properties": {
+        "required": { "type": "boolean" },
+        "approved": { "type": "boolean" },
+        "reviewer": { "type": "string" }
+      }
+    },
+    "selected_assets": {
+      "type": "object",
+      "required": ["resume_document_id", "cover_letter_document_id"],
+      "properties": {
+        "resume_document_id": { "type": "string" },
+        "cover_letter_document_id": { "type": "string" }
+      }
+    },
+    "prepared_answers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["question", "answer", "provenance", "confidence", "source_document_ids"],
+        "properties": {
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "provenance": {
+            "type": "string",
+            "enum": ["grounded", "synthesized", "weak_inference", "speculative"]
+          },
+          "confidence": { "type": "number" },
+          "needs_review": { "type": "boolean" },
+          "source_document_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "missing_facts": { "type": "array", "items": { "type": "string" } },
+    "runtime_policy_snapshot": { "type": "object" }
+  }
+}
+

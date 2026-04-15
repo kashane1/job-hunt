@@ -1,0 +1,38 @@
+title_match_weight: 20
+skills_match_weight: 35
+seniority_match_weight: 10
+location_match_weight: 10
+domain_match_weight: 10
+compensation_match_weight: 5
+negative_keyword_penalty_weight: 10
+strong_yes_threshold: 75
+maybe_threshold: 55
+skill_keywords:
+  - python
+  - ruby
+  - rails
+  - django
+  - flask
+  - fastapi
+  - postgres
+  - sql
+  - aws
+  - gcp
+  - kubernetes
+  - docker
+  - api
+  - backend
+  - platform
+  - infrastructure
+  - data
+  - ai
+  - ml
+  - automation
+  - browser
+negative_keywords:
+  - clearance
+  - polygraph
+  - relocation required
+  - onsite-only
+  - sponsorship unavailable
+

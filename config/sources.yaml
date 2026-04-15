@@ -1,0 +1,17 @@
+supported_sources:
+  - linkedin
+  - indeed
+  - greenhouse
+  - lever
+  - workday
+  - ashby
+company_site_ats_keywords:
+  - greenhouse
+  - lever
+  - workday
+  - ashby
+discovery_notes:
+  - prefer sources where the operator is already signed in
+  - capture one normalized lead format regardless of origin
+  - reuse tabs when possible during discovery
+

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CandidateProfile",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "generated_at",
+    "documents",
+    "contact",
+    "skills",
+    "experience_highlights",
+    "question_bank",
+    "preferences"
+  ],
+  "properties": {
+    "schema_version": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["document_id", "path", "document_type", "title", "source_excerpt"],
+        "properties": {
+          "document_id": { "type": "string" },
+          "path": { "type": "string" },
+          "document_type": { "type": "string" },
+          "title": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "source_excerpt": { "type": "string" }
+        }
+      }
+    },
+    "contact": {
+      "type": "object",
+      "required": ["emails", "phones", "links"],
+      "properties": {
+        "emails": { "type": "array", "items": { "type": "string" } },
+        "phones": { "type": "array", "items": { "type": "string" } },
+        "links": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "source_document_ids"],
+        "properties": {
+          "name": { "type": "string" },
+          "source_document_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "experience_highlights": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["summary", "source_document_ids"],
+        "properties": {
+          "summary": { "type": "string" },
+          "source_document_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "question_bank": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["question", "answer", "provenance", "source_document_ids"],
+        "properties": {
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "provenance": { "type": "string" },
+          "source_document_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "preferences": {
+      "type": "object",
+      "required": ["target_titles", "preferred_locations", "excluded_keywords"],
+      "properties": {
+        "target_titles": { "type": "array", "items": { "type": "string" } },
+        "preferred_locations": { "type": "array", "items": { "type": "string" } },
+        "remote_preference": { "type": "string" },
+        "excluded_keywords": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,10 @@
+[project]
+name = "job-hunt"
+version = "0.1.0"
+description = "Agent-first, file-backed job hunt operating repo"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.unittest]
+start-directory = "tests"
+
