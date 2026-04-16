@@ -1053,7 +1053,11 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
     location = str(metadata.get("location") or "Unknown")
     application_url = str(metadata.get("application_url") or metadata.get("url") or "")
     source = str(metadata.get("source") or "unknown")
-    fingerprint = short_hash("|".join([company, title, location, application_url]))
+    # Prefer canonical_url (stripped of tracking params) in the fingerprint so that
+    # the same posting fetched via different URL variants produces the same lead_id.
+    # Falls back to application_url for leads created without canonicalization.
+    fingerprint_url = str(metadata.get("canonical_url") or application_url)
+    fingerprint = short_hash("|".join([company, title, location, fingerprint_url]))
     lead_id = f"{slugify(company)}-{slugify(title)}-{fingerprint}"
 
     required = extract_requirement_lines(
@@ -1082,6 +1086,11 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
         "fit_assessment": {},
         "status": "discovered",
     }
+    # Preserve batch 2 ingestion provenance fields if present in frontmatter
+    for optional_field in ("ingestion_method", "ingested_at", "canonical_url", "ingestion_notes"):
+        value = metadata.get(optional_field)
+        if value:
+            lead[optional_field] = str(value)
     write_json(output_dir / f"{lead_id}.json", lead)
     return lead
 
@@ -1800,6 +1809,17 @@ def build_parser() -> argparse.ArgumentParser:
     export_pdf_group.add_argument("--content-id", help="Content ID to resolve under data/generated/")
     export_pdf_parser.add_argument("--data-root", default="data")
 
+    # Batch 2 Phase 2: URL-based lead ingestion
+    ingest_parser = subparsers.add_parser(
+        "ingest-url", help="Fetch a job posting from a URL and create a lead"
+    )
+    ingest_group = ingest_parser.add_mutually_exclusive_group(required=True)
+    ingest_group.add_argument("--url", help="Job posting URL (Greenhouse/Lever/generic HTML)")
+    ingest_group.add_argument("--urls-file", help="File with one URL per line (batch mode)")
+    ingest_parser.add_argument("--html-file", help="Pre-downloaded HTML (bypasses network fetch)")
+    ingest_parser.add_argument("--output-dir", default="data/leads")
+    ingest_parser.add_argument("--max-workers", type=int, default=5, help="Batch mode worker cap")
+
     return parser
 
 
@@ -2024,6 +2044,36 @@ def main(argv: list[str] | None = None) -> int:
             "content_id": record.get("content_id"),
             "pdf_path": record.get("pdf_path"),
             "pdf_generated_at": record.get("pdf_generated_at"),
+        }, indent=2))
+        return 0
+
+    if args.command == "ingest-url":
+        from .ingestion import IngestionError, ingest_url, ingest_urls_file
+
+        output_dir = Path(args.output_dir)
+        if args.urls_file:
+            # Batch mode — never raises; always prints {successes, failures}
+            result = ingest_urls_file(Path(args.urls_file), output_dir, max_workers=args.max_workers)
+            print(json.dumps({
+                "status": "ok",
+                "successes": [{"lead_id": l["lead_id"], "company": l.get("company"), "title": l.get("title")} for l in result["successes"]],
+                "failures": result["failures"],
+            }, indent=2))
+            return 0 if not result["failures"] else 2
+        try:
+            html_override = None
+            if args.html_file:
+                html_override = Path(args.html_file).read_text(encoding="utf-8")
+            lead = ingest_url(args.url, output_dir, html_override=html_override)
+        except IngestionError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({
+            "status": "ok",
+            "lead_id": lead["lead_id"],
+            "company": lead.get("company", ""),
+            "title": lead.get("title", ""),
+            "ingestion_method": lead.get("ingestion_method", ""),
         }, indent=2))
         return 0
 
