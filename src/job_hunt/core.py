@@ -1844,6 +1844,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip automatic ATS compatibility check after generation (default: run)",
     )
 
+    # Batch 2 Phase 4: pipeline analytics dashboard
+    dash_parser = subparsers.add_parser(
+        "apps-dashboard",
+        help="Report applications-per-week, callback rate, variant win rates, stage conversions",
+    )
+    dash_parser.add_argument("--data-root", default="data")
+    dash_parser.add_argument("--since", default="", help="ISO date cutoff (e.g. 2026-04-01)")
+    dash_parser.add_argument("--weeks", type=int, default=None, help="Shorthand for since = now - N weeks")
+
+    # Batch 2 Phase 5a: skills gap analyzer
+    gap_parser = subparsers.add_parser(
+        "analyze-skills-gap",
+        help="Identify required skills missing from the candidate profile across scored leads",
+    )
+    gap_parser.add_argument("--data-root", default="data")
+    gap_parser.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    gap_parser.add_argument("--taxonomy", default="config/skills-taxonomy.yaml")
+    gap_parser.add_argument("--excluded", default="profile/skills-excluded.yaml")
+
+    # Batch 2 Phase 5b: rejection pattern analyzer
+    rej_parser = subparsers.add_parser(
+        "analyze-rejections",
+        help="Find patterns in terminal applications (rejected, ghosted, withdrawn)",
+    )
+    rej_parser.add_argument("--data-root", default="data")
+
     return parser
 
 
@@ -2141,6 +2167,38 @@ def main(argv: list[str] | None = None) -> int:
             }, indent=2))
             return 2
         print(json.dumps(report, indent=2))
+        return 0
+
+    if args.command == "apps-dashboard":
+        from .analytics import report_dashboard
+
+        result = report_dashboard(
+            Path(args.data_root),
+            since=args.since,
+            weeks=args.weeks,
+        )
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "analyze-skills-gap":
+        from .analytics import report_skills_gap
+
+        profile_path = Path(args.profile)
+        profile = read_json(profile_path) if profile_path.exists() else {}
+        result = report_skills_gap(
+            Path(args.data_root),
+            profile,
+            taxonomy_path=Path(args.taxonomy),
+            excluded_path=Path(args.excluded),
+        )
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "analyze-rejections":
+        from .analytics import report_rejection_patterns
+
+        result = report_rejection_patterns(Path(args.data_root))
+        print(json.dumps(result, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")

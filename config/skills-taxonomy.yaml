@@ -1,0 +1,23 @@
+# Skills taxonomy — alias → canonical mapping for analyze-skills-gap.
+# Seeded from SKILL_ALIASES in src/job_hunt/core.py; when missing, the
+# analyzer falls back to that dict directly so they stay in sync by default.
+#
+# To extend: add entries under `aliases:` with canonical name as the key and a
+# list of alias strings as the value. Canonical names should match what's in
+# the candidate's profile skills list.
+aliases:
+  postgres: [postgres, postgresql, psql]
+  mysql: [mysql, mariadb]
+  javascript: [javascript, js, es6, es2015]
+  typescript: [typescript, ts]
+  "node.js": [nodejs, "node js", node]
+  react: [react, reactjs, "react.js"]
+  aws: [aws, "amazon web services"]
+  gcp: [gcp, "google cloud", "google cloud platform"]
+  kubernetes: [kubernetes, k8s]
+  docker: [docker, containers]
+  kafka: [kafka, "apache kafka"]
+  redis: [redis]
+  python: [python, py]
+  ruby: [ruby]
+  rails: [rails, "ruby on rails", ror]
