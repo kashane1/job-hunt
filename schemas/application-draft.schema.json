@@ -18,11 +18,26 @@
     "created_at": { "type": "string" },
     "approval": {
       "type": "object",
-      "required": ["required", "approved"],
+      "required": ["final_submit", "account_creation"],
       "properties": {
-        "required": { "type": "boolean" },
-        "approved": { "type": "boolean" },
-        "reviewer": { "type": "string" }
+        "final_submit": {
+          "type": "object",
+          "required": ["required", "approved", "reviewer"],
+          "properties": {
+            "required": { "type": "boolean" },
+            "approved": { "type": "boolean" },
+            "reviewer": { "type": "string" }
+          }
+        },
+        "account_creation": {
+          "type": "object",
+          "required": ["required", "approved", "reviewer"],
+          "properties": {
+            "required": { "type": "boolean" },
+            "approved": { "type": "boolean" },
+            "reviewer": { "type": "string" }
+          }
+        }
       }
     },
     "selected_assets": {
@@ -30,7 +45,11 @@
       "required": ["resume_document_id", "cover_letter_document_id"],
       "properties": {
         "resume_document_id": { "type": "string" },
-        "cover_letter_document_id": { "type": "string" }
+        "cover_letter_document_id": { "type": "string" },
+        "resume_content_ids": { "type": "array", "items": { "type": "string" } },
+        "selected_resume_content_id": { "type": "string" },
+        "cover_letter_content_id": { "type": "string" },
+        "answer_set_content_id": { "type": "string" }
       }
     },
     "prepared_answers": {
@@ -55,4 +74,3 @@
     "runtime_policy_snapshot": { "type": "object" }
   }
 }
-

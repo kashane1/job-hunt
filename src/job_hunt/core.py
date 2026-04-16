@@ -1711,6 +1711,7 @@ def build_parser() -> argparse.ArgumentParser:
     draft.add_argument("--profile", default="profile/normalized/candidate-profile.json")
     draft.add_argument("--runtime-config", default="config/runtime.yaml")
     draft.add_argument("--output-dir", default="data/applications")
+    draft.add_argument("--resume-variant", default="", help="Content ID of the resume variant to use")
 
     report = subparsers.add_parser("write-report")
     report.add_argument("--draft", required=True)
@@ -1747,6 +1748,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     integrity = subparsers.add_parser("check-integrity", help="Detect orphaned content and dangling references")
     integrity.add_argument("--data-root", default="data", help="Root data directory")
+
+    # --- Generation commands ---
+    gen_resume = subparsers.add_parser("generate-resume", help="Generate tailored resume variants for a lead")
+    gen_resume.add_argument("--lead", required=True, help="Path to lead JSON file")
+    gen_resume.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    gen_resume.add_argument("--variants", default="technical_depth,impact_focused,breadth",
+                            help="Comma-separated variant styles")
+    gen_resume.add_argument("--output-dir", default="data/generated/resumes")
+
+    gen_answers = subparsers.add_parser("generate-answers", help="Generate answers for application questions")
+    gen_answers.add_argument("--lead", required=True, help="Path to lead JSON file")
+    gen_answers.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    gen_answers.add_argument("--questions", default="", help="Comma-separated questions")
+    gen_answers.add_argument("--questions-file", default="", help="Path to JSON array of questions")
+    gen_answers.add_argument("--runtime-config", default="config/runtime.yaml")
+    gen_answers.add_argument("--output-dir", default="data/generated/answers")
+
+    gen_cl = subparsers.add_parser("generate-cover-letter", help="Generate a tailored cover letter")
+    gen_cl.add_argument("--lead", required=True, help="Path to lead JSON file")
+    gen_cl.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    gen_cl.add_argument("--company", default="", help="Path to company research JSON")
+    gen_cl.add_argument("--output-dir", default="data/generated/cover-letters")
 
     return parser
 
@@ -1793,6 +1816,10 @@ def main(argv: list[str] | None = None) -> int:
             {**DEFAULT_RUNTIME_POLICY, **load_yaml_file(Path(args.runtime_config), {})},
             Path(args.output_dir),
         )
+        # Attach resume variant selection if provided.
+        if args.resume_variant:
+            draft["selected_assets"]["selected_resume_content_id"] = args.resume_variant
+            write_json(Path(args.output_dir) / f"{draft['draft_id']}.json", draft)
         print(draft["draft_id"])
         return 0
 
@@ -1855,6 +1882,43 @@ def main(argv: list[str] | None = None) -> int:
 
         result = check_integrity(Path(args.data_root))
         print(json.dumps(result, indent=2))
+        return 0
+
+    # --- Generation commands ---
+    if args.command == "generate-resume":
+        from .generation import generate_resume_variants
+
+        lead = read_json(Path(args.lead))
+        profile = read_json(Path(args.profile))
+        styles = [s.strip() for s in args.variants.split(",") if s.strip()]
+        results = generate_resume_variants(lead, profile, styles, Path(args.output_dir))
+        print(json.dumps([r["content_id"] for r in results], indent=2))
+        return 0
+
+    if args.command == "generate-answers":
+        from .generation import generate_answer_set
+
+        lead = read_json(Path(args.lead))
+        profile = read_json(Path(args.profile))
+        if args.questions_file:
+            questions = json.loads(Path(args.questions_file).read_text(encoding="utf-8"))
+        elif args.questions:
+            questions = [q.strip() for q in args.questions.split(",") if q.strip()]
+        else:
+            questions = []
+        policy = {**DEFAULT_RUNTIME_POLICY, **load_yaml_file(Path(args.runtime_config), {})}
+        result = generate_answer_set(lead, profile, questions, policy, Path(args.output_dir))
+        print(json.dumps({"content_id": result["content_id"], "blocked": result.get("blocked", False)}, indent=2))
+        return 0
+
+    if args.command == "generate-cover-letter":
+        from .generation import generate_cover_letter
+
+        lead = read_json(Path(args.lead))
+        profile = read_json(Path(args.profile))
+        company = read_json(Path(args.company)) if args.company else None
+        result = generate_cover_letter(lead, profile, company, Path(args.output_dir))
+        print(result["content_id"])
         return 0
 
     parser.error(f"Unknown command: {args.command}")

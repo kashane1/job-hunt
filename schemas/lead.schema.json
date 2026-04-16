@@ -35,7 +35,9 @@
       }
     },
     "fit_assessment": { "type": "object" },
-    "status": { "type": "string" }
+    "status": { "type": "string" },
+    "company_research_id": { "type": "string" },
+    "application_status_path": { "type": "string" }
   }
 }
 
