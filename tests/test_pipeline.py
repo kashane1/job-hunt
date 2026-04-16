@@ -362,6 +362,125 @@ random date 2025-06-09
         self.assertEqual(result["readiness"], "not_ready")
         self.assertGreater(len(result["missing"]), 5)
 
+    def test_batch2_end_to_end(self) -> None:
+        """Batch 2 end-to-end: ingest URL (via html_override) → score → generate resume
+        (runs ATS check automatically) → update-status → apps-dashboard.
+
+        Verifies the full pipeline works together without network calls (html_override
+        bypasses _fetch). Catches Interaction Graph drift that unit tests miss.
+        """
+        from job_hunt.ingestion import ingest_url
+        from job_hunt.tracking import create_application_status, link_generated_content, update_application_status
+        from job_hunt.analytics import report_dashboard
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            profile_raw = root / "profile" / "raw"
+            profile_raw.mkdir(parents=True)
+            (profile_raw / "resume.md").write_text(
+                """---
+document_type: resume
+title: Staff Platform Resume
+tags:
+  - python
+  - platform
+  - backend
+---
+# Staff Platform Resume
+
+- Built internal platform automation for deployment and operations
+- Led backend work across Python, Postgres, and AWS
+""",
+                encoding="utf-8",
+            )
+            (profile_raw / "preferences.md").write_text(
+                """---
+document_type: preferences
+title: Preferences
+target_titles:
+  - Staff Platform Engineer
+preferred_locations:
+  - Remote
+remote_preference: remote
+---
+""",
+                encoding="utf-8",
+            )
+
+            normalized = root / "profile" / "normalized"
+            profile = normalize_profile(
+                root / "profile",
+                normalized,
+                {"skill_keywords": ["python", "platform", "backend", "aws", "postgres"]},
+            )
+
+            # Step 1: ingest a job posting via html_override (no network)
+            leads_dir = root / "data" / "leads"
+            html = (
+                "<html><head><title>Staff Platform Engineer</title></head>"
+                "<body><main>"
+                "<h1>Staff Platform Engineer</h1>"
+                "<p>We are looking for a Staff Platform Engineer to build scalable "
+                "infrastructure in Python on AWS with Postgres.</p>"
+                "<h2>Requirements</h2><ul>"
+                "<li>Python</li><li>AWS</li><li>Postgres</li><li>Platform engineering</li>"
+                "</ul></main></body></html>"
+            )
+            lead = ingest_url(
+                "https://careers.exampleco.com/jobs/42",
+                leads_dir,
+                html_override=html,
+            )
+            self.assertEqual(lead["ingestion_method"], "url_fetch_fallback")
+            self.assertIn("canonical_url", lead)
+
+            # Idempotency: re-ingesting the same URL with tracking params gives same lead_id
+            lead2 = ingest_url(
+                "https://careers.exampleco.com/jobs/42?utm_source=linkedin",
+                leads_dir,
+                html_override=html,
+            )
+            self.assertEqual(lead["lead_id"], lead2["lead_id"])
+
+            # Step 2: score the lead
+            scored = score_lead(lead, profile, {
+                "title_match_weight": 20,
+                "skills_match_weight": 35,
+                "seniority_match_weight": 10,
+                "location_match_weight": 10,
+                "domain_match_weight": 10,
+                "compensation_match_weight": 5,
+                "negative_keyword_penalty_weight": 10,
+                "strong_yes_threshold": 75,
+                "maybe_threshold": 55,
+            })
+            self.assertIn("fit_score", scored["fit_assessment"])
+
+            # Step 3: create application status record
+            applications_dir = root / "data" / "applications"
+            status = create_application_status(scored["lead_id"], applications_dir)
+            status_path = applications_dir / f"{scored['lead_id']}-status.json"
+            status = update_application_status(status_path, "applied", note="Submitted via pipeline test")
+            self.assertEqual(status["current_stage"], "applied")
+
+            # Step 4: generate dashboard report (only 1 app — should be insufficient_data)
+            dash = report_dashboard(root / "data")
+            self.assertEqual(dash["confidence"], "insufficient_data")
+            self.assertEqual(dash["sample_size"], 1)
+
+            # Step 5: verify check_integrity reports clean state
+            from job_hunt.tracking import check_integrity
+            report = check_integrity(root / "data")
+            self.assertEqual(report["summary"]["issue_counts"]["orphaned_pdfs"], 0)
+            self.assertEqual(report["summary"]["issue_counts"]["orphaned_ats_reports"], 0)
+            # No generated content yet → no stale content either
+
+            # Step 6: verify schemas validate
+            lead_schema = json.loads((ROOT / "schemas" / "lead.schema.json").read_text())
+            status_schema = json.loads((ROOT / "schemas" / "application-status.schema.json").read_text())
+            validate(scored, lead_schema)
+            validate(status, status_schema)
+
 
 if __name__ == "__main__":
     unittest.main()

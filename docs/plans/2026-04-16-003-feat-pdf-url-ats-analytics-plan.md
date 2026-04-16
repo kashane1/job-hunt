@@ -1,11 +1,22 @@
 ---
 title: "feat: PDF export, URL ingestion, ATS compatibility checks, and pipeline analytics"
 type: feat
-status: active
+status: completed
 date: 2026-04-16
 deepened: 2026-04-16
+implemented: 2026-04-16
 origin: docs/plans/2026-04-15-002-feat-content-generation-and-tracking-plan.md
 ---
+
+> **Implementation status (2026-04-16):** All 5 phases shipped on branch `feat/batch-2-pdf-url-ats-analytics`.
+> - Phase 1: schemas + `pdf_export.py` + extended `check_integrity` + weasyprint optional extra
+> - Phase 2: `ingestion.py` with SSRF guards, URL canonicalization, Greenhouse/Lever JSON APIs, generic HTML fallback
+> - Phase 3: `ats_check.py` with two-phase crash-safe integration at CLI layer
+> - Phase 4: `analytics.py` aggregator + `apps-dashboard` command
+> - Phase 5: `analyze-skills-gap` and `analyze-rejections` reports
+> - Phase 6: end-to-end `test_batch2_end_to_end` + README + AGENTS.md updates
+>
+> 156 tests pass (up from 50 in batch 1). 12 P1+P2 pre-implementation review findings resolved in plan. P3 items (026 end-to-end test done; 025, 027 deferred) remain for follow-up.
 
 # feat: PDF export, URL ingestion, ATS compatibility checks, and pipeline analytics
 
