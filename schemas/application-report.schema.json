@@ -10,7 +10,11 @@
     "submission",
     "quality",
     "provenance_breakdown",
-    "browser_metrics"
+    "browser_metrics",
+    "answers_used",
+    "checkpoints",
+    "blockers",
+    "redaction"
   ],
   "properties": {
     "report_id": { "type": "string" },
@@ -19,12 +23,25 @@
     "generated_at": { "type": "string" },
     "submission": {
       "type": "object",
-      "required": ["attempted", "confirmed_submitted", "approval_obtained"],
+      "required": [
+        "attempted",
+        "submit_attempted",
+        "confirmed_submitted",
+        "final_submit_approval_required",
+        "final_submit_approval_obtained",
+        "account_creation_approval_required",
+        "account_creation_approval_obtained",
+        "status"
+      ],
       "properties": {
         "attempted": { "type": "boolean" },
+        "submit_attempted": { "type": "boolean" },
         "confirmed_submitted": { "type": "boolean" },
-        "approval_obtained": { "type": "boolean" },
-        "status": { "type": "string" }
+        "final_submit_approval_required": { "type": "boolean" },
+        "final_submit_approval_obtained": { "type": "boolean" },
+        "account_creation_approval_required": { "type": "boolean" },
+        "account_creation_approval_obtained": { "type": "boolean" },
+        "status": { "type": "string", "enum": ["submitted", "blocked", "attempted", "ambiguous", "not_started"] }
       }
     },
     "quality": {
@@ -39,13 +56,58 @@
     "provenance_breakdown": { "type": "object" },
     "browser_metrics": {
       "type": "object",
-      "required": ["max_open_tabs", "soft_limit", "hard_limit"],
+      "required": [
+        "opened",
+        "peak_open_tabs",
+        "closed_for_budget",
+        "hard_limit_hit",
+        "soft_limit",
+        "hard_limit"
+      ],
       "properties": {
-        "max_open_tabs": { "type": "integer" },
+        "opened": { "type": "integer" },
+        "peak_open_tabs": { "type": "integer" },
+        "closed_for_budget": { "type": "integer" },
+        "hard_limit_hit": { "type": "boolean" },
         "soft_limit": { "type": "integer" },
         "hard_limit": { "type": "integer" }
+      }
+    },
+    "answers_used": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["question", "answer", "provenance", "confidence", "source_document_ids"],
+        "properties": {
+          "question": { "type": "string" },
+          "answer": { "type": "string" },
+          "provenance": { "type": "string" },
+          "confidence": { "type": "number" },
+          "needs_review": { "type": "boolean" },
+          "source_document_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "checkpoints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "status", "recorded_at"],
+        "properties": {
+          "name": { "type": "string" },
+          "status": { "type": "string" },
+          "recorded_at": { "type": "string" }
+        }
+      }
+    },
+    "blockers": { "type": "array", "items": { "type": "string" } },
+    "redaction": {
+      "type": "object",
+      "required": ["applied", "fields_redacted"],
+      "properties": {
+        "applied": { "type": "boolean" },
+        "fields_redacted": { "type": "array", "items": { "type": "string" } }
       }
     }
   }
 }
-

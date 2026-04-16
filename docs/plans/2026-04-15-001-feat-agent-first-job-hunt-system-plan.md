@@ -100,6 +100,7 @@ Recommended v1 runtime policies:
 ```yaml
 # config/runtime.yaml
 approval_required_before_submit: true
+approval_required_before_account_creation: true
 allow_auto_submit: false
 answer_policy: strict
 allow_inferred_answers: true
@@ -109,6 +110,8 @@ browser_tabs_hard_limit: 15
 close_background_tabs_aggressively: true
 stop_if_confidence_below: 0.75
 stop_if_required_fact_missing: true
+secret_source: env_or_local_untracked_file
+redact_secrets_in_artifacts: true
 ```
 
 This keeps your newest constraints explicit and easily toggleable.
@@ -163,14 +166,19 @@ Create a draft before any submit attempt:
 #### Application Report
 
 After each attempt, create:
+- whether approval was required
+- whether approval was obtained
 - submission status
+- whether submit was attempted
+- whether submission was confirmed
 - final answers sent
 - question-by-question provenance
 - confidence and truthfulness summary
 - blocker/failure log
 - browser notes and screenshots metadata
+- browser tab metrics: opened, peak_open_tabs, closed_for_budget, hard_limit_hit
 - application quality score
-- whether human approval was obtained
+- secrets-redaction status
 
 ### User Flow Overview
 
@@ -268,16 +276,35 @@ Deliverables:
 - implement draft generation from lead + profile
 - create answer provenance model and confidence thresholds
 - add markdown review summaries for human approval
+- define approval records for both account creation and final submit decisions
 
 Success criteria:
 - every submission candidate is reviewable before browser execution
 - draft artifacts expose missing facts, weak inferences, and asset selection
 - approval can be recorded explicitly before final submit
+- account-creation approval requirements are explicit before browser execution starts
 
 Estimated effort:
 - 2 to 4 working sessions
 
-#### Phase 5: Browser Execution With Guardrails
+#### Phase 5: Reporting, Audit Trail, And Execution Preconditions
+
+Deliverables:
+- define application report schema and run summary schema
+- generate per-application markdown reports and JSON records
+- generate per-run summaries
+- define checkpoint write rules before browser execution, before submit attempt, and after terminal outcomes
+- validate that required audit fields are present for every attempt
+
+Success criteria:
+- every application attempt has a durable machine-readable and human-readable audit trail before browser automation is enabled
+- partial failures preserve enough context to explain what happened
+- report artifacts satisfy the `AGENTS.md` reporting requirements
+
+Estimated effort:
+- 2 to 4 working sessions
+
+#### Phase 6: Browser Execution With Guardrails
 
 Deliverables:
 - write browser playbooks for job boards and company sites
@@ -293,11 +320,9 @@ Success criteria:
 Estimated effort:
 - 3 to 6 working sessions
 
-#### Phase 6: Reports, Metrics, And Learning Loop
+#### Phase 7: Metrics, Outcomes, And Learning Loop
 
 Deliverables:
-- generate per-application markdown reports and JSON records
-- generate per-run summaries
 - track outcomes like interview, rejection, ghosted, withdrawn
 - identify profile gaps and scoring calibration needs
 
@@ -327,7 +352,7 @@ Rejected as a direct foundation. ECC is better used as a pattern library for pro
 
 ### Interaction Graph
 
-1. `profile/raw/*.md|pdf|docx` changes trigger profile normalization, which writes `profile/normalized/*.json`.
+1. `profile/raw/*.md|pdf` changes trigger profile normalization, which writes `profile/normalized/*.json`.
 2. normalized profile feeds lead scoring and application draft generation.
 3. lead discovery writes `data/leads/*.json`, which influences shortlist state and application drafting.
 4. application drafting writes `data/applications/*.json` plus review markdown in `docs/reports/`.
@@ -385,6 +410,18 @@ Equivalent interfaces that must share the same policy rules:
 
 If approval or answer-policy rules change, all of these surfaces must stay aligned. The approval gate cannot exist only in a prompt while the reporting layer assumes different behavior.
 
+### Secret Handling Boundary
+
+Credential use must be designed as a first-class runtime boundary rather than left implicit.
+
+V1 decision:
+- store secrets only in environment variables or local untracked files such as `.env.local`
+- do not persist secrets, session tokens, or one-time codes into git-tracked artifacts
+- reports may record that authentication was required, attempted, reused, or blocked, but must redact secret values
+- browser playbooks should read credentials through a narrow runtime interface so logging and screenshots can be filtered consistently
+
+This keeps authentication support compatible with the repo's trust goal without normalizing secret leakage into reports or config.
+
 ### Integration Test Scenarios
 
 1. profile normalization creates a candidate profile that can answer a common application question without rereading raw files
@@ -423,6 +460,7 @@ If approval or answer-policy rules change, all of these surfaces must stay align
 - [x] Schemas exist for all primary artifacts and examples validate against them.
 - [x] Config files document defaults for approval, answer policy, and tab budgets.
 - [x] The plan's end-to-end flow is documented in repo docs and reflected in `AGENTS.md`.
+- [x] Browser execution cannot be enabled until report schemas and checkpoint writes exist.
 - [x] Scripts include basic verification coverage for normalization, scoring, and report generation.
 
 ## Success Metrics
@@ -439,8 +477,7 @@ If approval or answer-policy rules change, all of these surfaces must stay align
 - GitHub repository under `kashane1`
 - local Claude Code environment with browser/computer-use capability available at runtime
 - candidate documents placed in `profile/raw/`
-- decision on the initial file formats to support first: markdown and PDF recommended; DOCX optional
-- clear runtime secret handling strategy for email credentials and any site accounts
+- local secret material available through environment variables or ignored local files
 
 ## Risk Analysis & Mitigation
 
@@ -479,6 +516,7 @@ Mitigation:
 - never write passwords to reports
 - prefer `.env.local` or equivalent ignored files for local secrets
 - include redaction guidance in `AGENTS.md`
+- require report-generation code to mark when secret redaction was applied
 
 ## Resource Requirements
 
@@ -505,12 +543,12 @@ Create or update:
 - `docs/reports/` template examples
 - `playbooks/` docs for supported discovery and application flows
 
-## Open Questions
+## V1 Decisions
 
-- Which job boards should be first-class in v1?
-- Should v1 support DOCX ingestion, or start with markdown and PDF only?
-- What is the initial confidence threshold that should stop browser execution?
-- Should account creation be allowed automatically in v1, or require a second approval checkpoint?
+- First-class sources in v1 should be company career sites plus one or two common boards only after the company-site flow works end to end. This keeps browser playbooks narrow and auditable.
+- Initial profile ingestion should support markdown and PDF only. DOCX can be added later once the normalization path is stable.
+- The initial browser stop threshold should be `0.75`, matching runtime policy, and should be revisited only after real report data exists.
+- Account creation may be supported in v1, but it should require a separate explicit approval checkpoint before the action is taken.
 
 ## Recommended Sequence Of Work
 
@@ -518,8 +556,9 @@ Create or update:
 2. define normalized profile schema and ingest the first real candidate materials
 3. implement lead extraction, dedupe, and fit scoring
 4. implement application draft generation and approval recording
-5. implement browser playbooks with tab-budget enforcement
-6. implement final reporting and run summaries
+5. implement report schemas, checkpoint writes, and run summaries
+6. implement browser playbooks with tab-budget enforcement
+7. implement outcomes tracking and learning-loop calibration
 
 ## Sources & References
 

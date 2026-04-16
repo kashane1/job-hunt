@@ -8,10 +8,12 @@ Expected report types:
 
 Each application report should include:
 - lead and company metadata
-- approval status
+- approval-required and approval-obtained status for account creation and final submit
 - submission status
+- submit attempted vs confirmed submitted
 - application quality score
 - truthfulness rating
 - question-by-question provenance
 - browser execution notes and tab metrics
-
+- blocker list and checkpoint records
+- secret-redaction status for runtime attempt payloads

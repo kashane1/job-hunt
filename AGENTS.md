@@ -11,6 +11,7 @@ Operate this repository as a trustworthy job-search system for one person. The g
 - Inference is allowed only when the output is clearly labeled.
 - Do not fabricate unsupported facts unless runtime policy explicitly allows it.
 - V1 requires explicit human approval before every final submit.
+- V1 requires a separate explicit approval before account creation.
 - Never store passwords or secrets in git-tracked files.
 
 ## Browser Guardrails
@@ -34,12 +35,21 @@ Operate this repository as a trustworthy job-search system for one person. The g
 Every application attempt must record:
 - whether approval was required
 - whether approval was obtained
+- whether account-creation approval was required
+- whether account-creation approval was obtained
 - what answers were used
 - provenance for each answer
 - confidence level
 - blockers encountered
 - browser tab metrics
 - whether the submission was confirmed
+- whether secrets were redacted from runtime attempt artifacts
+
+## Secret Handling
+
+- Store credentials in environment variables or local ignored files such as `.env.local`.
+- Do not write passwords, tokens, one-time codes, or session material into git-tracked artifacts.
+- If runtime attempt data contains secret-like fields, redact them before writing reports.
 
 ## Document Conventions
 
@@ -59,4 +69,3 @@ tags:
 ## Safety Overrides
 
 If runtime configuration conflicts with these defaults, prefer the stricter option unless the user explicitly asked for looser behavior in the current session.
-

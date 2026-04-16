@@ -14,6 +14,7 @@ The repo is designed for Claude Code style operation:
 V1 is optimized for trust, not volume.
 
 - human approval is required before every final submit
+- a separate approval gate is required before account creation in v1
 - speculative facts are disabled by default
 - browser execution has a soft limit of 10 tabs and a hard limit of 15
 - credentials must never be written to git-tracked artifacts
@@ -44,6 +45,18 @@ job-hunt/
 python3 scripts/job_hunt.py normalize-profile
 ```
 
+This now produces:
+- `profile/normalized/candidate-profile.json`
+- `profile/normalized/document-audit.json`
+- `profile/normalized/documents/*.json`
+- `docs/reports/profile-document-audit.md`
+
+If you only want to rerun the intake/audit pass, use:
+
+```bash
+python3 scripts/job_hunt.py audit-profile-docs
+```
+
 3. Add or collect a raw job description file, then extract and score it:
 
 ```bash
@@ -71,6 +84,12 @@ python3 scripts/job_hunt.py write-report \
 python3 scripts/job_hunt.py summarize-run
 ```
 
+Generated reports now capture:
+- approval-required vs approval-obtained for both account creation and final submit
+- submit attempted vs confirmed submitted
+- browser tab budget metrics and hard-limit breaches
+- redaction status for any secret-like fields present in runtime attempt data
+
 ## Testing
 
 Run the standard-library test suite:
@@ -82,4 +101,3 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 ## Repo Privacy
 
 This repository should be private if it contains real candidate materials, job application records, or company-specific notes.
-

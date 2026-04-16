@@ -1,4 +1,5 @@
 approval_required_before_submit: true
+approval_required_before_account_creation: true
 allow_auto_submit: false
 answer_policy: strict
 allow_inferred_answers: true
@@ -8,5 +9,6 @@ browser_tabs_hard_limit: 15
 close_background_tabs_aggressively: true
 stop_if_confidence_below: 0.75
 stop_if_required_fact_missing: true
+secret_source: env_or_local_untracked_file
+redact_secrets_in_artifacts: true
 repo_should_be_private: true
-

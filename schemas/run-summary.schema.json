@@ -14,6 +14,20 @@
     "generated_at": { "type": "string" },
     "lead_counts": { "type": "object" },
     "application_counts": { "type": "object" },
-    "quality_metrics": { "type": "object" }
+    "quality_metrics": {
+      "type": "object",
+      "required": [
+        "average_application_quality_score",
+        "reports_count",
+        "approval_records_count",
+        "confirmed_submissions"
+      ],
+      "properties": {
+        "average_application_quality_score": { "type": "number" },
+        "reports_count": { "type": "integer" },
+        "approval_records_count": { "type": "integer" },
+        "confirmed_submissions": { "type": "integer" }
+      }
+    }
   }
 }

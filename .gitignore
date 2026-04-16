@@ -9,4 +9,15 @@ venv/
 .mypy_cache/
 dist/
 build/
+*.tmp
 
+# Candidate PII and generated artifacts — never push to remote
+profile/raw/
+profile/normalized/
+data/generated/
+data/companies/
+data/applications/
+data/leads/
+data/runs/
+docs/reports/*-report.md
+examples/results/
