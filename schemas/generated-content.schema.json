@@ -15,6 +15,17 @@
     "selected_accomplishments": { "type": "array", "items": { "type": "string" } },
     "selected_skills": { "type": "array", "items": { "type": "string" } },
     "output_path": { "type": "string" },
-    "provenance": { "enum": ["grounded", "synthesized", "weak_inference"] }
+    "pdf_path": { "type": "string" },
+    "pdf_generated_at": { "type": "string" },
+    "provenance": { "enum": ["grounded", "synthesized", "weak_inference"] },
+    "ats_check": {
+      "type": "object",
+      "properties": {
+        "status": { "enum": ["not_checked", "pending", "passed", "warnings", "errors", "check_failed"] },
+        "report_path": { "type": "string" },
+        "checked_at": { "type": "string" },
+        "error": { "type": "string" }
+      }
+    }
   }
 }

@@ -37,7 +37,10 @@
     "fit_assessment": { "type": "object" },
     "status": { "type": "string" },
     "company_research_id": { "type": "string" },
-    "application_status_path": { "type": "string" }
+    "application_status_path": { "type": "string" },
+    "ingestion_method": { "enum": ["manual", "url_fetch_json", "url_fetch_html", "url_fetch_fallback"] },
+    "ingested_at": { "type": "string" },
+    "canonical_url": { "type": "string" },
+    "ingestion_notes": { "type": "string" }
   }
 }
-

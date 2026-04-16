@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AtsCheckReport",
+  "type": "object",
+  "required": ["report_id", "content_id", "checked_at", "status",
+               "errors", "warnings", "metrics"],
+  "properties": {
+    "report_id": { "type": "string" },
+    "content_id": { "type": "string" },
+    "lead_id": { "type": "string" },
+    "checked_at": { "type": "string" },
+    "status": { "enum": ["passed", "warnings", "errors"] },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "location": { "type": "string" }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "location": { "type": "string" }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "properties": {
+        "word_count": { "type": "number" },
+        "page_estimate": { "type": "number" },
+        "keyword_coverage": { "type": "number" },
+        "keyword_density": { "type": "number" },
+        "matched_keywords": { "type": "array", "items": { "type": "string" } },
+        "missing_keywords": { "type": "array", "items": { "type": "string" } },
+        "reading_grade": { "type": "number" }
+      }
+    }
+  }
+}
