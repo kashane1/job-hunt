@@ -1791,6 +1791,15 @@ def build_parser() -> argparse.ArgumentParser:
     gen_fu.add_argument("--profile", default="profile/normalized/candidate-profile.json")
     gen_fu.add_argument("--output-dir", default="data/generated/follow-ups")
 
+    # Batch 2 Phase 1: PDF export (on-demand, requires optional weasyprint extra)
+    export_pdf_parser = subparsers.add_parser(
+        "export-pdf", help="Render a generated markdown to PDF via weasyprint"
+    )
+    export_pdf_group = export_pdf_parser.add_mutually_exclusive_group(required=True)
+    export_pdf_group.add_argument("--content-record", help="Path to generated-content JSON (primary)")
+    export_pdf_group.add_argument("--content-id", help="Content ID to resolve under data/generated/")
+    export_pdf_parser.add_argument("--data-root", default="data")
+
     return parser
 
 
@@ -1997,6 +2006,25 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=Path(args.output_dir),
         )
         print(result["path"])
+        return 0
+
+    if args.command == "export-pdf":
+        from .pdf_export import PdfExportError, export_pdf, resolve_content_record_path
+
+        try:
+            content_record_path = resolve_content_record_path(
+                args.content_record, args.content_id, Path(args.data_root)
+            )
+            record = export_pdf(content_record_path)
+        except PdfExportError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({
+            "status": "ok",
+            "content_id": record.get("content_id"),
+            "pdf_path": record.get("pdf_path"),
+            "pdf_generated_at": record.get("pdf_generated_at"),
+        }, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")

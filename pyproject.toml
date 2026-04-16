@@ -1,10 +1,17 @@
 [project]
 name = "job-hunt"
-version = "0.1.0"
+version = "0.2.0"
 description = "Agent-first, file-backed job hunt operating repo"
 readme = "README.md"
 requires-python = ">=3.11"
 
+[project.optional-dependencies]
+# PDF export support via `pip install 'job-hunt[pdf]'`.
+# Requires native Cairo/Pango libraries:
+#   macOS:  brew install pango cairo gdk-pixbuf libffi
+#   Linux:  apt install libpango-1.0-0 libpangoft2-1.0-0
+# The core pipeline works without this — only `export-pdf` needs it.
+pdf = ["weasyprint>=66"]
+
 [tool.unittest]
 start-directory = "tests"
-

@@ -195,6 +195,109 @@ class TrackingTest(unittest.TestCase):
             self.assertIn("nonexistent-company", report["dangling_companies"])
             self.assertIn("lonely-co", report["unreferenced_companies"])
 
+    # Batch 2: check_integrity extensions for new artifact types
+
+    def test_check_integrity_detects_missing_source_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            resumes = root / "generated" / "resumes"
+            resumes.mkdir(parents=True)
+            write_json(resumes / "c1.json", {
+                "content_id": "c1",
+                "output_path": str(root / "ghost.md"),  # does not exist
+                "generated_at": "2026-04-16T10:00:00+00:00",
+            })
+            report = check_integrity(root)
+            missing = [e["content_id"] for e in report["missing_source_files"]]
+            self.assertIn("c1", missing)
+
+    def test_check_integrity_detects_orphaned_pdfs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            resumes = root / "generated" / "resumes"
+            resumes.mkdir(parents=True)
+            (resumes / "c2.md").write_text("dummy")
+            write_json(resumes / "c2.json", {
+                "content_id": "c2",
+                "output_path": str(resumes / "c2.md"),
+                "pdf_path": str(resumes / "c2.pdf"),  # does not exist
+                "generated_at": "2026-04-16T10:00:00+00:00",
+            })
+            report = check_integrity(root)
+            orphans = [e["content_id"] for e in report["orphaned_pdfs"]]
+            self.assertIn("c2", orphans)
+
+    def test_check_integrity_detects_stale_pdf(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            resumes = root / "generated" / "resumes"
+            resumes.mkdir(parents=True)
+            (resumes / "c3.md").write_text("dummy")
+            (resumes / "c3.pdf").write_bytes(b"%PDF")
+            write_json(resumes / "c3.json", {
+                "content_id": "c3",
+                "output_path": str(resumes / "c3.md"),
+                "pdf_path": str(resumes / "c3.pdf"),
+                "pdf_generated_at": "2026-04-16T10:00:00+00:00",
+                "generated_at": "2026-04-16T12:00:00+00:00",  # later than PDF
+            })
+            report = check_integrity(root)
+            stale = [e["content_id"] for e in report["stale_pdfs"]]
+            self.assertIn("c3", stale)
+
+    def test_check_integrity_detects_stuck_pending_ats(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            resumes = root / "generated" / "resumes"
+            resumes.mkdir(parents=True)
+            write_json(resumes / "c4.json", {
+                "content_id": "c4",
+                "generated_at": "2026-04-16T10:00:00+00:00",
+                "ats_check": {
+                    "status": "pending",
+                    "checked_at": "2026-04-16T10:00:01+00:00",
+                },
+            })
+            report = check_integrity(root)
+            stuck = [e["content_id"] for e in report["stuck_pending_ats"]]
+            self.assertIn("c4", stuck)
+
+    def test_check_integrity_detects_check_failed_ats(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            resumes = root / "generated" / "resumes"
+            resumes.mkdir(parents=True)
+            write_json(resumes / "c5.json", {
+                "content_id": "c5",
+                "generated_at": "2026-04-16T10:00:00+00:00",
+                "ats_check": {
+                    "status": "check_failed",
+                    "error": "unexpected token in markdown",
+                },
+            })
+            report = check_integrity(root)
+            failed = [e["content_id"] for e in report["check_failed_ats"]]
+            self.assertIn("c5", failed)
+
+    def test_check_integrity_summary_flags_issues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            # Clean run — only an unreferenced company (which doesn't flag as issue)
+            companies = root / "companies"
+            companies.mkdir(parents=True)
+            write_json(companies / "co.json", {"company_id": "co"})
+            report = check_integrity(root)
+            self.assertFalse(report["summary"]["has_issues"])
+
+    def test_check_integrity_reports_include_summary_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            report = check_integrity(root)
+            self.assertIn("summary", report)
+            self.assertIn("issue_counts", report["summary"])
+            # All counts should exist and be 0 for an empty data root
+            self.assertEqual(report["summary"]["issue_counts"]["orphaned_pdfs"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
