@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CompanyResearch",
+  "type": "object",
+  "required": ["company_id", "company_name", "researched_at"],
+  "properties": {
+    "company_id": { "type": "string" },
+    "company_name": { "type": "string" },
+    "researched_at": { "type": "string" },
+    "size_estimate": { "type": "string" },
+    "stage": { "enum": ["startup", "growth", "public", "enterprise", "unknown"] },
+    "industry": { "type": "string" },
+    "tech_stack": { "type": "array", "items": { "type": "string" } },
+    "remote_policy": { "type": "string" },
+    "glassdoor_rating": { "type": "number" },
+    "funding_info": { "type": "string" },
+    "headquarters": { "type": "string" },
+    "recent_news": { "type": "array", "items": { "type": "string" } },
+    "source_urls": { "type": "array", "items": { "type": "string" } },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "company_fit_score": { "type": "number" },
+    "company_fit_breakdown": {
+      "type": "object",
+      "properties": {
+        "remote_match": { "type": "number" },
+        "size_match": { "type": "number" },
+        "tech_stack_match": { "type": "number" },
+        "industry_match": { "type": "number" }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

@@ -1771,6 +1771,26 @@ def build_parser() -> argparse.ArgumentParser:
     gen_cl.add_argument("--company", default="", help="Path to company research JSON")
     gen_cl.add_argument("--output-dir", default="data/generated/cover-letters")
 
+    # --- Research commands ---
+    res_co = subparsers.add_parser("research-company", help="Create company research scaffold")
+    res_co.add_argument("--lead", default="", help="Path to lead JSON file")
+    res_co.add_argument("--company", default="", help="Company name (if no lead)")
+    res_co.add_argument("--output-dir", default="data/companies")
+
+    score_co = subparsers.add_parser("score-company-fit", help="Score company fit against profile")
+    score_co.add_argument("--company", required=True, help="Path to company research JSON")
+    score_co.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+
+    # --- Follow-up commands ---
+    check_fu = subparsers.add_parser("check-follow-ups", help="List applications due for follow-up")
+    check_fu.add_argument("--status-dir", default="data/applications")
+    check_fu.add_argument("--format", default="json", choices=["json", "text"])
+
+    gen_fu = subparsers.add_parser("generate-follow-up", help="Generate a follow-up draft")
+    gen_fu.add_argument("--lead", required=True, help="Path to lead JSON file")
+    gen_fu.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    gen_fu.add_argument("--output-dir", default="data/generated/follow-ups")
+
     return parser
 
 
@@ -1919,6 +1939,64 @@ def main(argv: list[str] | None = None) -> int:
         company = read_json(Path(args.company)) if args.company else None
         result = generate_cover_letter(lead, profile, company, Path(args.output_dir))
         print(result["content_id"])
+        return 0
+
+    # --- Research commands ---
+    if args.command == "research-company":
+        from .research import research_company, research_company_from_lead
+
+        if args.lead:
+            lead = read_json(Path(args.lead))
+            result = research_company_from_lead(lead, Path(args.output_dir))
+        elif args.company:
+            result = research_company(args.company, Path(args.output_dir))
+        else:
+            parser.error("research-company requires --lead or --company")
+            return 2
+        print(json.dumps({"company_id": result["company_id"]}, indent=2))
+        return 0
+
+    if args.command == "score-company-fit":
+        from .research import score_company_fit
+
+        company = read_json(Path(args.company))
+        profile = read_json(Path(args.profile))
+        result = score_company_fit(company, profile)
+        # Update company file with score.
+        company.update(result)
+        write_json(Path(args.company), company)
+        print(json.dumps(result, indent=2))
+        return 0
+
+    # --- Follow-up commands ---
+    if args.command == "check-follow-ups":
+        from .reminders import check_follow_ups
+
+        result = check_follow_ups(Path(args.status_dir))
+        if args.format == "text":
+            for item in result:
+                print(f"{item['lead_id']}: {item['follow_up_type']} (day {item['days_since']})")
+        else:
+            print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "generate-follow-up":
+        from .reminders import generate_follow_up_draft
+
+        lead = read_json(Path(args.lead))
+        profile = read_json(Path(args.profile))
+        prefs = profile.get("preferences", {})
+        fit = lead.get("fit_assessment", {})
+        result = generate_follow_up_draft(
+            lead_id=lead["lead_id"],
+            candidate_name=prefs.get("candidate_name", "Candidate"),
+            company_name=lead.get("company", ""),
+            job_title=lead.get("title", ""),
+            matched_skills=fit.get("matched_skills", [])[:5],
+            follow_up_type="follow_up",
+            output_dir=Path(args.output_dir),
+        )
+        print(result["path"])
         return 0
 
     parser.error(f"Unknown command: {args.command}")
