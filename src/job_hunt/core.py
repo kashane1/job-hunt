@@ -1728,6 +1728,26 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify-artifact")
     verify.add_argument("--schema", required=True)
     verify.add_argument("--artifact", required=True)
+
+    # --- Tracking commands ---
+    update_st = subparsers.add_parser("update-status", help="Advance an application to a new stage")
+    update_st.add_argument("--lead", required=True, help="Path to lead JSON file")
+    update_st.add_argument("--stage", required=True, help="New stage name")
+    update_st.add_argument("--note", default="", help="Optional note for this transition")
+    update_st.add_argument("--status-dir", default="data/applications", help="Directory for status files")
+
+    subparsers.add_parser("check-status", help="Show current status for a lead").add_argument(
+        "--lead", required=True, help="Path to lead JSON file"
+    )
+
+    list_apps = subparsers.add_parser("list-applications", help="List applications with optional filters")
+    list_apps.add_argument("--stage", default="", help="Filter by stage name")
+    list_apps.add_argument("--since", default="", help="Filter by created_at >= date (ISO format)")
+    list_apps.add_argument("--status-dir", default="data/applications", help="Directory for status files")
+
+    integrity = subparsers.add_parser("check-integrity", help="Detect orphaned content and dangling references")
+    integrity.add_argument("--data-root", default="data", help="Root data directory")
+
     return parser
 
 
@@ -1797,6 +1817,44 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "verify-artifact":
         verify_artifact(Path(args.schema), Path(args.artifact))
+        return 0
+
+    # --- Tracking commands ---
+    if args.command == "update-status":
+        from .tracking import create_application_status, update_application_status
+
+        lead = read_json(Path(args.lead))
+        lead_id = lead["lead_id"]
+        status_dir = Path(args.status_dir)
+        status_path = status_dir / f"{lead_id}-status.json"
+        if not status_path.exists():
+            create_application_status(lead_id, status_dir)
+        result = update_application_status(status_path, args.stage, args.note)
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "check-status":
+        from .tracking import check_status
+
+        lead = read_json(Path(args.lead))
+        lead_id = lead["lead_id"]
+        status_path = Path("data/applications") / f"{lead_id}-status.json"
+        result = check_status(status_path)
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "list-applications":
+        from .tracking import list_applications
+
+        result = list_applications(Path(args.status_dir), args.stage, args.since)
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "check-integrity":
+        from .tracking import check_integrity
+
+        result = check_integrity(Path(args.data_root))
+        print(json.dumps(result, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")

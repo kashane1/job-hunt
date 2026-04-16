@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApplicationStatus",
+  "type": "object",
+  "required": ["lead_id", "current_stage", "transitions", "created_at", "updated_at"],
+  "properties": {
+    "lead_id": { "type": "string" },
+    "current_stage": {
+      "enum": ["not_applied", "applied", "phone_screen", "technical",
+               "onsite", "offer", "accepted", "rejected", "withdrawn", "ghosted"]
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["from_stage", "to_stage", "timestamp"],
+        "properties": {
+          "from_stage": {
+            "enum": ["not_applied", "applied", "phone_screen", "technical",
+                     "onsite", "offer", "accepted", "rejected", "withdrawn", "ghosted"]
+          },
+          "to_stage": {
+            "enum": ["not_applied", "applied", "phone_screen", "technical",
+                     "onsite", "offer", "accepted", "rejected", "withdrawn", "ghosted"]
+          },
+          "timestamp": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "generated_content_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "follow_up": {
+      "type": "object",
+      "properties": {
+        "next_follow_up_date": { "type": "string" },
+        "follow_up_count": { "type": "integer" },
+        "suppress_follow_up": { "type": "boolean" }
+      }
+    },
+    "outcome_notes": { "type": "string" },
+    "created_at": { "type": "string" },
+    "updated_at": { "type": "string" }
+  }
+}

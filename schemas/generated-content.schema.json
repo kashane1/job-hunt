@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GeneratedContent",
+  "type": "object",
+  "required": ["content_id", "content_type", "variant_style", "generated_at",
+               "lead_id", "source_document_ids"],
+  "properties": {
+    "content_id": { "type": "string" },
+    "content_type": { "enum": ["resume", "cover_letter", "answer_set"] },
+    "variant_style": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "lead_id": { "type": "string" },
+    "job_title": { "type": "string" },
+    "source_document_ids": { "type": "array", "items": { "type": "string" } },
+    "selected_accomplishments": { "type": "array", "items": { "type": "string" } },
+    "selected_skills": { "type": "array", "items": { "type": "string" } },
+    "output_path": { "type": "string" },
+    "provenance": { "enum": ["grounded", "synthesized", "weak_inference"] }
+  }
+}
