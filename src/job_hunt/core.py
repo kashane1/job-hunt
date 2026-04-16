@@ -1820,6 +1820,30 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument("--output-dir", default="data/leads")
     ingest_parser.add_argument("--max-workers", type=int, default=5, help="Batch mode worker cap")
 
+    # Batch 2 Phase 3: ATS compatibility checker (standalone; CLI also runs after generate-*)
+    ats_parser = subparsers.add_parser(
+        "ats-check", help="Validate a generated resume/cover-letter for ATS compatibility"
+    )
+    ats_group = ats_parser.add_mutually_exclusive_group(required=True)
+    ats_group.add_argument("--content-record", help="Path to generated-content JSON (primary)")
+    ats_group.add_argument("--content-id", help="Content ID to resolve under data/generated/")
+    ats_parser.add_argument("--lead", help="Path to lead JSON for keyword coverage checks (optional)")
+    ats_parser.add_argument("--data-root", default="data")
+    ats_parser.add_argument("--output-dir", default="data/generated/ats-checks")
+    ats_parser.add_argument("--target-pages", type=int, default=1, help="Max pages for resume (default 1)")
+
+    # Batch 2 Phase 3: add --skip-ats-check flag to generate-resume / generate-cover-letter
+    gen_resume.add_argument(
+        "--skip-ats-check",
+        action="store_true",
+        help="Skip automatic ATS compatibility check after generation (default: run)",
+    )
+    gen_cl.add_argument(
+        "--skip-ats-check",
+        action="store_true",
+        help="Skip automatic ATS compatibility check after generation (default: run)",
+    )
+
     return parser
 
 
@@ -1941,6 +1965,15 @@ def main(argv: list[str] | None = None) -> int:
         profile = read_json(Path(args.profile))
         styles = [s.strip() for s in args.variants.split(",") if s.strip()]
         results = generate_resume_variants(lead, profile, styles, Path(args.output_dir))
+
+        # CLI-orchestrated ATS check post-hook (generation.py does NOT import ats_check)
+        if not args.skip_ats_check:
+            from .ats_check import run_ats_check_with_recovery
+            ats_check_dir = Path(args.output_dir).parent / "ats-checks"
+            for record in results:
+                record_path = Path(args.output_dir) / f"{record['content_id']}.json"
+                run_ats_check_with_recovery(record_path, lead, ats_check_dir)
+
         print(json.dumps([r["content_id"] for r in results], indent=2))
         return 0
 
@@ -1967,6 +2000,14 @@ def main(argv: list[str] | None = None) -> int:
         profile = read_json(Path(args.profile))
         company = read_json(Path(args.company)) if args.company else None
         result = generate_cover_letter(lead, profile, company, Path(args.output_dir))
+
+        # CLI-orchestrated ATS check post-hook
+        if not args.skip_ats_check:
+            from .ats_check import run_ats_check_with_recovery
+            ats_check_dir = Path(args.output_dir).parent / "ats-checks"
+            record_path = Path(args.output_dir) / f"{result['content_id']}.json"
+            run_ats_check_with_recovery(record_path, lead, ats_check_dir)
+
         print(result["content_id"])
         return 0
 
@@ -2075,6 +2116,31 @@ def main(argv: list[str] | None = None) -> int:
             "title": lead.get("title", ""),
             "ingestion_method": lead.get("ingestion_method", ""),
         }, indent=2))
+        return 0
+
+    if args.command == "ats-check":
+        from .ats_check import run_ats_check
+        from .pdf_export import PdfExportError, resolve_content_record_path
+
+        try:
+            record_path = resolve_content_record_path(
+                args.content_record, args.content_id, Path(args.data_root)
+            )
+        except PdfExportError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        record = read_json(record_path)
+        lead = read_json(Path(args.lead)) if args.lead else None
+        try:
+            report = run_ats_check(record, lead, Path(args.output_dir), max_pages=args.target_pages)
+        except ValueError as exc:
+            print(json.dumps({
+                "status": "error",
+                "error_code": "check_failed",
+                "message": str(exc),
+            }, indent=2))
+            return 2
+        print(json.dumps(report, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")
