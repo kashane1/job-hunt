@@ -300,6 +300,59 @@ def check_integrity(data_root: Path) -> dict:
             if age > threshold:
                 bucket.append({"path": str(p), "age_seconds": int(age.total_seconds())})
 
+    # Batch 3: discovery orphan checks
+    stale_review_entries: list[dict] = []
+    unscored_discovered_leads: list[dict] = []
+    stale_tmp_files: list[dict] = []
+
+    discovery_root = data_root / "discovery"
+    review_dir = discovery_root / "review"
+    if review_dir.exists():
+        for p in review_dir.glob("*.md"):
+            try:
+                mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            age = now - mtime
+            if age > timedelta(days=30):
+                stale_review_entries.append({
+                    "path": str(p),
+                    "age_seconds": int(age.total_seconds()),
+                })
+
+    if leads_dir.exists():
+        for p in leads_dir.glob("*.json"):
+            try:
+                lead = read_json(p)
+            except (json.JSONDecodeError, KeyError):
+                continue
+            if lead.get("status") != "discovered" or lead.get("fit_assessment"):
+                continue
+            try:
+                mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            age = now - mtime
+            if age > timedelta(hours=1):
+                unscored_discovered_leads.append({
+                    "lead_id": lead.get("lead_id", p.stem),
+                    "path": str(p),
+                    "age_seconds": int(age.total_seconds()),
+                })
+
+    if data_root.exists():
+        for p in data_root.rglob("*.tmp"):
+            try:
+                mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            age = now - mtime
+            if age > timedelta(hours=1):
+                stale_tmp_files.append({
+                    "path": str(p),
+                    "age_seconds": int(age.total_seconds()),
+                })
+
     report = {
         "orphaned_content": sorted(content_ids - referenced_content_ids),
         "dangling_leads": sorted(status_lead_ids - lead_ids),
@@ -314,6 +367,9 @@ def check_integrity(data_root: Path) -> dict:
         "stale_ats_checks": stale_ats_checks,
         "stale_intake_pending": stale_intake_pending,
         "stale_intake_failed": stale_intake_failed,
+        "stale_review_entries": stale_review_entries,
+        "unscored_discovered_leads": unscored_discovered_leads,
+        "stale_tmp_files": stale_tmp_files,
     }
     has_issues = any(
         bool(v) for k, v in report.items() if k != "unreferenced_companies"
