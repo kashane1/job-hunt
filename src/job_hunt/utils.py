@@ -1,6 +1,11 @@
 """Pure utility functions shared across job_hunt modules.
 
-Zero domain knowledge — only generic I/O, text, and hashing helpers.
+Zero domain knowledge — only generic I/O, text, and hashing helpers, plus the
+`StructuredError` base that structured error classes across the codebase share
+so CLI handlers can catch them uniformly.
+
+Stateful cross-module infrastructure (rate limiter, robots cache) lives in
+`net_policy.py`, NOT here.
 """
 
 from __future__ import annotations
@@ -9,11 +14,48 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
+from typing import ClassVar, Iterable
 
 from .simple_yaml import loads as load_yaml
+
+
+# =============================================================================
+# StructuredError base — shared by IngestionError / PdfExportError / DiscoveryError
+# =============================================================================
+
+class StructuredError(ValueError):
+    """Base for structured, agent-consumable errors at I/O/CLI boundaries.
+
+    Every subclass defines `ALLOWED_ERROR_CODES` as a frozenset and carries
+    `error_code`, `url`, `remediation`. CLI error handlers can catch this base
+    class uniformly and emit `exc.to_dict()` as the error envelope.
+    """
+
+    ALLOWED_ERROR_CODES: ClassVar[frozenset[str]] = frozenset()
+
+    def __init__(
+        self,
+        message: str,
+        error_code: str,
+        url: str = "",
+        remediation: str = "",
+    ):
+        super().__init__(message)
+        assert error_code in self.ALLOWED_ERROR_CODES, f"unknown error_code: {error_code}"
+        self.error_code = error_code
+        self.url = url
+        self.remediation = remediation
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "error_code": self.error_code,
+            "message": str(self),
+            "url": self.url,
+            "remediation": self.remediation,
+        }
 
 
 def now_iso() -> str:
@@ -41,15 +83,41 @@ def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def write_json(path: Path, payload: dict) -> None:
-    """Write JSON atomically using write-to-temp-then-rename."""
+def write_json(path: Path, payload) -> None:
+    """Atomically write JSON using per-call unique tmp + parent-dir fsync.
+
+    Safety invariants:
+    - Per-call unique tmp via tempfile.mkstemp in the target directory — two
+      concurrent writers to the same path cannot collide on a shared `.tmp`.
+    - fsync the file AND (best-effort) the parent directory so os.replace is
+      durable across crashes on Linux ext4. Parent-dir fsync is a no-op on
+      platforms where os.open of a directory fails (e.g. Windows).
+    - Cleans up the temp file on any exception via `except BaseException`.
+    """
     ensure_dir(path.parent)
-    tmp = path.with_suffix(".tmp")
+    fd, tmp_path_str = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    tmp_path = Path(tmp_path_str)
     try:
-        tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        os.replace(str(tmp), str(path))
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(str(tmp_path), str(path))
+        try:
+            dir_fd = os.open(str(path.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except (OSError, AttributeError):
+            pass
     except BaseException:
-        tmp.unlink(missing_ok=True)
+        tmp_path.unlink(missing_ok=True)
         raise
 
 

@@ -19,29 +19,21 @@ import types
 from pathlib import Path
 from typing import Final
 
-from .utils import ensure_dir, now_iso, read_json, write_json
+from .utils import StructuredError, ensure_dir, now_iso, read_json, write_json
 
 PDF_EXPORT_ERROR_CODES: Final = frozenset({
     "weasyprint_missing", "source_missing", "render_failed", "pdf_fetch_blocked",
 })
 
 
-class PdfExportError(ValueError):
+class PdfExportError(StructuredError):
     """Structured error with machine-readable error_code for agent consumption.
-    Inherits ValueError per batch 1 convention (see ValidationError in schema_checks)."""
 
-    def __init__(self, message: str, error_code: str, remediation: str = ""):
-        super().__init__(message)
-        assert error_code in PDF_EXPORT_ERROR_CODES, f"unknown error_code: {error_code}"
-        self.error_code = error_code
-        self.remediation = remediation
+    Inherits the shared `StructuredError` base so CLI handlers can catch this
+    alongside `IngestionError` and `DiscoveryError` in a single branch.
+    """
 
-    def to_dict(self) -> dict[str, str]:
-        return {
-            "error_code": self.error_code,
-            "message": str(self),
-            "remediation": self.remediation,
-        }
+    ALLOWED_ERROR_CODES = PDF_EXPORT_ERROR_CODES
 
 
 RESUME_CSS = """

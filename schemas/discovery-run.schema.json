@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DiscoveryRunArtifact",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "run_started_at",
+    "run_completed_at",
+    "outcomes",
+    "sources_run",
+    "counts"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_started_at": { "type": "string" },
+    "run_completed_at": { "type": "string" },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["bucket", "entry", "detail"],
+        "properties": {
+          "bucket": {
+            "enum": [
+              "discovered",
+              "filtered_out",
+              "duplicate_within_run",
+              "already_known",
+              "skipped_by_robots",
+              "skipped_by_budget",
+              "failed",
+              "low_confidence"
+            ]
+          },
+          "entry": {
+            "type": ["object", "null"],
+            "properties": {
+              "title": { "type": "string" },
+              "location": { "type": "string" },
+              "posting_url": { "type": "string" },
+              "source": { "type": "string" },
+              "source_company": { "type": "string" },
+              "internal_id": { "type": "string" },
+              "updated_at": { "type": "string" },
+              "signals": { "type": "array", "items": { "type": "string" } },
+              "confidence": { "enum": ["high", "weak_inference"] }
+            }
+          },
+          "detail": { "type": "object" }
+        }
+      }
+    },
+    "sources_run": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "company",
+          "source",
+          "started_at",
+          "completed",
+          "listing_truncated",
+          "budget_exhausted",
+          "entry_count"
+        ],
+        "properties": {
+          "company": { "type": "string" },
+          "source": { "type": "string" },
+          "started_at": { "type": "string" },
+          "completed": { "type": "boolean" },
+          "listing_truncated": { "type": "boolean" },
+          "budget_exhausted": { "type": "boolean" },
+          "entry_count": { "type": "integer" }
+        }
+      }
+    },
+    "counts": {
+      "type": "object",
+      "required": [
+        "discovered",
+        "filtered_out",
+        "duplicate_within_run",
+        "already_known",
+        "skipped_by_robots",
+        "skipped_by_budget",
+        "failed",
+        "low_confidence"
+      ]
+    }
+  }
+}
