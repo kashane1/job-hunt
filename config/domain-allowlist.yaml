@@ -1,0 +1,23 @@
+# config/domain-allowlist.yaml
+#
+# Narrow carve-out for login-walled domains that would otherwise hard-fail in
+# src/job_hunt/ingestion.py and src/job_hunt/discovery.py. The default posture
+# remains "LinkedIn/Indeed hard-fail" — this file is the explicit, reviewable
+# exception list.
+#
+# Domains listed here bypass HARD_FAIL_URL_PATTERNS ONLY. They still go through
+# every other guard: SSRF / private-IP blocking, TLS hostname validation with
+# IP pinning (closes DNS-rebinding TOCTOU), fetch-size caps, decompression
+# bomb caps, rate limiting, robots.txt enforcement, anti-bot detection.
+#
+# Each allowlisted domain must reference the per-surface agent playbook that
+# documents the browser-side execution contract. See AGENTS.md for the Safety
+# Overrides semantics: runtime overrides can tighten but never loosen this
+# allowlist.
+
+schema_version: 1
+allowed:
+  - domain: "indeed.com"
+    reason: "Primary job-board target per docs/brainstorms/2026-04-16-indeed-auto-apply-brainstorm.md"
+    added: "2026-04-16"
+    surface_playbook: "playbooks/application/indeed-easy-apply.md"

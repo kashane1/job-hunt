@@ -1,6 +1,6 @@
 # Profile Document Audit
 
-- Generated at: 2026-04-16T03:23:27+00:00
+- Generated at: 2026-04-17T18:21:51+00:00
 - Raw documents scanned: 14
 - Supported documents normalized: 14
 - Average quality: 62.1
@@ -56,7 +56,7 @@
 ### Kashane Sakhakorn Resume
 - Path: profile/raw/Kashane Sakhakorn Resume.txt
 - Type: resume
-- Metrics: 334 words, 9 bullets, 4 quantified phrases, 0 Q/A pairs
+- Metrics: 336 words, 9 bullets, 4 quantified phrases, 0 Q/A pairs
 - Scores: quality 60 (medium), quantity 38 (low), value 84 (high)
 - Highlights: Led data synchronization initiative, migrating 10+ years of legacy MySQL data to Postgres, ensuring 100% data integrity and system interoperability | Collaborated on migrating a legacy PHP monolith to a modern TypeScript, Postgres, and AWS stack, accelerating transaction processing and enabling seamless onboarding of new users | Engineered Ticketmaster API integration with internal systems using PHP, JavaScript, and MySQL, boosting annual revenue to over $10M
 - Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
@@ -120,9 +120,9 @@
 ### Candidate Preferences
 - Path: profile/raw/preferences.md
 - Type: preferences
-- Metrics: 160 words, 10 bullets, 2 quantified phrases, 0 Q/A pairs
+- Metrics: 154 words, 10 bullets, 2 quantified phrases, 0 Q/A pairs
 - Scores: quality 62 (medium), quantity 30 (low), value 48 (low)
-- Highlights: US Citizen / Authorized to work in the United States: [YES/NO — fill in] | Requires sponsorship: [YES/NO — fill in] | Minimum base salary: $140,000
+- Highlights: US Citizen / Authorized to work in the United States: YES | Requires sponsorship: NO | Minimum base salary: $140,000
 - Suggestions: none
 
 ### cover-letter2

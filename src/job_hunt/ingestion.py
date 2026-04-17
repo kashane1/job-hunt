@@ -101,10 +101,71 @@ ASHBY_URL_RE = re.compile(
 
 # Sites that require login and cannot be reliably scraped. We refuse politely
 # rather than silently scraping a login page as the job description.
+#
+# Domains in `config/domain-allowlist.yaml` bypass this check ONLY for the
+# hard-fail guard — they still go through SSRF / TLS / fetch-size / rate-limit
+# guards. See AGENTS.md Safety Overrides semantics: runtime overrides can
+# tighten but not loosen the allowlist.
 HARD_FAIL_URL_PATTERNS: Final = (
     re.compile(r"https?://(?:www\.)?linkedin\.com/jobs/"),
     re.compile(r"https?://(?:www\.)?indeed\.com/viewjob"),
 )
+
+
+def _load_login_wall_allowlist() -> frozenset[str]:
+    """Load ``config/domain-allowlist.yaml`` into a frozen set of domains.
+
+    Returns an empty set when the config file is missing — preserving the
+    v1 "everything hard-fails" posture. Parse failures propagate so the
+    misconfiguration surfaces loudly instead of silently re-enabling blocks.
+    """
+    from .utils import load_yaml_file, repo_root
+
+    path = repo_root() / "config" / "domain-allowlist.yaml"
+    data = load_yaml_file(path, {})
+    if not data:
+        return frozenset()
+    entries = data.get("allowed", []) or []
+    domains: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        raw = entry.get("domain")
+        if isinstance(raw, str) and raw.strip():
+            domains.add(raw.strip().lower())
+    return frozenset(domains)
+
+
+_ALLOWED_LOGIN_WALLED: Final[frozenset[str]] = _load_login_wall_allowlist()
+
+
+def _netloc_in_allowlist(netloc: str, allowlist: frozenset[str]) -> bool:
+    """True when ``netloc`` equals or is a subdomain of any allowlisted domain."""
+    host = netloc.lower().split(":", 1)[0]
+    for allowed in allowlist:
+        if host == allowed or host.endswith("." + allowed):
+            return True
+    return False
+
+
+def is_hard_fail_url(url: str) -> bool:
+    """True when the URL matches a login-wall pattern AND is not allowlisted.
+
+    Callers (``ingest_url``, ``discovery.discover_company_careers``) use this
+    to decide whether to raise the ``login_wall`` / ``hard_fail_platform``
+    structured error. Centralizing the check keeps the allowlist policy in
+    one place instead of threading it through fetch plumbing.
+    """
+    for pattern in HARD_FAIL_URL_PATTERNS:
+        if pattern.search(url):
+            try:
+                netloc = urllib.parse.urlsplit(url).netloc
+            except ValueError:
+                return True
+            if _netloc_in_allowlist(netloc, _ALLOWED_LOGIN_WALLED):
+                return False
+            return True
+    return False
 
 # Tracking params to strip for idempotent fingerprinting. Expanded from batch 1
 # per research: Greenhouse, Lever, LinkedIn, HubSpot, major ad platforms, social.
@@ -679,17 +740,16 @@ def ingest_url(
 
     Raises IngestionError with structured error_code on real failures.
     """
-    for pattern in HARD_FAIL_URL_PATTERNS:
-        if pattern.match(url):
-            raise IngestionError(
-                f"URL is behind a login wall and cannot be auto-ingested: {url}",
-                error_code="login_wall",
-                url=url,
-                remediation=(
-                    "Paste the job description into a markdown file manually, "
-                    "then run `extract-lead --input <file>`."
-                ),
-            )
+    if is_hard_fail_url(url):
+        raise IngestionError(
+            f"URL is behind a login wall and cannot be auto-ingested: {url}",
+            error_code="login_wall",
+            url=url,
+            remediation=(
+                "Paste the job description into a markdown file manually, "
+                "then run `extract-lead --input <file>`."
+            ),
+        )
     canonical = canonicalize_url(url)
     intake_root = output_dir / "_intake"
     pending_dir = intake_root / "pending"

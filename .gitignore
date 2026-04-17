@@ -3,6 +3,7 @@ __pycache__/
 .DS_Store
 .env
 .env.*
+!.env.local.example
 .venv/
 venv/
 .pytest_cache/
@@ -26,3 +27,14 @@ examples/results/
 # Watchlist contains user-supplied target-company names (PII-adjacent).
 # Track config/watchlist.example.yaml as the template.
 config/watchlist.yaml
+
+# Batch 4 (Indeed auto-apply) PII-bearing runtime artifacts.
+# Template seed `data/answer-bank.seed.json` IS tracked; working copy is not.
+data/answer-bank.json
+data/answer-bank-audit.log
+data/gmail-cursor.json
+data/applications/**/checkpoints/
+data/applications/**/attempts/
+data/applications/_suspicious/
+data/applications/batches/.lock
+

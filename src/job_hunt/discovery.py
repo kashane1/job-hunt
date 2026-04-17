@@ -38,6 +38,7 @@ from .ingestion import (
     LEVER_URL_RE,
     canonicalize_url,
     fetch,
+    is_hard_fail_url,
 )
 from .net_policy import DomainRateLimiter, RobotsCache
 from .utils import StructuredError, ensure_dir, now_iso, read_json, write_json
@@ -495,14 +496,13 @@ def discover_company_careers(
     2. ATS subdomain link detection — caller hits Greenhouse/Lever API instead.
     3. Heuristic regex — ≥2 signals go to high-confidence; 1 signal → review.
     """
-    for pattern in HARD_FAIL_URL_PATTERNS:
-        if pattern.match(careers_url):
-            raise DiscoveryError(
-                f"Careers URL is behind a login wall: {careers_url}",
-                error_code="hard_fail_platform",
-                url=careers_url,
-                remediation="Remove LinkedIn/Indeed careers_url from the watchlist.",
-            )
+    if is_hard_fail_url(careers_url):
+        raise DiscoveryError(
+            f"Careers URL is behind a login wall: {careers_url}",
+            error_code="hard_fail_platform",
+            url=careers_url,
+            remediation="Remove LinkedIn/Indeed careers_url from the watchlist.",
+        )
     if not robots.can_fetch(careers_url):
         return CareerCrawlResult((), (), ())
     rate_limiter.acquire(careers_url)

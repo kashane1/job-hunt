@@ -17,6 +17,7 @@ from job_hunt.ingestion import (
     IngestionError,
     _fetch_generic_html,
     _html_to_text,
+    _netloc_in_allowlist,
     _sanitize_url_for_logging,
     _to_markdown_with_frontmatter,
     _validate_url_for_fetch,
@@ -24,6 +25,7 @@ from job_hunt.ingestion import (
     canonicalize_url,
     ingest_url,
     ingest_urls_file,
+    is_hard_fail_url,
 )
 from job_hunt.schema_checks import validate
 
@@ -207,11 +209,41 @@ class IngestUrlTest(unittest.TestCase):
                 ingest_url("https://linkedin.com/jobs/view/12345", Path(tmpdir))
             self.assertEqual(ctx.exception.error_code, "login_wall")
 
-    def test_indeed_hard_fails(self) -> None:
+    def test_indeed_is_allowlisted_does_not_login_wall(self) -> None:
+        # Batch 4: Indeed is the lone entry in config/domain-allowlist.yaml.
+        # Ingestion now proceeds past the hard-fail gate (and fails further
+        # down the pipeline — the point is that login_wall no longer fires).
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaises(IngestionError) as ctx:
                 ingest_url("https://www.indeed.com/viewjob?jk=abc", Path(tmpdir))
-            self.assertEqual(ctx.exception.error_code, "login_wall")
+            self.assertNotEqual(ctx.exception.error_code, "login_wall")
+
+
+class HardFailAllowlistTest(unittest.TestCase):
+    def test_linkedin_still_hard_fails(self) -> None:
+        self.assertTrue(is_hard_fail_url("https://www.linkedin.com/jobs/view/1"))
+        self.assertTrue(is_hard_fail_url("https://linkedin.com/jobs/view/1"))
+
+    def test_indeed_not_hard_fail(self) -> None:
+        self.assertFalse(is_hard_fail_url("https://www.indeed.com/viewjob?jk=abc"))
+        self.assertFalse(is_hard_fail_url("https://indeed.com/viewjob?jk=abc"))
+
+    def test_non_matching_urls_pass(self) -> None:
+        self.assertFalse(is_hard_fail_url("https://boards.greenhouse.io/co/jobs/1"))
+        self.assertFalse(is_hard_fail_url("https://example.com/jobs/42"))
+
+    def test_netloc_subdomain_matches_allowlisted_registrable(self) -> None:
+        allowlist = frozenset({"indeed.com"})
+        self.assertTrue(_netloc_in_allowlist("indeed.com", allowlist))
+        self.assertTrue(_netloc_in_allowlist("www.indeed.com", allowlist))
+        self.assertTrue(_netloc_in_allowlist("secure.indeed.com:443", allowlist))
+        # Must not match a different registrable on the same suffix
+        self.assertFalse(_netloc_in_allowlist("evil-indeed.com", allowlist))
+        self.assertFalse(_netloc_in_allowlist("linkedin.com", allowlist))
+
+    def test_invalid_url_treated_as_hard_fail_when_pattern_matches(self) -> None:
+        # Pattern must match for hard-fail; garbage URLs don't match any pattern.
+        self.assertFalse(is_hard_fail_url("::not a url::"))
 
     def test_html_override_bypasses_network(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

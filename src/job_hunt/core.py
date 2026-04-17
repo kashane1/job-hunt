@@ -86,6 +86,33 @@ DEFAULT_RUNTIME_POLICY = {
     "stop_if_required_fact_missing": True,
     "secret_source": "env_or_local_untracked_file",
     "redact_secrets_in_artifacts": True,
+    # Batch 4 — autonomous Indeed application. The v4 policy invariant is
+    # `auto_submit_tiers = []`: the agent fills forms but never clicks Submit.
+    # Runtime overrides can tighten (force field-by-field review) but cannot
+    # loosen (AGENTS.md Safety Overrides). Tiers describe the depth of human
+    # field-level review required BEFORE the human clicks Submit themselves.
+    "apply_policy": {
+        "default_tier": "tier_2",
+        "auto_submit_tiers": [],
+        "tier_1_requirements": {
+            "all_answers_supported": True,
+            "ats_check_status": "passed",
+            "no_account_creation": True,
+            "preflight_not_already_applied": True,
+        },
+        "inter_application_delay_seconds": [60, 120],
+        "inter_application_pacing_distribution": "log_normal",
+        "inter_application_coffee_break_every_n": 5,
+        "inter_application_daily_cap": 20,
+        "score_floor": None,
+        "confirmation_email_timeout_minutes": 30,
+        "stale_attempt_threshold_minutes": 45,
+        "indeed_search_result_cap_per_run": 50,
+        "batch_size_cap": 10,
+        "retention_days": 365,
+        "allow_account_creation": False,
+        "gmail_query_window_days": 14,
+    },
 }
 
 COMMON_QUESTION_TEMPLATES = [
@@ -770,6 +797,10 @@ def normalize_profile_documents(
             )
             if metadata.get("remote_preference"):
                 aggregated["preferences"]["remote_preference"] = str(metadata["remote_preference"])
+            if metadata.get("work_authorization"):
+                aggregated["preferences"]["work_authorization"] = str(metadata["work_authorization"])
+            if "sponsorship_required" in metadata:
+                aggregated["preferences"]["sponsorship_required"] = bool(metadata["sponsorship_required"])
 
         normalized_document = {
             **doc_record,
@@ -978,6 +1009,10 @@ def normalize_profile(profile_root: Path, normalized_root: Path, scoring_config:
     for optional_key in ("minimum_compensation", "search_timeline"):
         if inferred_preferences.get(optional_key):
             merged_preferences[optional_key] = inferred_preferences[optional_key]
+    if aggregated["preferences"].get("work_authorization"):
+        merged_preferences["work_authorization"] = aggregated["preferences"]["work_authorization"]
+    if "sponsorship_required" in aggregated["preferences"]:
+        merged_preferences["sponsorship_required"] = aggregated["preferences"]["sponsorship_required"]
 
     candidate_profile = {
         "schema_version": "0.1.0",

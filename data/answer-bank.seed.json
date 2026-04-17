@@ -1,0 +1,342 @@
+{
+  "entries": [
+    {
+      "answer": "Yes",
+      "answer_format": "yes_no",
+      "canonical_question": "are you legally authorized to work in the united states",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "work_auth_us_authorized",
+      "notes": "Resolved from preferences.work_authorization when non-empty.",
+      "observed_variants": [
+        "Are you legally authorized to work in the US?",
+        "Are you authorized to work in the United States?",
+        "Do you have the legal right to work in the United States?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "No",
+      "answer_format": "yes_no",
+      "canonical_question": "will you now or in the future require sponsorship for employment visa status",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "sponsorship_not_required",
+      "notes": "Resolved from preferences.sponsorship_required when false.",
+      "observed_variants": [
+        "Will you now or in the future require sponsorship for employment visa status?",
+        "Do you require visa sponsorship?",
+        "Will you require sponsorship now or in the future?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "Yes",
+      "answer_format": "yes_no",
+      "canonical_question": "are you willing to work remotely",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "willing_remote_yes",
+      "notes": null,
+      "observed_variants": [
+        "Are you willing to work remotely?",
+        "Are you open to a remote position?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "No",
+      "answer_format": "yes_no",
+      "canonical_question": "are you willing to relocate",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "willing_relocate_no",
+      "notes": "Profile excludes relocation_required as a deal-breaker keyword.",
+      "observed_variants": [
+        "Are you willing to relocate?",
+        "Are you open to relocating for this role?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "I am available to start with 2 weeks' notice from my current role.",
+      "answer_format": "text",
+      "canonical_question": "when can you start",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "start_date_two_weeks",
+      "notes": "Template answer; update if notice period changes.",
+      "observed_variants": [
+        "When can you start?",
+        "What is your earliest start date?",
+        "What is your notice period?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": true,
+      "valid_until": null
+    },
+    {
+      "answer": "$140,000",
+      "answer_format": "text",
+      "canonical_question": "what is your minimum salary expectation",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "minimum_salary_base",
+      "notes": "Resolved from preferences.minimum_compensation.",
+      "observed_variants": [
+        "What is your minimum salary expectation?",
+        "What are your salary expectations?",
+        "Desired base salary?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": true,
+      "valid_until": null
+    },
+    {
+      "answer": "No",
+      "answer_format": "yes_no",
+      "canonical_question": "do you have a security clearance",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "clearance_none",
+      "notes": null,
+      "observed_variants": [
+        "Do you have a security clearance?",
+        "Do you have an active security clearance?",
+        "Do you hold any US government security clearance?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "{{years_experience_general}}",
+      "answer_format": "number",
+      "canonical_question": "how many years of professional software engineering experience do you have",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "years_experience_general",
+      "notes": "Computed at prepare-application time from candidate-profile experience timeline.",
+      "observed_variants": [
+        "How many years of professional software engineering experience do you have?",
+        "Years of experience?",
+        "Total years of software engineering experience?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": true,
+      "valid_until": null
+    },
+    {
+      "answer": "{{years_experience_python}}",
+      "answer_format": "number",
+      "canonical_question": "how many years of python experience do you have",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "years_experience_python",
+      "notes": "Computed from skill-tagged experience highlights mentioning Python.",
+      "observed_variants": [
+        "Years of Python experience?",
+        "How many years of Python have you worked with?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": true,
+      "valid_until": null
+    },
+    {
+      "answer": "{{years_experience_javascript}}",
+      "answer_format": "number",
+      "canonical_question": "how many years of javascript experience do you have",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "years_experience_javascript",
+      "notes": "Computed from skill-tagged experience highlights mentioning JavaScript/TypeScript/Node.",
+      "observed_variants": [
+        "Years of JavaScript experience?",
+        "Years of TypeScript experience?",
+        "How long have you worked with Node.js?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": true,
+      "valid_until": null
+    },
+    {
+      "answer": "{{linkedin_url}}",
+      "answer_format": "text",
+      "canonical_question": "linkedin url",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "linkedin_profile_url",
+      "notes": "Resolved from contact.links[matching linkedin.com/in/].",
+      "observed_variants": [
+        "LinkedIn URL",
+        "LinkedIn profile",
+        "LinkedIn profile URL"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "{{portfolio_url}}",
+      "answer_format": "text",
+      "canonical_question": "portfolio or website url",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "portfolio_url",
+      "notes": "Resolved from contact.links[first github.com or personal domain].",
+      "observed_variants": [
+        "Portfolio URL",
+        "Personal website",
+        "Portfolio or personal website"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "{{why_this_role}}",
+      "answer_format": "text",
+      "canonical_question": "why are you interested in this role",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "why_this_role_template",
+      "notes": "Rendered per application; synthesizes JD requirements with candidate experience highlights.",
+      "observed_variants": [
+        "Why are you interested in this role?",
+        "What interests you about this position?",
+        "Why this role?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "{{why_this_company}}",
+      "answer_format": "text",
+      "canonical_question": "why are you interested in working at this company",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "why_this_company_template",
+      "notes": "Rendered per application when company research exists; otherwise an honest 'learning about you' answer.",
+      "observed_variants": [
+        "Why are you interested in working here?",
+        "Why this company?",
+        "What draws you to our mission?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "{{greatest_strength_template}}",
+      "answer_format": "text",
+      "canonical_question": "what is your greatest strength",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "greatest_strength_template",
+      "notes": "Rendered with a concrete example from experience_highlights.",
+      "observed_variants": [
+        "What is your greatest strength?",
+        "What are you best at?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "{{tell_me_about_yourself}}",
+      "answer_format": "text",
+      "canonical_question": "tell me about yourself",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "tell_me_about_yourself_template",
+      "notes": "Short bio paragraph synthesized from resume + target_titles.",
+      "observed_variants": [
+        "Tell me about yourself",
+        "Tell us about your background",
+        "Walk me through your experience"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated_template",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "No",
+      "answer_format": "yes_no",
+      "canonical_question": "are you currently employed by this company",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "currently_employed_this_company_no",
+      "notes": "Universally no; flip manually if ever applying to current employer.",
+      "observed_variants": [
+        "Are you currently employed by us?",
+        "Have you previously been employed by this company?",
+        "Are you a current or former employee?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": false,
+      "valid_until": null
+    },
+    {
+      "answer": "Yes",
+      "answer_format": "yes_no",
+      "canonical_question": "are you at least 18 years of age",
+      "created_at": "2026-04-17T00:00:00Z",
+      "deprecated": false,
+      "entry_id": "age_over_18_yes",
+      "notes": null,
+      "observed_variants": [
+        "Are you at least 18 years of age?",
+        "Are you 18 or older?"
+      ],
+      "reviewed": true,
+      "reviewed_at": "2026-04-17T00:00:00Z",
+      "source": "curated",
+      "time_sensitive": false,
+      "valid_until": null
+    }
+  ],
+  "schema_version": 1
+}

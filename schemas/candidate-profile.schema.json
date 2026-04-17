@@ -81,7 +81,15 @@
         "target_titles": { "type": "array", "items": { "type": "string" } },
         "preferred_locations": { "type": "array", "items": { "type": "string" } },
         "remote_preference": { "type": "string" },
-        "excluded_keywords": { "type": "array", "items": { "type": "string" } }
+        "excluded_keywords": { "type": "array", "items": { "type": "string" } },
+        "work_authorization": {
+          "type": "string",
+          "description": "Free-text describing legal authorization status (e.g. 'US Citizen', 'Green Card', 'H1B', 'Canadian PR'). Consumed by answer_bank.resolve for work-auth questions on applications."
+        },
+        "sponsorship_required": {
+          "type": "boolean",
+          "description": "True when the candidate will need visa sponsorship now or in the future. Consumed by answer_bank.resolve for sponsorship questions."
+        }
       }
     }
   }
