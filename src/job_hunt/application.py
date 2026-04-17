@@ -1217,6 +1217,526 @@ def reopen_application(
     )
 
 
+# =============================================================================
+# Phase 7: apply_batch
+# =============================================================================
+
+import math
+import random
+import threading
+
+
+@dataclass(frozen=True)
+class BatchLeadResult:
+    draft_id: str
+    lead_id: str
+    final_status: str
+    tier: str
+    duration_seconds: float
+    error_code: str | None
+
+
+def _generate_batch_id() -> str:
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") + f"-{secrets.token_hex(4)}"
+
+
+def _sample_inter_application_delay(policy: dict, *, rng: random.Random) -> float:
+    """Sample one log-normal-ish pause between applications.
+
+    The plan's range is median ~90s, tail to 300s, floor 60s. We use a
+    truncated log-normal shape: `exp(normal(mu=ln(90), sigma=0.4))` clipped
+    into the configured bounds. Distribution keyword is read from policy;
+    unknown shapes fall back to uniform jitter for safety.
+    """
+    apply_policy = policy.get("apply_policy", {}) or {}
+    lower, upper = apply_policy.get("inter_application_delay_seconds", [60, 120])
+    shape = apply_policy.get("inter_application_pacing_distribution", "log_normal")
+    if shape == "log_normal":
+        mu = math.log(max(lower, 1.0) * 1.5)  # median ~1.5× lower bound
+        sigma = 0.4
+        sampled = math.exp(rng.gauss(mu, sigma))
+        return max(lower, min(sampled, upper * 2.5))  # upper*2.5 ≈ 300 when upper=120
+    return rng.uniform(lower, upper)
+
+
+def _daily_submission_count(data_root: Path) -> int:
+    """Count submitted_* attempts recorded today. Best-effort walk over
+    every draft's attempts/ dir — small fixed cost at batch start.
+    """
+    apps = data_root / "applications"
+    if not apps.is_dir():
+        return 0
+    today = datetime.now(UTC).date().isoformat()
+    count = 0
+    for draft_dir in apps.iterdir():
+        if not draft_dir.is_dir() or draft_dir.name in ("batches", "_suspicious"):
+            continue
+        attempts_dir = draft_dir / "attempts"
+        if not attempts_dir.is_dir():
+            continue
+        for path in attempts_dir.glob("*.json"):
+            try:
+                attempt = read_json(path)
+            except Exception:
+                continue
+            if not str(attempt.get("status", "")).startswith("submitted_"):
+                continue
+            recorded_at = attempt.get("recorded_at", "")
+            if recorded_at.startswith(today):
+                count += 1
+    return count
+
+
+def _select_leads(
+    leads_dir: Path,
+    *,
+    top: int,
+    source: str | None,
+    score_floor: float | None,
+) -> list[dict]:
+    """Return up to ``top`` scored leads matching the filters.
+
+    Source filter matches ``lead['source']`` prefix (e.g. source='indeed'
+    matches 'indeed_search' + 'indeed_viewjob'). Leads with an existing
+    terminal status (submitted, confirmed, withdrawn, etc.) are excluded.
+    """
+    if not leads_dir.is_dir():
+        return []
+    excluded_statuses = {"applied", "submitted", "confirmed", "withdrawn", "applied_externally"}
+    candidates: list[tuple[float, dict]] = []
+    for path in leads_dir.glob("*.json"):
+        try:
+            lead = read_json(path)
+        except Exception:
+            continue
+        status = str(lead.get("status", ""))
+        if status in excluded_statuses:
+            continue
+        if status not in ("scored", "shortlisted", "drafted", "discovered"):
+            continue
+        if source:
+            lead_source = str(lead.get("source", ""))
+            if not (lead_source == source or lead_source.startswith(source + "_")):
+                continue
+        score = float(lead.get("fit_assessment", {}).get("fit_score", 0))
+        if score_floor is not None and score < score_floor:
+            continue
+        candidates.append((-score, lead))
+    candidates.sort(key=lambda t: t[0])
+    return [lead for _, lead in candidates[:top]]
+
+
+def _write_batch_progress(batch_dir: Path, payload: dict) -> None:
+    write_json(batch_dir / "progress.json", payload)
+
+
+def _write_heartbeat(batch_dir: Path) -> None:
+    write_json(batch_dir / "heartbeat.json", {
+        "batch_id": batch_dir.name,
+        "last_heartbeat_at": now_iso(),
+    })
+
+
+def _heartbeat_loop(batch_dir: Path, stop_event: threading.Event, interval_s: float) -> None:
+    while not stop_event.wait(interval_s):
+        try:
+            _write_heartbeat(batch_dir)
+        except OSError:
+            pass
+
+
+def apply_batch(
+    *,
+    top: int,
+    score_floor: float | None = None,
+    source: str | None = "indeed",
+    dry_run: bool = False,
+    runtime_policy: dict,
+    candidate_profile: dict,
+    data_root: Path | None = None,
+    leads_dir: Path | None = None,
+    sleep_fn=time.sleep,
+    rng: random.Random | None = None,
+    heartbeat_interval_s: float = 10.0,
+    enable_heartbeat_thread: bool = True,
+) -> dict:
+    """Prepare the next ``top`` leads as a cohesive batch.
+
+    Acquires a directory-level lock on ``data/applications/batches/.lock``
+    so two ``apply-batch`` invocations can't race against the same Chrome
+    profile. Writes a heartbeat file every ``heartbeat_interval_s`` so a
+    subsequent reconciler can detect crashed batches.
+
+    Returns a dict with ``batch_id``, ``status``, ``results`` (one entry
+    per lead), and the paths of the summary + report artifacts.
+
+    Testability hooks:
+    - ``sleep_fn`` lets tests pass a no-op to keep wall clock short.
+    - ``rng`` lets tests seed the pacing sampler deterministically.
+    - ``enable_heartbeat_thread=False`` skips the background thread so a
+      test process doesn't leak threads at tear-down.
+    """
+    assert_auto_submit_invariant(runtime_policy)
+
+    data_root = data_root or (repo_root() / "data")
+    leads_dir = leads_dir or (data_root / "leads")
+    rng = rng or random.Random()
+    apply_policy = runtime_policy.get("apply_policy", {}) or {}
+
+    batch_root = data_root / "applications" / "batches"
+    ensure_dir(batch_root)
+    lock_path = batch_root / ".lock"
+
+    # Directory-level lock — one-line deviation from the sibling-lockfile
+    # pattern used for answer-bank.json. `.lock` sits inside the resource
+    # (the batches/ dir), not next to it.
+    try:
+        lock_cm = file_lock(lock_path, check_mtime=False)
+        lock_cm.__enter__()
+    except FileLockContentionError as exc:
+        raise PlanError(
+            str(exc),
+            error_code="batch_already_running",
+            remediation=(
+                "Another apply-batch is running or crashed. Inspect "
+                "data/applications/batches/{batch_id}/heartbeat.json; if stale "
+                "(>90s), it's safe to delete the .lock sibling."
+            ),
+        ) from exc
+
+    batch_id = _generate_batch_id()
+    batch_dir = batch_root / batch_id
+    ensure_dir(batch_dir)
+
+    stop_event = threading.Event()
+    heartbeat_thread: threading.Thread | None = None
+    started = time.monotonic()
+    started_iso = now_iso()
+
+    results: list[BatchLeadResult] = []
+    final_status = "running"
+    abort_reason: str | None = None
+
+    try:
+        _write_heartbeat(batch_dir)
+        if enable_heartbeat_thread:
+            heartbeat_thread = threading.Thread(
+                target=_heartbeat_loop,
+                args=(batch_dir, stop_event, heartbeat_interval_s),
+                daemon=True,
+            )
+            heartbeat_thread.start()
+
+        # Reconcile first — only touches prior-batch orphans because
+        # current_batch_id is ours.
+        reconcile_stale_attempts(
+            runtime_policy, current_batch_id=batch_id, data_root=data_root
+        )
+
+        # Daily cap enforcement
+        cap = int(apply_policy.get("inter_application_daily_cap", 20))
+        today_count = _daily_submission_count(data_root)
+        if today_count >= cap:
+            raise PlanError(
+                f"Daily application cap reached ({today_count}/{cap})",
+                error_code="daily_cap_reached",
+                remediation="Wait until tomorrow or raise apply_policy.inter_application_daily_cap.",
+            )
+
+        # Lead selection
+        leads = _select_leads(
+            leads_dir, top=top, source=source, score_floor=score_floor,
+        )
+        if not leads:
+            raise PlanError(
+                "No scored leads matched the batch filters",
+                error_code="no_scored_leads",
+                remediation="Run discover-jobs or lower --floor to expand selection.",
+            )
+
+        _write_batch_progress(batch_dir, {
+            "schema_version": 1,
+            "batch_id": batch_id,
+            "current_index": 0,
+            "total": len(leads),
+            "current_draft_id": None,
+            "current_phase": "preparing",
+            "eta_seconds": None,
+            "updated_at": now_iso(),
+        })
+
+        # Pre-warm cache — key: lead_id, value: PrepareResult
+        prewarm: dict[str, PrepareResult] = {}
+        prewarm_lock = threading.Lock()
+
+        def _prep(lead: dict) -> PrepareResult:
+            return prepare_application(
+                lead, candidate_profile, runtime_policy,
+                output_root=data_root / "applications",
+                data_root=data_root,
+            )
+
+        coffee_break_every = int(apply_policy.get("inter_application_coffee_break_every_n", 5) or 0)
+
+        for i, lead in enumerate(leads):
+            lead_start = time.monotonic()
+            with prewarm_lock:
+                prepared_cached = prewarm.pop(lead["lead_id"], None)
+            _write_batch_progress(batch_dir, {
+                "schema_version": 1,
+                "batch_id": batch_id,
+                "current_index": i,
+                "total": len(leads),
+                "current_draft_id": None,
+                "current_phase": "preparing",
+                "eta_seconds": None,
+                "updated_at": now_iso(),
+            })
+            if prepared_cached is not None:
+                prepared = prepared_cached
+            else:
+                prepared = _prep(lead)
+
+            # Emit an apply-posting handoff bundle to the progress channel
+            # so an external agent can pick it up.
+            bundle = apply_posting(prepared.draft_id, dry_run=dry_run, data_root=data_root)
+            handoff_path = batch_dir / f"handoff-{i:03d}-{prepared.draft_id}.json"
+            write_json(handoff_path, bundle)
+
+            if dry_run:
+                # Record a dry_run_only attempt so the audit trail reflects
+                # the batch without lifecycle advancement.
+                try:
+                    record_attempt(prepared.draft_id, {
+                        "status": "dry_run_only",
+                        "checkpoint": "ready_to_submit",
+                        "batch_id": batch_id,
+                        "tier_at_attempt": prepared.tier,
+                    }, data_root=data_root)
+                except (ApplicationError, PlanError):
+                    pass
+
+            results.append(BatchLeadResult(
+                draft_id=prepared.draft_id,
+                lead_id=prepared.draft_id.rsplit("-apply-", 1)[0],
+                final_status="prepared" if not dry_run else "dry_run_only",
+                tier=prepared.tier,
+                duration_seconds=time.monotonic() - lead_start,
+                error_code=None,
+            ))
+
+            # Pipelining: kick off prep of the next lead in the background,
+            # overlapping the pacing sleep for this lead.
+            is_last = (i + 1 >= len(leads))
+            prep_thread: threading.Thread | None = None
+            if not is_last:
+                next_lead = leads[i + 1]
+
+                def _bg_prep(nl=next_lead) -> None:
+                    try:
+                        pr = _prep(nl)
+                        with prewarm_lock:
+                            prewarm[nl["lead_id"]] = pr
+                    except Exception:
+                        pass  # lead is retried synchronously when we reach it
+
+                prep_thread = threading.Thread(target=_bg_prep, daemon=True)
+                prep_thread.start()
+
+                _write_batch_progress(batch_dir, {
+                    "schema_version": 1,
+                    "batch_id": batch_id,
+                    "current_index": i,
+                    "total": len(leads),
+                    "current_draft_id": prepared.draft_id,
+                    "current_phase": "sleeping",
+                    "eta_seconds": None,
+                    "updated_at": now_iso(),
+                })
+
+                delay = 0.0 if dry_run else _sample_inter_application_delay(
+                    runtime_policy, rng=rng,
+                )
+                if coffee_break_every and (i + 1) % coffee_break_every == 0 and not dry_run:
+                    delay += rng.uniform(300, 900)
+                sleep_fn(delay)
+                if prep_thread is not None:
+                    prep_thread.join()
+
+        final_status = "completed"
+
+    except PlanError:
+        final_status = "aborted"
+        raise
+    except Exception as exc:  # noqa: BLE001 — batch-level safety net
+        final_status = "aborted"
+        abort_reason = str(exc)
+        raise
+    finally:
+        stop_event.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=heartbeat_interval_s + 1)
+
+        ended = time.monotonic()
+        summary = {
+            "schema_version": 1,
+            "batch_id": batch_id,
+            "started_at": started_iso,
+            "completed_at": now_iso(),
+            "status": final_status,
+            "abort_reason": abort_reason,
+            "lead_ids": [r.lead_id for r in results],
+            "results": [
+                {
+                    "draft_id": r.draft_id,
+                    "final_status": r.final_status,
+                    "tier": r.tier,
+                    "duration_seconds": r.duration_seconds,
+                    "error_code": r.error_code,
+                }
+                for r in results
+            ],
+            "latency_budget": {
+                "target_seconds": 2100,
+                "actual_seconds": ended - started,
+                "pipelining_enabled": True,
+            },
+        }
+        write_json(batch_dir / "summary.json", summary)
+        report_path = _write_batch_report(batch_id, summary, data_root=data_root)
+        lock_cm.__exit__(None, None, None)
+
+    return {
+        "batch_id": batch_id,
+        "status": final_status,
+        "results": summary["results"],
+        "summary_path": str(batch_dir / "summary.json"),
+        "report_path": str(report_path),
+        "batch_dir": str(batch_dir),
+    }
+
+
+def _write_batch_report(batch_id: str, summary: dict, *, data_root: Path) -> Path:
+    reports_dir = repo_root() / "docs" / "reports"
+    ensure_dir(reports_dir)
+    path = reports_dir / f"apply-batch-{batch_id}.md"
+    lines = [
+        f"# Apply Batch {batch_id}",
+        "",
+        f"- Started: {summary['started_at']}",
+        f"- Completed: {summary['completed_at']}",
+        f"- Status: {summary['status']}",
+        f"- Wall-clock seconds: {summary['latency_budget'].get('actual_seconds', 0):.0f}",
+        f"- Pipelining enabled: {summary['latency_budget']['pipelining_enabled']}",
+        "",
+        "## Results",
+        "",
+    ]
+    for r in summary["results"]:
+        lines.append(
+            f"- `{r['draft_id']}` → {r['final_status']} (tier={r['tier']}, "
+            f"duration={r['duration_seconds']:.1f}s)"
+        )
+    if not summary["results"]:
+        lines.append("_No leads processed._")
+    lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+def list_batches(
+    *,
+    active: bool = False,
+    since: datetime | None = None,
+    data_root: Path | None = None,
+) -> list[dict]:
+    data_root = data_root or (repo_root() / "data")
+    batch_root = data_root / "applications" / "batches"
+    if not batch_root.is_dir():
+        return []
+    out: list[dict] = []
+    for path in sorted(batch_root.iterdir()):
+        if not path.is_dir():
+            continue
+        summary_path = path / "summary.json"
+        progress_path = path / "progress.json"
+        if summary_path.exists():
+            s = read_json(summary_path)
+        elif progress_path.exists():
+            p = read_json(progress_path)
+            s = {
+                "batch_id": p.get("batch_id", path.name),
+                "status": "running",
+                "started_at": p.get("updated_at"),
+                "completed_at": None,
+                "results": [],
+            }
+        else:
+            continue
+        if active and s.get("status") not in ("running",):
+            continue
+        if since:
+            started = s.get("started_at", "")
+            try:
+                started_dt = datetime.fromisoformat(started.replace("Z", "+00:00"))
+                if started_dt < since:
+                    continue
+            except ValueError:
+                continue
+        out.append({
+            "batch_id": s.get("batch_id", path.name),
+            "status": s.get("status"),
+            "started_at": s.get("started_at"),
+            "completed_at": s.get("completed_at"),
+            "result_count": len(s.get("results", [])),
+        })
+    return out
+
+
+def batch_status(batch_id: str, *, data_root: Path | None = None) -> dict:
+    data_root = data_root or (repo_root() / "data")
+    batch_dir = data_root / "applications" / "batches" / batch_id
+    if not batch_dir.is_dir():
+        raise PlanError(
+            f"Unknown batch_id {batch_id!r}",
+            error_code="profile_field_missing",
+            remediation="Use batch-list to enumerate available batches.",
+        )
+    summary_path = batch_dir / "summary.json"
+    progress_path = batch_dir / "progress.json"
+    heartbeat_path = batch_dir / "heartbeat.json"
+    payload: dict = {}
+    if summary_path.exists():
+        payload["summary"] = read_json(summary_path)
+    if progress_path.exists():
+        payload["progress"] = read_json(progress_path)
+    if heartbeat_path.exists():
+        payload["heartbeat"] = read_json(heartbeat_path)
+    return payload
+
+
+def batch_cancel(batch_id: str, *, data_root: Path | None = None) -> dict:
+    data_root = data_root or (repo_root() / "data")
+    batch_dir = data_root / "applications" / "batches" / batch_id
+    if not batch_dir.is_dir():
+        raise PlanError(
+            f"Unknown batch_id {batch_id!r}",
+            error_code="profile_field_missing",
+            remediation="Use batch-list to enumerate available batches.",
+        )
+    cancel_sentinel = batch_dir / "CANCEL"
+    cancel_sentinel.write_text(now_iso(), encoding="utf-8")
+    summary_path = batch_dir / "summary.json"
+    if summary_path.exists():
+        summary = read_json(summary_path)
+        if summary.get("status") == "running":
+            summary["status"] = "aborted"
+            summary["abort_reason"] = "batch_cancel CLI invocation"
+            summary["completed_at"] = now_iso()
+            write_json(summary_path, summary)
+    return {"batch_id": batch_id, "cancelled_at": now_iso()}
+
+
 def refresh_application(
     draft_id: str,
     candidate_profile: dict,

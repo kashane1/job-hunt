@@ -1944,6 +1944,34 @@ def build_parser() -> argparse.ArgumentParser:
     rop.add_argument("--data-root", default="data")
     rop.add_argument("--dry-run", action="store_true")
 
+    # ----- Batch 4 Phase 7: batch orchestration -----
+    ab = subparsers.add_parser(
+        "apply-batch",
+        help="Prepare the next N leads as a cohesive batch (lock, pacing, pipelining)",
+    )
+    ab.add_argument("--top", type=int, required=True)
+    ab.add_argument("--floor", type=float, default=None)
+    ab.add_argument("--source", default="indeed")
+    ab.add_argument("--runtime-config", default="config/runtime.yaml")
+    ab.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    ab.add_argument("--leads-dir", default="data/leads")
+    ab.add_argument("--data-root", default="data")
+    ab.add_argument("--dry-run", action="store_true")
+
+    bl = subparsers.add_parser("batch-list", help="List batch runs")
+    bl.add_argument("--data-root", default="data")
+    bl.add_argument("--active", action="store_true")
+    bl.add_argument("--since", default="")
+
+    bs = subparsers.add_parser("batch-status", help="Show live batch progress + summary")
+    bs.add_argument("--batch-id", required=True)
+    bs.add_argument("--data-root", default="data")
+
+    bc = subparsers.add_parser("batch-cancel", help="Cooperative abort of a running batch")
+    bc.add_argument("--batch-id", required=True)
+    bc.add_argument("--data-root", default="data")
+    bc.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -2779,6 +2807,71 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
             return 2
         print(json.dumps({"status": "ok", "draft_id": args.draft_id, "lifecycle_state": status["lifecycle_state"]}, indent=2))
+        return 0
+
+    # --- Batch 4 Phase 7: batch orchestration ---
+    if args.command == "apply-batch":
+        from .application import PlanError, apply_batch
+
+        policy = {**DEFAULT_RUNTIME_POLICY, **load_yaml_file(Path(args.runtime_config), {})}
+        profile = read_json(Path(args.profile))
+        try:
+            result = apply_batch(
+                top=args.top,
+                score_floor=args.floor,
+                source=args.source or None,
+                dry_run=args.dry_run,
+                runtime_policy=policy,
+                candidate_profile=profile,
+                data_root=Path(args.data_root),
+                leads_dir=Path(args.leads_dir),
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", **result}, indent=2))
+        return 0
+
+    if args.command == "batch-list":
+        from .application import list_batches
+        from datetime import datetime as _dt
+
+        since = None
+        if args.since:
+            try:
+                since = _dt.fromisoformat(args.since)
+            except ValueError:
+                parser.error(f"Invalid --since date: {args.since}")
+                return 2
+        batches = list_batches(
+            active=args.active, since=since, data_root=Path(args.data_root)
+        )
+        print(json.dumps({"status": "ok", "count": len(batches), "batches": batches}, indent=2))
+        return 0
+
+    if args.command == "batch-status":
+        from .application import PlanError, batch_status
+
+        try:
+            payload = batch_status(args.batch_id, data_root=Path(args.data_root))
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "batch_id": args.batch_id, **payload}, indent=2))
+        return 0
+
+    if args.command == "batch-cancel":
+        from .application import PlanError, batch_cancel
+
+        if args.dry_run:
+            print(json.dumps({"status": "ok", "dry_run": True, "batch_id": args.batch_id}, indent=2))
+            return 0
+        try:
+            payload = batch_cancel(args.batch_id, data_root=Path(args.data_root))
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", **payload}, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")
