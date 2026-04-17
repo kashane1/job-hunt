@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApplicationAttempt",
+  "description": "Per-attempt outcome record written by the agent to data/applications/{draft_id}/attempts/{iso_ts}-{uuid8}.json at each playbook checkpoint. Files are byte-immutable after the first successful write; the reconciler writes NEW files that reference prior ones via `supersedes`.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "draft_id",
+    "batch_id",
+    "attempt_filename",
+    "status",
+    "checkpoint",
+    "recorded_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "draft_id": { "type": "string" },
+    "batch_id": {
+      "type": "string",
+      "description": "Either the batch ULID/timestamp format or `adhoc-<iso>-<uuid8>` for non-batch apply-posting invocations.",
+      "pattern": "^(adhoc-[0-9TZ:.+\\-]+-[a-f0-9]{8}|[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8})$"
+    },
+    "attempt_filename": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}\\.json$"
+    },
+    "status": {
+      "enum": [
+        "in_progress",
+        "submitted_provisional",
+        "submitted_confirmed",
+        "paused_tier2",
+        "paused_unknown_question",
+        "paused_human_abort",
+        "failed",
+        "dry_run_only",
+        "unknown_outcome"
+      ]
+    },
+    "checkpoint": {
+      "type": "string",
+      "description": "Must be a member of the playbook's declared checkpoint_sequence (enforced by record_attempt)."
+    },
+    "supersedes": {
+      "type": ["string", "null"],
+      "description": "Prior attempt filename when this record is a reconciliation entry. Non-null implies the original was an in_progress entry beyond the stale threshold."
+    },
+    "tier_at_attempt": { "enum": ["tier_1", "tier_2", "tier_3"] },
+    "tier_downgraded_from": {
+      "type": ["string", "null"],
+      "enum": ["tier_1", "tier_2", null]
+    },
+    "error_code": {
+      "type": ["string", "null"],
+      "description": "Member of APPLICATION_ERROR_CODES when status=failed; otherwise null."
+    },
+    "tab_metrics": {
+      "type": "object",
+      "properties": {
+        "peak_open_tabs": { "type": "integer", "minimum": 0 },
+        "opened": { "type": "integer", "minimum": 0 },
+        "closed_for_budget": { "type": "integer", "minimum": 0 },
+        "hard_limit_hit": { "type": "boolean" }
+      }
+    },
+    "recorded_at": { "type": "string", "format": "date-time" }
+  }
+}

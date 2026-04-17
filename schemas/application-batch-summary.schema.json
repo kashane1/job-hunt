@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApplicationBatchSummary",
+  "description": "Rollup artifact written by apply_batch at completion (or on abort). Sibling to progress.json and heartbeat.json in data/applications/batches/{batch_id}/.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "batch_id",
+    "started_at",
+    "status",
+    "lead_ids",
+    "results",
+    "latency_budget"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$"
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": ["string", "null"], "format": "date-time" },
+    "status": { "enum": ["running", "completed", "aborted", "partial"] },
+    "abort_reason": { "type": ["string", "null"] },
+    "lead_ids": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["draft_id", "final_status"],
+        "properties": {
+          "draft_id": { "type": "string" },
+          "final_status": { "type": "string" },
+          "tier": { "enum": ["tier_1", "tier_2", "tier_3"] },
+          "duration_seconds": { "type": "number", "minimum": 0 },
+          "error_code": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "latency_budget": {
+      "type": "object",
+      "required": ["target_seconds", "pipelining_enabled"],
+      "properties": {
+        "target_seconds": { "type": "number", "minimum": 0 },
+        "actual_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "pipelining_enabled": { "type": "boolean" }
+      }
+    }
+  }
+}

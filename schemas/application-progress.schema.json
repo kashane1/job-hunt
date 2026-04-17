@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApplicationBatchProgress",
+  "description": "Live progress snapshot updated by apply_batch as each lead advances. Written atomically alongside heartbeat.json in data/applications/batches/{batch_id}/.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "batch_id",
+    "current_index",
+    "total",
+    "current_phase",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "batch_id": {
+      "type": "string",
+      "pattern": "^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{8}$"
+    },
+    "current_index": { "type": "integer", "minimum": 0 },
+    "total": { "type": "integer", "minimum": 0 },
+    "current_draft_id": { "type": ["string", "null"] },
+    "current_phase": {
+      "enum": ["preparing", "applying", "recording", "sleeping"]
+    },
+    "eta_seconds": { "type": ["number", "null"], "minimum": 0 },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

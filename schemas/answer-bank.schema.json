@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AnswerBank",
+  "description": "Compounding question → answer knowledge base used by prepare_application to resolve form fields. Ships as a tracked seed (data/answer-bank.seed.json); working copy is gitignored (PII).",
+  "type": "object",
+  "required": ["schema_version", "entries"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "entry_id",
+          "canonical_question",
+          "answer",
+          "answer_format",
+          "source",
+          "reviewed",
+          "created_at"
+        ],
+        "properties": {
+          "entry_id": { "type": "string" },
+          "canonical_question": {
+            "type": "string",
+            "description": "Normalized lookup key (lowercase, punctuation stripped except + #, whitespace collapsed)."
+          },
+          "observed_variants": {
+            "type": "array",
+            "uniqueItems": true,
+            "maxItems": 50,
+            "items": { "type": "string" }
+          },
+          "answer": { "type": "string" },
+          "answer_format": {
+            "enum": ["yes_no", "text", "multi_select", "number", "date"]
+          },
+          "source": {
+            "enum": ["curated", "curated_template", "inferred"]
+          },
+          "reviewed": { "type": "boolean" },
+          "deprecated": { "type": "boolean", "default": false },
+          "reviewed_at": { "type": ["string", "null"], "format": "date-time" },
+          "time_sensitive": { "type": "boolean", "default": false },
+          "valid_until": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Staleness check warns when past. Never auto-deprecates."
+          },
+          "created_at": { "type": "string", "format": "date-time" },
+          "notes": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

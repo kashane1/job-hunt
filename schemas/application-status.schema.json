@@ -1,14 +1,38 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ApplicationStatus",
+  "description": "Lifecycle record for a lead — both the legacy tracking shape (created_at, transitions[], current_stage) and the Batch 4 application-bundle shape (lifecycle_state, events[], attempts[] summary, tier, confirmation). New fields are all optional on read so prior-batch files still validate.",
   "type": "object",
   "required": ["lead_id", "current_stage", "transitions", "created_at", "updated_at"],
   "properties": {
     "lead_id": { "type": "string" },
+    "draft_id": { "type": "string" },
+    "schema_version": { "type": "integer", "const": 1 },
     "current_stage": {
       "enum": ["not_applied", "applied", "phone_screen", "technical",
                "onsite", "offer", "accepted", "rejected", "withdrawn", "ghosted"]
     },
+    "lifecycle_state": {
+      "description": "Batch 4 per-application lifecycle state. Priority ladder enforced by confirmation.update_status: confirmed > submitted > applying > drafted; lower-priority writes do not override higher-priority states.",
+      "enum": [
+        "drafted",
+        "queued",
+        "applying",
+        "submitted",
+        "confirmed",
+        "interview",
+        "rejected",
+        "offer",
+        "ghosted",
+        "withdrawn",
+        "applied_externally",
+        "posting_closed",
+        "unknown_outcome",
+        "failed"
+      ]
+    },
+    "tier": { "enum": ["tier_1", "tier_2", "tier_3"] },
+    "tier_rationale": { "type": "string", "maxLength": 500 },
     "transitions": {
       "type": "array",
       "items": {
@@ -26,6 +50,62 @@
           "timestamp": { "type": "string" },
           "note": { "type": "string" }
         }
+      }
+    },
+    "attempts": {
+      "description": "Summary index of attempt files. Full payload lives in data/applications/{draft_id}/attempts/{filename}.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["filename", "status", "checkpoint", "recorded_at"],
+        "properties": {
+          "filename": { "type": "string" },
+          "status": { "type": "string" },
+          "checkpoint": { "type": "string" },
+          "recorded_at": { "type": "string", "format": "date-time" },
+          "supersedes": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "events": {
+      "description": "Append-only lifecycle event log. event_id = sha256(source_id || ':' || type) provides idempotency; duplicate events are no-ops.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["event_id", "type", "source_id", "occurred_at"],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "type": {
+            "enum": [
+              "submitted",
+              "confirmed",
+              "rejected",
+              "interview",
+              "offer",
+              "ghosted",
+              "withdrawn",
+              "reopened"
+            ]
+          },
+          "source_id": {
+            "type": "string",
+            "description": "gmail:<Message-ID> | attempt:<filename> | cli:<command>:<ulid>"
+          },
+          "occurred_at": { "type": "string", "format": "date-time" },
+          "payload": { "type": "object" }
+        }
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "properties": {
+        "email_message_id": { "type": "string" },
+        "sender": { "type": "string" },
+        "dkim_verified": { "type": "boolean" },
+        "matched_via": { "type": "string" }
       }
     },
     "generated_content_ids": {

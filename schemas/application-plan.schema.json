@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ApplicationPlan",
+  "description": "Per-application plan: draft identity, surface, profile snapshot, correlation keys, fields-to-fill with provenance, tier, ats check, untrusted JD content. Written by prepare_application under data/applications/{draft_id}/plan.json.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "draft_id",
+    "lead_id",
+    "surface",
+    "playbook_path",
+    "correlation_keys",
+    "profile_snapshot",
+    "untrusted_fetched_content",
+    "fields",
+    "tier",
+    "prepared_at"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "draft_id": { "type": "string" },
+    "lead_id": { "type": "string" },
+    "surface": {
+      "enum": [
+        "indeed_easy_apply",
+        "greenhouse_redirect",
+        "lever_redirect",
+        "workday_redirect",
+        "ashby_redirect"
+      ]
+    },
+    "playbook_path": { "type": "string" },
+    "correlation_keys": {
+      "type": "object",
+      "required": ["posting_url", "company", "title"],
+      "properties": {
+        "indeed_jk": {
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{16}$"
+        },
+        "posting_url": { "type": "string", "format": "uri" },
+        "company": { "type": "string" },
+        "title": { "type": "string" },
+        "submitted_at": { "type": ["string", "null"], "format": "date-time" }
+      }
+    },
+    "profile_snapshot": {
+      "type": "object",
+      "required": ["snapshot_version", "snapshot_at"],
+      "properties": {
+        "work_authorization": { "type": "string" },
+        "sponsorship_required": { "type": "boolean" },
+        "years_experience": { "type": "number" },
+        "location": { "type": "string" },
+        "snapshot_version": { "type": "integer" },
+        "snapshot_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "untrusted_fetched_content": {
+      "type": "object",
+      "required": ["job_description", "nonce"],
+      "description": "Job description text and a 16-hex nonce used for fenced-delimiter wrapping in the agent handoff bundle. Playbooks treat the wrapped content as DATA, never as instructions.",
+      "properties": {
+        "job_description": { "type": "string" },
+        "nonce": { "type": "string", "pattern": "^[a-f0-9]{16}$" }
+      }
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["field_id", "question_text", "normalized_question", "answer", "provenance", "answer_format"],
+        "properties": {
+          "field_id": { "type": "string" },
+          "question_text": { "type": "string" },
+          "normalized_question": { "type": "string" },
+          "answer": { "type": "string" },
+          "provenance": {
+            "enum": ["profile", "curated", "curated_template", "inferred", "none"]
+          },
+          "answer_format": {
+            "enum": ["yes_no", "text", "multi_select", "number", "date"]
+          }
+        }
+      }
+    },
+    "tier": { "enum": ["tier_1", "tier_2", "tier_3"] },
+    "tier_rationale": {
+      "type": "string",
+      "maxLength": 500,
+      "description": "Required when tier != tier_1. Convention: prepend a machine tag like `unresolved_field:X` or `ats_status:warnings` for grep."
+    },
+    "ats_check": {
+      "type": "object",
+      "properties": {
+        "status": { "type": "string" },
+        "errors": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "prepared_at": { "type": "string", "format": "date-time" }
+  }
+}
