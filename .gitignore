@@ -32,9 +32,12 @@ config/watchlist.yaml
 # Template seed `data/answer-bank.seed.json` IS tracked; working copy is not.
 data/answer-bank.json
 data/answer-bank-audit.log
+data/answer-bank.json.lock
 data/gmail-cursor.json
 data/applications/**/checkpoints/
 data/applications/**/attempts/
 data/applications/_suspicious/
 data/applications/batches/.lock
+docs/reports/answer-bank-pending.md
+docs/reports/apply-batch-*.md
 

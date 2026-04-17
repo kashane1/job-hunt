@@ -1788,6 +1788,61 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preflight.add_argument("--runtime-config", default="config/runtime.yaml")
 
+    # ----- Batch 4 Phase 2: answer bank mutations + queries -----
+    ab_bank_arg_default = "data/answer-bank.json"
+
+    ab_list_pending = subparsers.add_parser(
+        "answer-bank-list-pending",
+        help="List inferred/stale bank entries awaiting human review",
+    )
+    ab_list_pending.add_argument("--bank", default=ab_bank_arg_default)
+    ab_list_pending.add_argument("--since", default="")
+    ab_list_pending.add_argument(
+        "--report",
+        default="docs/reports/answer-bank-pending.md",
+        help="Path to render the pending-review markdown report",
+    )
+
+    ab_list = subparsers.add_parser(
+        "answer-bank-list",
+        help="Enumerate answer-bank entries (optionally filtered by status)",
+    )
+    ab_list.add_argument("--bank", default=ab_bank_arg_default)
+    ab_list.add_argument("--status", default="")
+    ab_list.add_argument("--since", default="")
+
+    ab_show = subparsers.add_parser(
+        "answer-bank-show",
+        help="Print a single bank entry by id",
+    )
+    ab_show.add_argument("--bank", default=ab_bank_arg_default)
+    ab_show.add_argument("--entry-id", required=True)
+
+    ab_validate = subparsers.add_parser(
+        "answer-bank-validate",
+        help="Schema-check the bank and replay the audit log for tamper detection",
+    )
+    ab_validate.add_argument("--bank", default=ab_bank_arg_default)
+
+    ab_promote = subparsers.add_parser(
+        "answer-bank-promote",
+        help="Flip an inferred entry to curated/reviewed",
+    )
+    ab_promote.add_argument("--bank", default=ab_bank_arg_default)
+    ab_promote.add_argument("--entry-id", required=True)
+    ab_promote.add_argument("--answer", required=True)
+    ab_promote.add_argument("--notes", default="")
+    ab_promote.add_argument("--dry-run", action="store_true")
+
+    ab_deprecate = subparsers.add_parser(
+        "answer-bank-deprecate",
+        help="Mark a bank entry deprecated (resolve() will skip it)",
+    )
+    ab_deprecate.add_argument("--bank", default=ab_bank_arg_default)
+    ab_deprecate.add_argument("--entry-id", required=True)
+    ab_deprecate.add_argument("--reason", required=True)
+    ab_deprecate.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -2329,6 +2384,104 @@ def main(argv: list[str] | None = None) -> int:
         report = run_preflight(policy)
         print(json.dumps(report, indent=2))
         return 0 if report["ok"] else 2
+
+    # --- Batch 4 Phase 2: answer bank CLIs ---
+    if args.command == "answer-bank-list-pending":
+        from .answer_bank import list_pending, write_pending_report
+        from datetime import date as _date
+
+        since = _date.fromisoformat(args.since) if args.since else None
+        pending = list_pending(Path(args.bank), since=since)
+        if args.report:
+            write_pending_report(pending, Path(args.report))
+        print(json.dumps({
+            "status": "ok",
+            "count": len(pending),
+            "entries": pending,
+            "report_path": args.report or None,
+        }, indent=2))
+        return 0
+
+    if args.command == "answer-bank-list":
+        from .answer_bank import list_entries
+        from datetime import date as _date
+
+        since = _date.fromisoformat(args.since) if args.since else None
+        status = args.status or None
+        entries = list_entries(Path(args.bank), status=status, since=since)
+        print(json.dumps({"status": "ok", "count": len(entries), "entries": entries}, indent=2))
+        return 0
+
+    if args.command == "answer-bank-show":
+        from .answer_bank import show_entry
+        from .application import PlanError
+
+        try:
+            entry = show_entry(Path(args.bank), args.entry_id)
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "entry": entry}, indent=2))
+        return 0
+
+    if args.command == "answer-bank-validate":
+        from .answer_bank import validate as validate_bank
+
+        report = validate_bank(Path(args.bank))
+        print(json.dumps(report, indent=2))
+        return 0 if report["valid"] else 2
+
+    if args.command == "answer-bank-promote":
+        from .answer_bank import promote, show_entry
+        from .application import PlanError
+
+        if args.dry_run:
+            try:
+                current = show_entry(Path(args.bank), args.entry_id)
+            except PlanError as exc:
+                print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+                return 2
+            preview = {
+                **current,
+                "answer": args.answer,
+                "source": "curated",
+                "reviewed": True,
+            }
+            print(json.dumps({"status": "ok", "dry_run": True, "preview": preview}, indent=2))
+            return 0
+        try:
+            entry = promote(
+                args.entry_id,
+                args.answer,
+                Path(args.bank),
+                notes=args.notes or None,
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "entry": entry}, indent=2))
+        return 0
+
+    if args.command == "answer-bank-deprecate":
+        from .answer_bank import deprecate, show_entry
+        from .application import PlanError
+
+        if args.dry_run:
+            try:
+                current = show_entry(Path(args.bank), args.entry_id)
+            except PlanError as exc:
+                print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+                return 2
+            preview = {**current, "deprecated": True, "notes": args.reason}
+            print(json.dumps({"status": "ok", "dry_run": True, "preview": preview}, indent=2))
+            return 0
+        try:
+            entry = deprecate(args.entry_id, args.reason, Path(args.bank))
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "entry": entry}, indent=2))
+        return 0
 
     parser.error(f"Unknown command: {args.command}")
     return 2
