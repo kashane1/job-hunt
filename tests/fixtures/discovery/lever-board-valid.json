@@ -1,0 +1,17 @@
+[
+  {
+    "id": "abc-123-def",
+    "text": "Senior Product Engineer",
+    "createdAt": 1733443200000,
+    "categories": {"location": "Remote"},
+    "hostedUrl": "https://jobs.lever.co/anothercorp/abc-123-def",
+    "applyUrl": "https://jobs.lever.co/anothercorp/abc-123-def/apply"
+  },
+  {
+    "id": "999-zzz-000",
+    "text": "Lead Infrastructure Engineer",
+    "createdAt": 1734739200000,
+    "categories": {"location": "San Diego, CA"},
+    "hostedUrl": "https://jobs.lever.co/anothercorp/999-zzz-000"
+  }
+]

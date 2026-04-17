@@ -41,6 +41,28 @@
     "ingestion_method": { "enum": ["manual", "url_fetch_json", "url_fetch_html", "url_fetch_fallback"] },
     "ingested_at": { "type": "string" },
     "canonical_url": { "type": "string" },
-    "ingestion_notes": { "type": "string" }
+    "ingestion_notes": { "type": "string" },
+    "discovered_via": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "company", "discovered_at"],
+        "properties": {
+          "source": {
+            "enum": [
+              "greenhouse_board",
+              "lever_board",
+              "careers_html",
+              "careers_html_review",
+              "manual"
+            ]
+          },
+          "company": { "type": "string" },
+          "discovered_at": { "type": "string" },
+          "listing_updated_at": { "type": ["string", "null"] },
+          "confidence": { "enum": ["high", "weak_inference"] }
+        }
+      }
+    }
   }
 }

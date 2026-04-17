@@ -96,6 +96,7 @@ class PdfExportErrorTest(unittest.TestCase):
             "error_code": "render_failed",
             "message": "boom",
             "remediation": "retry",
+            "url": "",
         })
 
     def test_error_codes_are_restricted(self) -> None:

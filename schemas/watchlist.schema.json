@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Watchlist",
+  "type": "object",
+  "required": ["companies"],
+  "properties": {
+    "companies": {
+      "type": "array",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,64}$" },
+          "greenhouse": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "lever": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "careers_url": { "type": "string", "pattern": "^https://" },
+          "notes": { "type": "string", "maxLength": 1000 }
+        }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "properties": {
+        "keywords_any": { "type": "array", "items": { "type": "string" } },
+        "keywords_none": { "type": "array", "items": { "type": "string" } },
+        "locations_any": { "type": "array", "items": { "type": "string" } },
+        "seniority_any": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

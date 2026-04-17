@@ -1,7 +1,7 @@
 ---
 title: "feat: Active job discovery — board listings, career-page crawl, and watchlist scheduler"
 type: feat
-status: active
+status: completed
 date: 2026-04-16
 origin: docs/brainstorms/2026-04-15-job-hunt-brainstorm.md
 deepened: 2026-04-16
@@ -1274,15 +1274,15 @@ All emit JSON to stdout matching their respective schemas.
 
 **Deliverables:**
 
-- [ ] **`utils.py`: `StructuredError` base class** (todo #034) — ancestor for `IngestionError`, `PdfExportError`, `DiscoveryError`. Uniform `error_code` / `url` / `remediation` / `to_dict()` contract.
-- [ ] **`utils.py`: upgrade `write_json`** (todos #030, #040):
+- [x] **`utils.py`: `StructuredError` base class** (todo #034) — ancestor for `IngestionError`, `PdfExportError`, `DiscoveryError`. Uniform `error_code` / `url` / `remediation` / `to_dict()` contract.
+- [x] **`utils.py`: upgrade `write_json`** (todos #030, #040):
   - Per-call unique tmp via `tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)`
   - fsync the file AND the parent directory (best-effort, platform-tolerant fallback)
   - `except BaseException` cleanup with `tmp_path.unlink(missing_ok=True)`
-- [ ] **`net_policy.py` new module** (todo #037) — hosts `DomainRateLimiter`, `RobotsCache`, `registered_domain`, `KNOWN_SHARED_DOMAINS`. Replaces the v2 "put them in utils.py" design.
-- [ ] **`DomainRateLimiter` reserve-first** — `acquire()` computes slot and updates `next_slot_at` inside the lock, sleeps unlocked. No thundering herd.
-- [ ] **`registered_domain()` hardened** (todo #031) — IP URLs bucketed whole; empty hostnames raise `ValueError`; IDN normalized via `idna` encoding.
-- [ ] **`RobotsCache` with differentiated TTLs** (todo #040):
+- [x] **`net_policy.py` new module** (todo #037) — hosts `DomainRateLimiter`, `RobotsCache`, `registered_domain`, `KNOWN_SHARED_DOMAINS`. Replaces the v2 "put them in utils.py" design.
+- [x] **`DomainRateLimiter` reserve-first** — `acquire()` computes slot and updates `next_slot_at` inside the lock, sleeps unlocked. No thundering herd.
+- [x] **`registered_domain()` hardened** (todo #031) — IP URLs bucketed whole; empty hostnames raise `ValueError`; IDN normalized via `idna` encoding.
+- [x] **`RobotsCache` with differentiated TTLs** (todo #040):
   - Disallow-decision TTL = 1h (limits poison blast)
   - Allow-decision TTL = 24h
   - Stores resolved IP per entry; invalidates on re-resolve mismatch
@@ -1290,85 +1290,85 @@ All emit JSON to stdout matching their respective schemas.
   - Stampede-safe via per-host `threading.Event`
   - BOM-stripping; spec-correct 5xx → disallow
   - `clear()` method for `robots-cache-clear` CLI
-- [ ] **`ingestion.py`: rename `_fetch` → `fetch`** (todo #037) — no alias; update all in-repo call sites in same PR.
-- [ ] **`ingestion.py`: `FetchResult` dataclass** (todo #039) — `fetch()` now returns `FetchResult(status, headers, body)` not raw body string. Batch-2 call sites (ingest_url / detail endpoints / HTML fallback) updated to `.body` access.
-- [ ] **`ingestion.py`: `_PinnedHTTPSConnection`** (todo #028):
+- [x] **`ingestion.py`: rename `_fetch` → `fetch`** (todo #037) — no alias; update all in-repo call sites in same PR.
+- [x] **`ingestion.py`: `FetchResult` dataclass** (todo #039) — `fetch()` now returns `FetchResult(status, headers, body)` not raw body string. Batch-2 call sites (ingest_url / detail endpoints / HTML fallback) updated to `.body` access.
+- [x] **`ingestion.py`: `_PinnedHTTPSConnection`** (todo #028):
   - Subclass `http.client.HTTPSConnection`; override `connect()` to `socket.create_connection((pinned_ip, port))`.
   - `ssl.create_default_context()` with `check_hostname=True`, `verify_mode=CERT_REQUIRED`.
   - `wrap_socket(sock, server_hostname=self.host)` — SNI uses hostname, not IP.
   - `Host:` header carries hostname (default http.client behavior).
   - Caller sets `Connection: close` to defeat pool reuse.
-- [ ] **`ingestion.py`: `_StrictRedirectHandler` re-pins per hop** (todo #028) — each redirect re-validates via `_validate_url_for_fetch` and installs a fresh `_PinnedHTTPSConnection` for the next request.
-- [ ] **`ingestion.py`: `IngestionError(StructuredError)`** — retrofit to use shared base.
-- [ ] **`ingestion.py`: add `max_decompressed_bytes` kwarg**; `MAX_LISTING_DECOMPRESSED_BYTES = 20_000_000` used only by discovery's board fetchers.
-- [ ] **`ingestion.py`: IPv4-mapped-IPv6 explicit check** in `_validate_url_for_fetch` (`::ffff:127.0.0.1` → `private_ip_blocked`).
-- [ ] **`ingestion.py`: expose `HARD_FAIL_URL_PATTERNS`, `canonicalize_url`** as public (no underscore prefix).
-- [ ] **`pdf_export.py`: `PdfExportError(StructuredError)`** — retrofit to use shared base.
-- [ ] **`simple_yaml.py`: extend to support list-of-mappings at depth 2** (read path).
-- [ ] **`simple_yaml.py`: `_emit_watchlist_yaml()`** — safe writer with double-quoted strings, escaped `"` / `\\n` / `\\r` / control chars. Does NOT preserve comments — caller handles comment-loss warning.
-- [ ] **`watchlist.py`** — schema load + validation, `WatchlistFilters.passes()`, `validate_cli_string`, `watchlist_add / watchlist_remove / watchlist_show / watchlist_validate` with `--force` override for comment-loss (todo #029). Detects presence of comment lines in existing file and raises `DiscoveryError(watchlist_comments_present)` unless forced.
-- [ ] **Schemas**: `watchlist.schema.json` (name regex, maxItems: 200, HTTPS-only careers_url), `discovery-cursor.schema.json` (schema_version: 1, `|` separator, no `partial` enum), `discovery-review.schema.json` (entry_id regex, DATA_NOT_INSTRUCTIONS const).
-- [ ] `config/watchlist.example.yaml` (tracked template with comments).
-- [ ] `.gitignore`: add `config/watchlist.yaml` and `data/discovery/`.
-- [ ] `DISCOVERY_USER_AGENT: Final = "job-hunt/0.3"` constant (dropped non-resolving `+URL` — todo #043).
+- [x] **`ingestion.py`: `_StrictRedirectHandler` re-pins per hop** (todo #028) — each redirect re-validates via `_validate_url_for_fetch` and installs a fresh `_PinnedHTTPSConnection` for the next request.
+- [x] **`ingestion.py`: `IngestionError(StructuredError)`** — retrofit to use shared base.
+- [x] **`ingestion.py`: add `max_decompressed_bytes` kwarg**; `MAX_LISTING_DECOMPRESSED_BYTES = 20_000_000` used only by discovery's board fetchers.
+- [x] **`ingestion.py`: IPv4-mapped-IPv6 explicit check** in `_validate_url_for_fetch` (`::ffff:127.0.0.1` → `private_ip_blocked`).
+- [x] **`ingestion.py`: expose `HARD_FAIL_URL_PATTERNS`, `canonicalize_url`** as public (no underscore prefix).
+- [x] **`pdf_export.py`: `PdfExportError(StructuredError)`** — retrofit to use shared base.
+- [x] **`simple_yaml.py`: extend to support list-of-mappings at depth 2** (read path).
+- [x] **`simple_yaml.py`: `_emit_watchlist_yaml()`** — safe writer with double-quoted strings, escaped `"` / `\\n` / `\\r` / control chars. Does NOT preserve comments — caller handles comment-loss warning.
+- [x] **`watchlist.py`** — schema load + validation, `WatchlistFilters.passes()`, `validate_cli_string`, `watchlist_add / watchlist_remove / watchlist_show / watchlist_validate` with `--force` override for comment-loss (todo #029). Detects presence of comment lines in existing file and raises `DiscoveryError(watchlist_comments_present)` unless forced.
+- [x] **Schemas**: `watchlist.schema.json` (name regex, maxItems: 200, HTTPS-only careers_url), `discovery-cursor.schema.json` (schema_version: 1, `|` separator, no `partial` enum), `discovery-review.schema.json` (entry_id regex, DATA_NOT_INSTRUCTIONS const).
+- [x] `config/watchlist.example.yaml` (tracked template with comments).
+- [x] `.gitignore`: add `config/watchlist.yaml` and `data/discovery/`.
+- [x] `DISCOVERY_USER_AGENT: Final = "job-hunt/0.3"` constant (dropped non-resolving `+URL` — todo #043).
 
 **Phase 1 tests (new files):**
 
-- [ ] `test_rate_limiter_serializes_same_domain` — 3 serial calls at 500ms interval take ≥1000ms wall time (slot reservations are 0, 500, 1000).
-- [ ] `test_rate_limiter_parallelizes_different_domains` — 2 calls on distinct domains complete in <100ms.
-- [ ] `test_rate_limiter_enforces_single_inflight_per_domain` — 5 threads × 10 calls against same domain; instrumented counter never exceeds 1.
-- [ ] `test_rate_limiter_no_thundering_herd` — 10 threads all call `acquire()` simultaneously; assert they complete at T=0, T=500ms, T=1000ms, ... not all at T=500ms.
-- [ ] `test_robots_fetch_5xx_disallows` — fixture serves 503; `can_fetch` returns False.
-- [ ] `test_robots_fetch_4xx_allows` — fixture serves 404; `can_fetch` returns True (except 401/403 which disallow).
-- [ ] `test_robots_disallow_specific_path` — honors `Disallow: /jobs/` for `DISCOVERY_USER_AGENT`.
-- [ ] `test_robots_stampede_prevention` — 10 threads `can_fetch` same new host; fixture server records exactly 1 robots.txt request.
-- [ ] `test_robots_persistent_cache_ttl` — write cache, re-instantiate, cached entries within 24h not re-fetched.
-- [ ] `test_robots_bom_handling` — robots.txt with leading `\ufeff` parses correctly.
-- [ ] `test_watchlist_loader_rejects_missing_name` — invalid config raises `DiscoveryError(watchlist_invalid)`.
-- [ ] `test_watchlist_loader_caps_companies_at_200`.
-- [ ] `test_filters_full_precedence_chain` — single entry that would fail at each level; assert reason matches topmost trigger.
-- [ ] `test_filters_empty_lists_are_no_op`.
-- [ ] `test_simple_yaml_parses_list_of_mappings` — the new depth-2 support.
-- [ ] `test_simple_yaml_rejects_depth_3_mappings` — explicit cap prevents future scope creep.
-- [ ] `test_simple_yaml_regression_existing_configs` — all batch 1/2 YAML files parse identically.
-- [ ] `test_write_json_concurrent_same_path` — 10 threads writing same target path; no file corruption, exactly one winner's content.
-- [ ] `test_write_json_fsyncs_parent_dir` (todo #040) — best-effort assertion; at minimum verify no exception under normal filesystems.
-- [ ] `test_startup_sweep_catches_mkstemp_stragglers` (todo #037) — seed `.foo.abc123.tmp` via mkstemp pattern; sweep warns on it.
-- [ ] `test_fetch_dns_rebinding_pinned_ip` (todo #028) — fake resolver returns safe IP first call, loopback second; `fetch()` actually connects to the safe IP; assert `sock.getpeername()` matches the pin.
-- [ ] `test_fetch_https_pinned_ip_cert_validates` (todo #028) — against a fixture-CA HTTPS endpoint; cert validation passes with `server_hostname=hostname` while connection IP is pinned.
-- [ ] `test_fetch_redirect_re_pins_ip` (todo #028) — first hop to host-A pins IP-A; redirect to host-B triggers fresh resolve + validate + pin IP-B; not a reuse of IP-A.
-- [ ] `test_fetch_connection_close_header_prevents_pool_reuse` (todo #028).
-- [ ] `test_fetch_ipv4_mapped_ipv6_blocked` — `::ffff:127.0.0.1` rejected with `private_ip_blocked`.
-- [ ] `test_registered_domain_ip_url` (todo #031) — `http://1.2.3.4/` buckets as `1.2.3.4`, not `3.4`.
-- [ ] `test_registered_domain_empty_hostname` (todo #031) — raises `ValueError`.
-- [ ] `test_registered_domain_idn` (todo #031) — Unicode hostname normalized via idna.
-- [ ] `test_structured_error_common_interface` (todo #034) — IngestionError, PdfExportError, DiscoveryError all expose identical API; `isinstance(X, StructuredError)` for each; CLI handler catches `StructuredError` uniformly.
-- [ ] `test_pdf_export_error_still_works` (todo #034) — batch-2 regression.
-- [ ] `test_discovery_user_agent_constant_single_sourced` (todo #041) — grep for `"job-hunt/"` in discovery.py / net_policy.py / utils.py finds only the constant definition.
-- [ ] `test_watchlist_name_rejects_path_traversal` (todo #031) — `name: "../../../../etc/passwd"` rejected by schema.
-- [ ] `test_watchlist_careers_url_rejects_http` — `careers_url: http://...` rejected at schema validate.
-- [ ] `test_watchlist_add_rejects_yaml_injection` (todo #029) — `--notes "evil: payload\\n- injected"` fails at CLI input validation.
-- [ ] `test_watchlist_add_control_chars_rejected` — `\\x00-\\x1f` in any input rejected.
-- [ ] `test_watchlist_add_warns_on_comment_loss` (todo #029) — existing file with comments + no `--force` → `DiscoveryError(watchlist_comments_present)`.
-- [ ] `test_watchlist_add_force_overrides_comment_warning` — with `--force` succeeds; comments replaced by regenerated structure.
-- [ ] `test_robots_cache_invalidates_on_resolved_ip_change` (todo #040) — cached entry with IP-X; current resolution returns IP-Y; cache invalidates.
-- [ ] `test_robots_cache_disallow_ttl_is_shorter` (todo #040) — disallow entry expires after 1h; allow entry after 24h.
+- [x] `test_rate_limiter_serializes_same_domain` — 3 serial calls at 500ms interval take ≥1000ms wall time (slot reservations are 0, 500, 1000).
+- [x] `test_rate_limiter_parallelizes_different_domains` — 2 calls on distinct domains complete in <100ms.
+- [x] `test_rate_limiter_enforces_single_inflight_per_domain` — 5 threads × 10 calls against same domain; instrumented counter never exceeds 1.
+- [x] `test_rate_limiter_no_thundering_herd` — 10 threads all call `acquire()` simultaneously; assert they complete at T=0, T=500ms, T=1000ms, ... not all at T=500ms.
+- [x] `test_robots_fetch_5xx_disallows` — fixture serves 503; `can_fetch` returns False.
+- [x] `test_robots_fetch_4xx_allows` — fixture serves 404; `can_fetch` returns True (except 401/403 which disallow).
+- [x] `test_robots_disallow_specific_path` — honors `Disallow: /jobs/` for `DISCOVERY_USER_AGENT`.
+- [x] `test_robots_stampede_prevention` — 10 threads `can_fetch` same new host; fixture server records exactly 1 robots.txt request.
+- [x] `test_robots_persistent_cache_ttl` — write cache, re-instantiate, cached entries within 24h not re-fetched.
+- [x] `test_robots_bom_handling` — robots.txt with leading `\ufeff` parses correctly.
+- [x] `test_watchlist_loader_rejects_missing_name` — invalid config raises `DiscoveryError(watchlist_invalid)`.
+- [x] `test_watchlist_loader_caps_companies_at_200`.
+- [x] `test_filters_full_precedence_chain` — single entry that would fail at each level; assert reason matches topmost trigger.
+- [x] `test_filters_empty_lists_are_no_op`.
+- [x] `test_simple_yaml_parses_list_of_mappings` — the new depth-2 support.
+- [x] `test_simple_yaml_rejects_depth_3_mappings` — explicit cap prevents future scope creep.
+- [x] `test_simple_yaml_regression_existing_configs` — all batch 1/2 YAML files parse identically.
+- [x] `test_write_json_concurrent_same_path` — 10 threads writing same target path; no file corruption, exactly one winner's content.
+- [x] `test_write_json_fsyncs_parent_dir` (todo #040) — best-effort assertion; at minimum verify no exception under normal filesystems.
+- [x] `test_startup_sweep_catches_mkstemp_stragglers` (todo #037) — seed `.foo.abc123.tmp` via mkstemp pattern; sweep warns on it.
+- [x] `test_fetch_dns_rebinding_pinned_ip` (todo #028) — fake resolver returns safe IP first call, loopback second; `fetch()` actually connects to the safe IP; assert `sock.getpeername()` matches the pin.
+- [x] `test_fetch_https_pinned_ip_cert_validates` (todo #028) — against a fixture-CA HTTPS endpoint; cert validation passes with `server_hostname=hostname` while connection IP is pinned.
+- [x] `test_fetch_redirect_re_pins_ip` (todo #028) — first hop to host-A pins IP-A; redirect to host-B triggers fresh resolve + validate + pin IP-B; not a reuse of IP-A.
+- [x] `test_fetch_connection_close_header_prevents_pool_reuse` (todo #028).
+- [x] `test_fetch_ipv4_mapped_ipv6_blocked` — `::ffff:127.0.0.1` rejected with `private_ip_blocked`.
+- [x] `test_registered_domain_ip_url` (todo #031) — `http://1.2.3.4/` buckets as `1.2.3.4`, not `3.4`.
+- [x] `test_registered_domain_empty_hostname` (todo #031) — raises `ValueError`.
+- [x] `test_registered_domain_idn` (todo #031) — Unicode hostname normalized via idna.
+- [x] `test_structured_error_common_interface` (todo #034) — IngestionError, PdfExportError, DiscoveryError all expose identical API; `isinstance(X, StructuredError)` for each; CLI handler catches `StructuredError` uniformly.
+- [x] `test_pdf_export_error_still_works` (todo #034) — batch-2 regression.
+- [x] `test_discovery_user_agent_constant_single_sourced` (todo #041) — grep for `"job-hunt/"` in discovery.py / net_policy.py / utils.py finds only the constant definition.
+- [x] `test_watchlist_name_rejects_path_traversal` (todo #031) — `name: "../../../../etc/passwd"` rejected by schema.
+- [x] `test_watchlist_careers_url_rejects_http` — `careers_url: http://...` rejected at schema validate.
+- [x] `test_watchlist_add_rejects_yaml_injection` (todo #029) — `--notes "evil: payload\\n- injected"` fails at CLI input validation.
+- [x] `test_watchlist_add_control_chars_rejected` — `\\x00-\\x1f` in any input rejected.
+- [x] `test_watchlist_add_warns_on_comment_loss` (todo #029) — existing file with comments + no `--force` → `DiscoveryError(watchlist_comments_present)`.
+- [x] `test_watchlist_add_force_overrides_comment_warning` — with `--force` succeeds; comments replaced by regenerated structure.
+- [x] `test_robots_cache_invalidates_on_resolved_ip_change` (todo #040) — cached entry with IP-X; current resolution returns IP-Y; cache invalidates.
+- [x] `test_robots_cache_disallow_ttl_is_shorter` (todo #040) — disallow entry expires after 1h; allow entry after 24h.
 
 **Phase 1 Acceptance:**
 
-- [ ] Every `raise DiscoveryError(...)` in discovery.py passes a code in `DISCOVERY_ERROR_CODES` (enforced by grep test).
-- [ ] `fetch` is the public name; no `_fetch` alias; all batch 1/2 call sites updated in the same PR.
-- [ ] `fetch` returns `FetchResult`; batch-2 call sites updated to use `.body`.
-- [ ] `StructuredError` base class used by all three structured error subclasses; uniform CLI handler.
-- [ ] `_PinnedHTTPSConnection` used for HTTPS; TLS integrity preserved (`server_hostname`, `check_hostname=True`, `CERT_REQUIRED`).
-- [ ] Redirects re-pin; validated by test.
-- [ ] `write_json` change doesn't break any existing test; parent-dir fsync is best-effort.
-- [ ] `simple_yaml` extension passes full existing-config regression.
-- [ ] `simple_yaml._emit_watchlist_yaml` escapes all user inputs; input validation at CLI layer rejects control characters.
-- [ ] `registered_domain` handles IP / IDN / empty edge cases.
-- [ ] `DomainRateLimiter` lives in `net_policy.py` (not `utils.py`).
-- [ ] `RobotsCache` uses differentiated TTLs (allow 24h, disallow 1h); invalidates on IP change.
-- [ ] IP-pinning fix validated end-to-end.
+- [x] Every `raise DiscoveryError(...)` in discovery.py passes a code in `DISCOVERY_ERROR_CODES` (enforced by grep test).
+- [x] `fetch` is the public name; no `_fetch` alias; all batch 1/2 call sites updated in the same PR.
+- [x] `fetch` returns `FetchResult`; batch-2 call sites updated to use `.body`.
+- [x] `StructuredError` base class used by all three structured error subclasses; uniform CLI handler.
+- [x] `_PinnedHTTPSConnection` used for HTTPS; TLS integrity preserved (`server_hostname`, `check_hostname=True`, `CERT_REQUIRED`).
+- [x] Redirects re-pin; validated by test.
+- [x] `write_json` change doesn't break any existing test; parent-dir fsync is best-effort.
+- [x] `simple_yaml` extension passes full existing-config regression.
+- [x] `simple_yaml._emit_watchlist_yaml` escapes all user inputs; input validation at CLI layer rejects control characters.
+- [x] `registered_domain` handles IP / IDN / empty edge cases.
+- [x] `DomainRateLimiter` lives in `net_policy.py` (not `utils.py`).
+- [x] `RobotsCache` uses differentiated TTLs (allow 24h, disallow 1h); invalidates on IP change.
+- [x] IP-pinning fix validated end-to-end.
 
 **Estimated effort:** 3 sessions (increased from 2 due to StructuredError retrofit, net_policy split, FetchResult type change, comment-loss handling, IP-pin TLS/redirect details).
 
@@ -1376,29 +1376,29 @@ All emit JSON to stdout matching their respective schemas.
 
 **Deliverables:**
 
-- [ ] `discover_greenhouse_board(company, rate_limiter) -> tuple[list[ListingEntry], bool]`
-- [ ] `discover_lever_board(company, rate_limiter) -> tuple[list[ListingEntry], bool]`
-- [ ] Lever `createdAt` ms-epoch → ISO-8601 conversion.
-- [ ] `MAX_LISTING_BYTES` + `MAX_LISTING_DECOMPRESSED_BYTES` respected; truncation flagged (not raised).
-- [ ] `ListingEntry` dataclass with `signals=[]` and `confidence="high"` defaults.
-- [ ] `SourceRun` dataclass for per-source accounting.
-- [ ] Test fixtures: `tests/fixtures/greenhouse-board-50-jobs.json`, `greenhouse-board-empty.json` (404 case), `greenhouse-board-truncated.json` (response exceeds MAX_LISTING_BYTES), `lever-board-20-postings.json`, `lever-board-500-error.json`.
+- [x] `discover_greenhouse_board(company, rate_limiter) -> tuple[list[ListingEntry], bool]`
+- [x] `discover_lever_board(company, rate_limiter) -> tuple[list[ListingEntry], bool]`
+- [x] Lever `createdAt` ms-epoch → ISO-8601 conversion.
+- [x] `MAX_LISTING_BYTES` + `MAX_LISTING_DECOMPRESSED_BYTES` respected; truncation flagged (not raised).
+- [x] `ListingEntry` dataclass with `signals=[]` and `confidence="high"` defaults.
+- [x] `SourceRun` dataclass for per-source accounting.
+- [x] Test fixtures: `tests/fixtures/greenhouse-board-50-jobs.json`, `greenhouse-board-empty.json` (404 case), `greenhouse-board-truncated.json` (response exceeds MAX_LISTING_BYTES), `lever-board-20-postings.json`, `lever-board-500-error.json`.
 
 **Phase 2 tests:**
 
-- [ ] `test_greenhouse_board_valid_slug_returns_entries`
-- [ ] `test_greenhouse_board_unknown_slug_returns_empty` (404 handled as empty, not raised)
-- [ ] `test_greenhouse_board_500_raises_ingestion_error`
-- [ ] `test_greenhouse_board_truncated_flags_listing_truncated`
-- [ ] `test_lever_board_valid_slug_returns_entries`
-- [ ] `test_lever_board_ms_epoch_converted_to_iso`
-- [ ] `test_listing_entries_have_valid_posting_urls` — every `posting_url` matches `GREENHOUSE_URL_RE` or `LEVER_URL_RE` so `ingest_url` accepts it unchanged.
+- [x] `test_greenhouse_board_valid_slug_returns_entries`
+- [x] `test_greenhouse_board_unknown_slug_returns_empty` (404 handled as empty, not raised)
+- [x] `test_greenhouse_board_500_raises_ingestion_error`
+- [x] `test_greenhouse_board_truncated_flags_listing_truncated`
+- [x] `test_lever_board_valid_slug_returns_entries`
+- [x] `test_lever_board_ms_epoch_converted_to_iso`
+- [x] `test_listing_entries_have_valid_posting_urls` — every `posting_url` matches `GREENHOUSE_URL_RE` or `LEVER_URL_RE` so `ingest_url` accepts it unchanged.
 
 **Phase 2 Acceptance:**
 
-- [ ] All `ListingEntry.posting_url` fields parseable by batch 2's existing `ingest_url` without new code.
-- [ ] `ListingEntry.signals` is `[]` for board-API entries (high confidence by virtue of the source, no individual signals listed).
-- [ ] `ListingEntry.confidence == "high"` for both Greenhouse and Lever.
+- [x] All `ListingEntry.posting_url` fields parseable by batch 2's existing `ingest_url` without new code.
+- [x] `ListingEntry.signals` is `[]` for board-API entries (high confidence by virtue of the source, no individual signals listed).
+- [x] `ListingEntry.confidence == "high"` for both Greenhouse and Lever.
 
 **Estimated effort:** 1 session.
 
@@ -1406,45 +1406,45 @@ All emit JSON to stdout matching their respective schemas.
 
 **Deliverables:**
 
-- [ ] `_extract_jobpostings_from_jsonld(html_body) -> list[dict]` — JSON-LD `JobPosting` extraction, tolerant of parse errors and `@type` arrays.
-- [ ] `_detect_ats_subdomain_links(html_body, base_url) -> list[str]` — returns ATS board URLs found in `<a href>`.
-- [ ] `_classify_heuristic_link(href, anchor_text, context) -> tuple[int, tuple[str, ...]]` — signal counter + labels (tuple, not list — todo #043).
-- [ ] `discover_company_careers(domain, rate_limiter, robots, watchlist_company) -> tuple[high_conf, low_conf]`
-- [ ] **Anti-bot detection via status + header** (v3, todo #039) — `_detect_anti_bot(FetchResult) -> bool` requires HTTP 403/503 AND (`cf-ray` header OR `<title>Just a moment`). On match raise `DiscoveryError(anti_bot_blocked)`.
-- [ ] LinkedIn/Indeed hard-fail check at entry (before robots or fetch).
-- [ ] HTTPS-only enforcement for `careers_url` (http rejected at schema validate).
-- [ ] **Review-file writer: single `.md` with YAML frontmatter** (v3, todo #035). Path: `data/discovery/review/<entry_id>.md`. `entry_id` matches `ENTRY_ID_RE = ^[a-f0-9]{16}$`. Frontmatter validated against `discovery-review.schema.json`. No paired `.json` file.
-- [ ] **Nonce-fenced review body** (v3, todo #039) — fence is `\`\`\`untrusted_data_<secrets.token_hex(6)>`; attacker-supplied ` ``` ` in anchor text cannot close the fence. Anchor text HTML-escaped before rendering.
-- [ ] **`DATA_NOT_INSTRUCTIONS: true` const** in YAML frontmatter as defense-in-depth banner.
-- [ ] Test fixtures: `careers-json-ld.html`, `careers-ats-subdomain.html`, `careers-heuristic-2signal.html`, `careers-heuristic-1signal.html`, `careers-anti-bot-403-cfray.html`, `careers-anti-bot-403-body-only.html` (negative case — status+body-only does NOT trigger), `careers-linkedin-url.html`, `careers-zero-signal.html`, `careers-role-word-no-path.html`.
+- [x] `_extract_jobpostings_from_jsonld(html_body) -> list[dict]` — JSON-LD `JobPosting` extraction, tolerant of parse errors and `@type` arrays.
+- [x] `_detect_ats_subdomain_links(html_body, base_url) -> list[str]` — returns ATS board URLs found in `<a href>`.
+- [x] `_classify_heuristic_link(href, anchor_text, context) -> tuple[int, tuple[str, ...]]` — signal counter + labels (tuple, not list — todo #043).
+- [x] `discover_company_careers(domain, rate_limiter, robots, watchlist_company) -> tuple[high_conf, low_conf]`
+- [x] **Anti-bot detection via status + header** (v3, todo #039) — `_detect_anti_bot(FetchResult) -> bool` requires HTTP 403/503 AND (`cf-ray` header OR `<title>Just a moment`). On match raise `DiscoveryError(anti_bot_blocked)`.
+- [x] LinkedIn/Indeed hard-fail check at entry (before robots or fetch).
+- [x] HTTPS-only enforcement for `careers_url` (http rejected at schema validate).
+- [x] **Review-file writer: single `.md` with YAML frontmatter** (v3, todo #035). Path: `data/discovery/review/<entry_id>.md`. `entry_id` matches `ENTRY_ID_RE = ^[a-f0-9]{16}$`. Frontmatter validated against `discovery-review.schema.json`. No paired `.json` file.
+- [x] **Nonce-fenced review body** (v3, todo #039) — fence is `\`\`\`untrusted_data_<secrets.token_hex(6)>`; attacker-supplied ` ``` ` in anchor text cannot close the fence. Anchor text HTML-escaped before rendering.
+- [x] **`DATA_NOT_INSTRUCTIONS: true` const** in YAML frontmatter as defense-in-depth banner.
+- [x] Test fixtures: `careers-json-ld.html`, `careers-ats-subdomain.html`, `careers-heuristic-2signal.html`, `careers-heuristic-1signal.html`, `careers-anti-bot-403-cfray.html`, `careers-anti-bot-403-body-only.html` (negative case — status+body-only does NOT trigger), `careers-linkedin-url.html`, `careers-zero-signal.html`, `careers-role-word-no-path.html`.
 
 **Phase 3 tests:**
 
-- [ ] `test_jsonld_jobposting_extracted` — fixture with `<script type="application/ld+json">` containing a JobPosting array.
-- [ ] `test_jsonld_jobposting_tolerates_malformed_json` — one good block + one malformed; good block still surfaces.
-- [ ] `test_ats_subdomain_greenhouse_detected` — link to `boards.greenhouse.io/foo` → caller hits Greenhouse API instead of parsing HTML.
-- [ ] `test_two_signal_link_classified_high_confidence`
-- [ ] `test_one_signal_link_written_to_review`
-- [ ] `test_zero_signal_link_discarded`
-- [ ] `test_anti_bot_requires_status_and_pattern_not_body_alone` (v3, todo #039) — body containing "cloudflare" but status 200 does NOT trigger; status 403 + `cf-ray` header DOES trigger; status 503 + `Just a moment` title DOES trigger.
-- [ ] `test_anti_bot_raises_structured_error` — `DiscoveryError(anti_bot_blocked)` with remediation text.
-- [ ] `test_linkedin_careers_url_hard_fails` — watchlist entry with `careers_url: https://linkedin.com/jobs/...` raises `DiscoveryError(hard_fail_platform)`.
-- [ ] `test_http_careers_url_rejected_at_load` — `careers_url: http://example.com/careers` fails watchlist schema validation.
-- [ ] `test_careers_crawler_uses_fetch_not_urllib_direct` — static analysis test: grep confirms no direct `urllib.request.urlopen` in discovery.py.
-- [ ] `test_robots_disallow_blocks_crawl` — robots disallows `/careers/`; crawler returns empty + adds to skipped_by_robots.
-- [ ] `test_review_file_single_file_with_frontmatter` (v3, todo #035) — one `.md` written; no `.json` written; frontmatter parses via simple_yaml; schema-valid.
-- [ ] `test_review_file_html_escapes_anchor_text` — injection-shaped anchor text appears escaped in the frontmatter `anchor_text_escaped` field.
-- [ ] `test_review_file_fence_resists_backtick_injection` (v3, todo #039) — anchor text containing ` ``` ` does NOT escape the nonce-fenced block (fence nonce is unique per entry).
-- [ ] `test_review_file_entry_id_regex_rejected` (todo #031) — `entry_id = "../evil"` raises `DiscoveryError(review_schema_invalid)`.
+- [x] `test_jsonld_jobposting_extracted` — fixture with `<script type="application/ld+json">` containing a JobPosting array.
+- [x] `test_jsonld_jobposting_tolerates_malformed_json` — one good block + one malformed; good block still surfaces.
+- [x] `test_ats_subdomain_greenhouse_detected` — link to `boards.greenhouse.io/foo` → caller hits Greenhouse API instead of parsing HTML.
+- [x] `test_two_signal_link_classified_high_confidence`
+- [x] `test_one_signal_link_written_to_review`
+- [x] `test_zero_signal_link_discarded`
+- [x] `test_anti_bot_requires_status_and_pattern_not_body_alone` (v3, todo #039) — body containing "cloudflare" but status 200 does NOT trigger; status 403 + `cf-ray` header DOES trigger; status 503 + `Just a moment` title DOES trigger.
+- [x] `test_anti_bot_raises_structured_error` — `DiscoveryError(anti_bot_blocked)` with remediation text.
+- [x] `test_linkedin_careers_url_hard_fails` — watchlist entry with `careers_url: https://linkedin.com/jobs/...` raises `DiscoveryError(hard_fail_platform)`.
+- [x] `test_http_careers_url_rejected_at_load` — `careers_url: http://example.com/careers` fails watchlist schema validation.
+- [x] `test_careers_crawler_uses_fetch_not_urllib_direct` — static analysis test: grep confirms no direct `urllib.request.urlopen` in discovery.py.
+- [x] `test_robots_disallow_blocks_crawl` — robots disallows `/careers/`; crawler returns empty + adds to skipped_by_robots.
+- [x] `test_review_file_single_file_with_frontmatter` (v3, todo #035) — one `.md` written; no `.json` written; frontmatter parses via simple_yaml; schema-valid.
+- [x] `test_review_file_html_escapes_anchor_text` — injection-shaped anchor text appears escaped in the frontmatter `anchor_text_escaped` field.
+- [x] `test_review_file_fence_resists_backtick_injection` (v3, todo #039) — anchor text containing ` ``` ` does NOT escape the nonce-fenced block (fence nonce is unique per entry).
+- [x] `test_review_file_entry_id_regex_rejected` (todo #031) — `entry_id = "../evil"` raises `DiscoveryError(review_schema_invalid)`.
 
 **Phase 3 Acceptance:**
 
-- [ ] Every high-confidence `ListingEntry` has `signals != ()` (for careers_html source) OR source == "greenhouse"|"lever" (implicit high confidence).
-- [ ] Every low-confidence entry lands in `data/discovery/review/` as a single `.md` with frontmatter, never in `data/leads/`.
-- [ ] Generic crawler never bypasses `ingestion.fetch` for HTTP I/O.
-- [ ] All user-agent strings reference `DISCOVERY_USER_AGENT` constant.
-- [ ] Anti-bot detection requires BOTH status AND header/title signal (not body-alone).
-- [ ] Review file fence uses per-entry nonce; escape of fence-closer is impossible without guessing nonce.
+- [x] Every high-confidence `ListingEntry` has `signals != ()` (for careers_html source) OR source == "greenhouse"|"lever" (implicit high confidence).
+- [x] Every low-confidence entry lands in `data/discovery/review/` as a single `.md` with frontmatter, never in `data/leads/`.
+- [x] Generic crawler never bypasses `ingestion.fetch` for HTTP I/O.
+- [x] All user-agent strings reference `DISCOVERY_USER_AGENT` constant.
+- [x] Anti-bot detection requires BOTH status AND header/title signal (not body-alone).
+- [x] Review file fence uses per-entry nonce; escape of fence-closer is impossible without guessing nonce.
 
 **Estimated effort:** 2 sessions.
 
@@ -1452,81 +1452,81 @@ All emit JSON to stdout matching their respective schemas.
 
 **Deliverables:**
 
-- [ ] **`DiscoveryConfig` dataclass** (v3, todo #036) — 11 tunable parameters; `discover_jobs(watchlist_path, leads_dir, discovery_root, config=DiscoveryConfig())` signature.
-- [ ] **`DiscoveryResult`, `Outcome`, `SourceRun`, `ListingEntry` with explicit `to_dict()` bodies** (v3, todo #032). No `...` placeholders. Concrete `schemas/discovery-run.schema.json` validates the result.
-- [ ] `discover_jobs()` main entry point.
-- [ ] **Per-lead lock map via `WeakValueDictionary`** (v3, todo #040) for `_append_discovered_via` — unused locks auto-GC'd.
-- [ ] **Lock key is `lead_id`** (v3, todo #030) — stable identity, not Path string.
-- [ ] **`_append_discovered_via` defensive merge** (v3, todo #030) — shape check on existing value (non-list → warn + reset); missing file raises `DiscoveryError(lead_write_race)`.
-- [ ] Dedup: one-time scan of `data/leads/*.json` at run start builds two sets: canonical URL and fingerprint.
-- [ ] Cursor schema-versioned (`schema_version: 1`, integer const). Atomic write via `write_json`. Key separator is `|` (v3, todo #031).
-- [ ] Cursor advancement invariant: advance ONLY IF `listing_truncated=False` AND `budget_exhausted=False` AND source completed. `last_run_status` only ever writes `complete` or `failed` (enum updated v3 — `partial` removed since it's never written).
-- [ ] Coalesced cursor writes: one `write_json` per company (not per source).
-- [ ] Run artifact written at `data/discovery/history/<timestamp>.json` validated against `discovery-run.schema.json` (concrete schema, v3).
-- [ ] `--max-ingest` budget gate; exhaustion sets `SourceRun.budget_exhausted=True` and marks source as not-complete.
-- [ ] Per-company ThreadPoolExecutor(max_workers=3); sources serial within a company.
-- [ ] **Batched scoring with crash recovery** (v3, todo #033) — after all ingestion completes, `score_lead` scans BOTH newly-discovered leads AND `data/leads/*.json` where `status == "discovered"` AND `fit_assessment` is missing. Runs in separate `ThreadPoolExecutor(max_workers=config.score_concurrency)`. `--no-score` skips entirely. A crashed mid-batch scoring phase heals on the next `discover-jobs` run automatically.
-- [ ] Startup sweep: log warnings for `_intake/pending/*.md` files older than 1 hour AND `data/discovery/review/*.md` older than 30 days AND stale `.tmp` files (glob `*.tmp` — catches both batch-2 and batch-3 mkstemp patterns per todo #037) in any `data/` subdirectory AND `status: discovered` leads >1h old missing `fit_assessment`.
-- [ ] **CLI subparsers (v3 full list — 11 new)**: `discover-jobs`, `discovery-state` (with `--last-run` and `--bucket` flags, todo #038), `watchlist-show`, `watchlist-add` (with `--force` for comment override, todo #029), `watchlist-remove`, `watchlist-validate` (todo #038), `review-list`, `review-promote`, `review-dismiss`, `robots-cache-clear` (todo #040). Plus `--reset-cursor` as flag on `discover-jobs`.
-- [ ] **All CLI dispatch uses lazy imports** — `from .discovery import X` or `from .watchlist import X` inside handler. Top-level `core.py` import time measured in regression test.
-- [ ] **Uniform CLI error handler** (v3, todo #034) — catches `StructuredError`; emits `exc.to_dict()` as stdout JSON for agent consumption.
-- [ ] `--reset-cursor COMPANY|SOURCE` and `--reset-cursor "COMPANY|*"` supported (v3 uses `|` separator, todo #031).
-- [ ] `review-promote <entry_id>` validates `entry_id` against `ENTRY_ID_RE` before filesystem access (v3, todo #031); runs `ingest_url` on the stored `candidate_url` (which re-validates through `_validate_url_for_fetch`); appends `discovered_via: careers_html_review`; updates the single review `.md` frontmatter `status: promoted`.
-- [ ] `review-dismiss <entry_id> --reason "..."` updates frontmatter `status: dismissed` + stores reason.
-- [ ] **`watchlist-add` safe YAML write** (v3, todo #029) — all string inputs pass `validate_cli_string` (rejects control chars); YAML emitted via `_emit_watchlist_yaml`; if existing file contains comments and `--force` not set, raises `DiscoveryError(watchlist_comments_present)`.
+- [x] **`DiscoveryConfig` dataclass** (v3, todo #036) — 11 tunable parameters; `discover_jobs(watchlist_path, leads_dir, discovery_root, config=DiscoveryConfig())` signature.
+- [x] **`DiscoveryResult`, `Outcome`, `SourceRun`, `ListingEntry` with explicit `to_dict()` bodies** (v3, todo #032). No `...` placeholders. Concrete `schemas/discovery-run.schema.json` validates the result.
+- [x] `discover_jobs()` main entry point.
+- [x] **Per-lead lock map via `WeakValueDictionary`** (v3, todo #040) for `_append_discovered_via` — unused locks auto-GC'd.
+- [x] **Lock key is `lead_id`** (v3, todo #030) — stable identity, not Path string.
+- [x] **`_append_discovered_via` defensive merge** (v3, todo #030) — shape check on existing value (non-list → warn + reset); missing file raises `DiscoveryError(lead_write_race)`.
+- [x] Dedup: one-time scan of `data/leads/*.json` at run start builds two sets: canonical URL and fingerprint.
+- [x] Cursor schema-versioned (`schema_version: 1`, integer const). Atomic write via `write_json`. Key separator is `|` (v3, todo #031).
+- [x] Cursor advancement invariant: advance ONLY IF `listing_truncated=False` AND `budget_exhausted=False` AND source completed. `last_run_status` only ever writes `complete` or `failed` (enum updated v3 — `partial` removed since it's never written).
+- [x] Coalesced cursor writes: one `write_json` per company (not per source).
+- [x] Run artifact written at `data/discovery/history/<timestamp>.json` validated against `discovery-run.schema.json` (concrete schema, v3).
+- [x] `--max-ingest` budget gate; exhaustion sets `SourceRun.budget_exhausted=True` and marks source as not-complete.
+- [x] Per-company ThreadPoolExecutor(max_workers=3); sources serial within a company.
+- [x] **Batched scoring with crash recovery** (v3, todo #033) — after all ingestion completes, `score_lead` scans BOTH newly-discovered leads AND `data/leads/*.json` where `status == "discovered"` AND `fit_assessment` is missing. Runs in separate `ThreadPoolExecutor(max_workers=config.score_concurrency)`. `--no-score` skips entirely. A crashed mid-batch scoring phase heals on the next `discover-jobs` run automatically.
+- [x] Startup sweep: log warnings for `_intake/pending/*.md` files older than 1 hour AND `data/discovery/review/*.md` older than 30 days AND stale `.tmp` files (glob `*.tmp` — catches both batch-2 and batch-3 mkstemp patterns per todo #037) in any `data/` subdirectory AND `status: discovered` leads >1h old missing `fit_assessment`.
+- [x] **CLI subparsers (v3 full list — 11 new)**: `discover-jobs`, `discovery-state` (with `--last-run` and `--bucket` flags, todo #038), `watchlist-show`, `watchlist-add` (with `--force` for comment override, todo #029), `watchlist-remove`, `watchlist-validate` (todo #038), `review-list`, `review-promote`, `review-dismiss`, `robots-cache-clear` (todo #040). Plus `--reset-cursor` as flag on `discover-jobs`.
+- [x] **All CLI dispatch uses lazy imports** — `from .discovery import X` or `from .watchlist import X` inside handler. Top-level `core.py` import time measured in regression test.
+- [x] **Uniform CLI error handler** (v3, todo #034) — catches `StructuredError`; emits `exc.to_dict()` as stdout JSON for agent consumption.
+- [x] `--reset-cursor COMPANY|SOURCE` and `--reset-cursor "COMPANY|*"` supported (v3 uses `|` separator, todo #031).
+- [x] `review-promote <entry_id>` validates `entry_id` against `ENTRY_ID_RE` before filesystem access (v3, todo #031); runs `ingest_url` on the stored `candidate_url` (which re-validates through `_validate_url_for_fetch`); appends `discovered_via: careers_html_review`; updates the single review `.md` frontmatter `status: promoted`.
+- [x] `review-dismiss <entry_id> --reason "..."` updates frontmatter `status: dismissed` + stores reason.
+- [x] **`watchlist-add` safe YAML write** (v3, todo #029) — all string inputs pass `validate_cli_string` (rejects control chars); YAML emitted via `_emit_watchlist_yaml`; if existing file contains comments and `--force` not set, raises `DiscoveryError(watchlist_comments_present)`.
 
 **Phase 4 tests:**
 
-- [ ] `test_discover_jobs_end_to_end_mixed_sources` — fixtures: ExampleCo (Greenhouse+careers), AnotherCorp (Lever). Assert bucket counts, `discovered_via` on new leads, cursor advances for complete sources only.
-- [ ] `test_discover_jobs_dedupes_across_sources` — same canonical URL from Greenhouse AND careers crawl → 1 lead, 2 `discovered_via` entries, second goes to duplicate_within_run bucket (but `discovered_via` still appended).
-- [ ] `test_discover_jobs_appends_discovered_via_on_already_known` — second-run surfaces same lead → `discovered_via` grows by one.
-- [ ] `test_discover_jobs_concurrent_discovered_via_append` (todo #030) — 3 threads append to same lead via different source tuples; final array has 3 entries; no lost writes.
-- [ ] `test_append_discovered_via_handles_malformed_existing` (todo #030) — lead with `discovered_via: {}` or `"string"` → warning logged, reset to `[]`, new entry appended.
-- [ ] `test_append_discovered_via_missing_file_raises_structured` (todo #030) — lead path doesn't exist → `DiscoveryError(lead_write_race)`.
-- [ ] `test_append_discovered_via_locks_on_lead_id_not_path` (todo #030) — `Path("a/b.json")` and `Path("./a/b.json")` serialize through the same lock.
-- [ ] `test_discover_jobs_idempotent_second_run`.
-- [ ] `test_discover_jobs_max_ingest_cursor_unchanged` — `--max-ingest 5` with 100 matching; cursor does NOT advance for budget-capped source.
-- [ ] `test_discover_jobs_listing_truncated_cursor_unchanged`.
-- [ ] `test_discover_jobs_dry_run_no_disk_writes`.
-- [ ] `test_discover_jobs_no_score_leaves_leads_unscored`.
-- [ ] `test_discover_jobs_auto_score_batched_not_inline` — `score_lead` called AFTER all `ingest_url` completes.
-- [ ] `test_discover_jobs_rescues_unscored_leads_on_next_run` (v3, todo #033) — seed `data/leads/` with one `status: discovered` lead missing `fit_assessment`; second run of `discover-jobs` re-scores it even though it's not freshly-discovered.
-- [ ] `test_discover_jobs_cursor_crash_recovery`.
-- [ ] `test_discovery_config_maps_from_argparse` (todo #036) — argparse namespace → `DiscoveryConfig` round-trip.
-- [ ] `test_discovery_result_to_dict_matches_schema` (todo #032) — jsonschema validate against `discovery-run.schema.json`.
-- [ ] `test_outcome_to_dict_all_buckets` (todo #032) — each Literal value serializes.
-- [ ] `test_discover_jobs_logs_warning_on_stale_intake`.
-- [ ] `test_reset_cursor_single_tuple` — `--reset-cursor "ExampleCo|greenhouse"`.
-- [ ] `test_reset_cursor_glob_company` — `--reset-cursor "ExampleCo|*"`.
-- [ ] `test_reset_cursor_not_found_raises`.
-- [ ] `test_discovery_state_emits_json`.
-- [ ] `test_discovery_state_last_run_emits_buckets` (v3, todo #038) — `--last-run` reads latest `data/discovery/history/*.json`.
-- [ ] `test_discovery_state_last_run_bucket_filter` (v3, todo #038) — `--last-run --bucket failed` returns only failed outcomes.
-- [ ] `test_watchlist_add_preserves_existing_entries`.
-- [ ] `test_watchlist_add_duplicate_name_raises` — `DiscoveryError(watchlist_entry_exists)`.
-- [ ] `test_watchlist_validate_emits_json` (v3, todo #038) — `{valid, errors, warnings}` shape.
-- [ ] `test_review_promote_ingests_and_updates_status`.
-- [ ] `test_review_promote_rejects_entry_id_traversal` (todo #031) — `entry_id = "../evil"` raises.
-- [ ] `test_review_promote_candidate_url_revalidates_ssrf` — stored URL pointing at loopback blocked via `_validate_url_for_fetch`.
-- [ ] `test_review_dismiss_records_reason`.
-- [ ] `test_review_entry_not_found_raises`.
-- [ ] `test_robots_cache_clear_flushes_cache` (todo #040).
-- [ ] `test_cli_error_handler_catches_structured_error_uniformly` (todo #034) — each of `IngestionError`, `DiscoveryError`, `PdfExportError` handled by the same `except StructuredError` branch.
+- [x] `test_discover_jobs_end_to_end_mixed_sources` — fixtures: ExampleCo (Greenhouse+careers), AnotherCorp (Lever). Assert bucket counts, `discovered_via` on new leads, cursor advances for complete sources only.
+- [x] `test_discover_jobs_dedupes_across_sources` — same canonical URL from Greenhouse AND careers crawl → 1 lead, 2 `discovered_via` entries, second goes to duplicate_within_run bucket (but `discovered_via` still appended).
+- [x] `test_discover_jobs_appends_discovered_via_on_already_known` — second-run surfaces same lead → `discovered_via` grows by one.
+- [x] `test_discover_jobs_concurrent_discovered_via_append` (todo #030) — 3 threads append to same lead via different source tuples; final array has 3 entries; no lost writes.
+- [x] `test_append_discovered_via_handles_malformed_existing` (todo #030) — lead with `discovered_via: {}` or `"string"` → warning logged, reset to `[]`, new entry appended.
+- [x] `test_append_discovered_via_missing_file_raises_structured` (todo #030) — lead path doesn't exist → `DiscoveryError(lead_write_race)`.
+- [x] `test_append_discovered_via_locks_on_lead_id_not_path` (todo #030) — `Path("a/b.json")` and `Path("./a/b.json")` serialize through the same lock.
+- [x] `test_discover_jobs_idempotent_second_run`.
+- [x] `test_discover_jobs_max_ingest_cursor_unchanged` — `--max-ingest 5` with 100 matching; cursor does NOT advance for budget-capped source.
+- [x] `test_discover_jobs_listing_truncated_cursor_unchanged`.
+- [x] `test_discover_jobs_dry_run_no_disk_writes`.
+- [x] `test_discover_jobs_no_score_leaves_leads_unscored`.
+- [x] `test_discover_jobs_auto_score_batched_not_inline` — `score_lead` called AFTER all `ingest_url` completes.
+- [x] `test_discover_jobs_rescues_unscored_leads_on_next_run` (v3, todo #033) — seed `data/leads/` with one `status: discovered` lead missing `fit_assessment`; second run of `discover-jobs` re-scores it even though it's not freshly-discovered.
+- [x] `test_discover_jobs_cursor_crash_recovery`.
+- [x] `test_discovery_config_maps_from_argparse` (todo #036) — argparse namespace → `DiscoveryConfig` round-trip.
+- [x] `test_discovery_result_to_dict_matches_schema` (todo #032) — jsonschema validate against `discovery-run.schema.json`.
+- [x] `test_outcome_to_dict_all_buckets` (todo #032) — each Literal value serializes.
+- [x] `test_discover_jobs_logs_warning_on_stale_intake`.
+- [x] `test_reset_cursor_single_tuple` — `--reset-cursor "ExampleCo|greenhouse"`.
+- [x] `test_reset_cursor_glob_company` — `--reset-cursor "ExampleCo|*"`.
+- [x] `test_reset_cursor_not_found_raises`.
+- [x] `test_discovery_state_emits_json`.
+- [x] `test_discovery_state_last_run_emits_buckets` (v3, todo #038) — `--last-run` reads latest `data/discovery/history/*.json`.
+- [x] `test_discovery_state_last_run_bucket_filter` (v3, todo #038) — `--last-run --bucket failed` returns only failed outcomes.
+- [x] `test_watchlist_add_preserves_existing_entries`.
+- [x] `test_watchlist_add_duplicate_name_raises` — `DiscoveryError(watchlist_entry_exists)`.
+- [x] `test_watchlist_validate_emits_json` (v3, todo #038) — `{valid, errors, warnings}` shape.
+- [x] `test_review_promote_ingests_and_updates_status`.
+- [x] `test_review_promote_rejects_entry_id_traversal` (todo #031) — `entry_id = "../evil"` raises.
+- [x] `test_review_promote_candidate_url_revalidates_ssrf` — stored URL pointing at loopback blocked via `_validate_url_for_fetch`.
+- [x] `test_review_dismiss_records_reason`.
+- [x] `test_review_entry_not_found_raises`.
+- [x] `test_robots_cache_clear_flushes_cache` (todo #040).
+- [x] `test_cli_error_handler_catches_structured_error_uniformly` (todo #034) — each of `IngestionError`, `DiscoveryError`, `PdfExportError` handled by the same `except StructuredError` branch.
 
 **Phase 4 Acceptance:**
 
-- [ ] All 7 dedup buckets appear in run artifact JSON, even when empty.
-- [ ] `SOURCE_NAME_MAP` is the single source of truth; test asserts CLI tokens / `ListingEntry.source` / `discovered_via.source` enum values stay in sync.
-- [ ] Cursor file always validates against `discovery-cursor.schema.json`.
-- [ ] Run artifact always validates against `discovery-run.schema.json` (concrete schema).
-- [ ] Every lead written has `discovered_via` with ≥1 entry.
-- [ ] Every lead surfaced via `already_known` OR `duplicate_within_run` has its `discovered_via` appended (provenance never dropped).
-- [ ] CLI dispatch uses lazy imports; top-level `core.py` import time doesn't regress (measured).
-- [ ] Every new command emits JSON by default.
-- [ ] `--no-score` parses to `config.auto_score=False`.
-- [ ] CLI uniform error handler catches `StructuredError`.
-- [ ] Scoring phase heals crashed-mid-batch unscored leads on re-run.
-- [ ] Cursor keys use `|` separator; `name` regex ensures no collision.
+- [x] All 7 dedup buckets appear in run artifact JSON, even when empty.
+- [x] `SOURCE_NAME_MAP` is the single source of truth; test asserts CLI tokens / `ListingEntry.source` / `discovered_via.source` enum values stay in sync.
+- [x] Cursor file always validates against `discovery-cursor.schema.json`.
+- [x] Run artifact always validates against `discovery-run.schema.json` (concrete schema).
+- [x] Every lead written has `discovered_via` with ≥1 entry.
+- [x] Every lead surfaced via `already_known` OR `duplicate_within_run` has its `discovered_via` appended (provenance never dropped).
+- [x] CLI dispatch uses lazy imports; top-level `core.py` import time doesn't regress (measured).
+- [x] Every new command emits JSON by default.
+- [x] `--no-score` parses to `config.auto_score=False`.
+- [x] CLI uniform error handler catches `StructuredError`.
+- [x] Scoring phase heals crashed-mid-batch unscored leads on re-run.
+- [x] Cursor keys use `|` separator; `name` regex ensures no collision.
 
 **Estimated effort:** 4 sessions (up from 3 due to `DiscoveryConfig`, rescore-on-rerun, 3 new commands, `StructuredError` CLI handler unification, per-lead lock normalization).
 
@@ -1534,23 +1534,23 @@ All emit JSON to stdout matching their respective schemas.
 
 **Deliverables:**
 
-- [ ] `docs/guides/job-discovery.md` — user guide: watchlist setup, filter semantics with 3 worked examples, cursor behavior, review triage workflow, LinkedIn/Indeed policy, troubleshooting (unknown-company 404, Cloudflare challenge, rate-limit observed behavior, stale cursor recovery), config-tracking convention deviation.
-- [ ] `prompts/discovery/career-crawl.md` — agent guidance for reading `data/discovery/review/<entry_id>.json` and deciding `review-promote` vs `review-dismiss`.
-- [ ] `AGENTS.md` — "Discovery Guardrails" section: rate limiting, robots discipline, LinkedIn/Indeed policy, intake sweep, `config/watchlist.yaml` gitignore convention, `DISCOVERY_ERROR_CODES` enumeration alongside `INGESTION_ERROR_CODES` / `PdfExportError` codes.
-- [ ] `README.md` — Quick Start adds "3. Discover jobs" step between normalize-profile and score-lead.
-- [ ] `docs/profile/README.md` — brief cross-link.
-- [ ] `tracking.check_integrity` extension: four new orphan types surfaced (stale `_intake/pending/*.md` >1h, orphaned `data/discovery/history/*.json`, stale `data/discovery/review/*.md` >30d, stale `.tmp` files anywhere in `data/`).
-- [ ] Backward-compat regression test (expanded): load a batch-1 lead fixture missing `discovered_via`, `canonical_url`, `ingestion_method`, `ingested_at`; assert (a) `jsonschema.validate` passes, (b) `score_lead` succeeds, (c) `ats_check` succeeds, (d) `apps_dashboard` aggregator includes it, (e) `analyze_skills_gap` handles it, (f) `check_integrity` reports no false orphans.
-- [ ] End-to-end `test_batch3_end_to_end`: watchlist setup → `discover-jobs` run → lead files exist with `discovered_via` populated → `apps-dashboard` still works → `check-integrity` passes → batch-2 end-to-end test still passes.
-- [ ] All 156 batch-2 tests continue to pass unchanged.
+- [x] `docs/guides/job-discovery.md` — user guide: watchlist setup, filter semantics with 3 worked examples, cursor behavior, review triage workflow, LinkedIn/Indeed policy, troubleshooting (unknown-company 404, Cloudflare challenge, rate-limit observed behavior, stale cursor recovery), config-tracking convention deviation.
+- [x] `prompts/discovery/career-crawl.md` — agent guidance for reading `data/discovery/review/<entry_id>.json` and deciding `review-promote` vs `review-dismiss`.
+- [x] `AGENTS.md` — "Discovery Guardrails" section: rate limiting, robots discipline, LinkedIn/Indeed policy, intake sweep, `config/watchlist.yaml` gitignore convention, `DISCOVERY_ERROR_CODES` enumeration alongside `INGESTION_ERROR_CODES` / `PdfExportError` codes.
+- [x] `README.md` — Quick Start adds "3. Discover jobs" step between normalize-profile and score-lead.
+- [x] `docs/profile/README.md` — brief cross-link.
+- [x] `tracking.check_integrity` extension: four new orphan types surfaced (stale `_intake/pending/*.md` >1h, orphaned `data/discovery/history/*.json`, stale `data/discovery/review/*.md` >30d, stale `.tmp` files anywhere in `data/`).
+- [x] Backward-compat regression test (expanded): load a batch-1 lead fixture missing `discovered_via`, `canonical_url`, `ingestion_method`, `ingested_at`; assert (a) `jsonschema.validate` passes, (b) `score_lead` succeeds, (c) `ats_check` succeeds, (d) `apps_dashboard` aggregator includes it, (e) `analyze_skills_gap` handles it, (f) `check_integrity` reports no false orphans.
+- [x] End-to-end `test_batch3_end_to_end`: watchlist setup → `discover-jobs` run → lead files exist with `discovered_via` populated → `apps-dashboard` still works → `check-integrity` passes → batch-2 end-to-end test still passes.
+- [x] All 156 batch-2 tests continue to pass unchanged.
 
 **Phase 5 Acceptance:**
 
-- [ ] 156 batch-2 tests pass.
-- [ ] New test count: ≥45 (Phase 1: ~17, Phase 2: ~7, Phase 3: ~12, Phase 4: ~20, Phase 5: ~5 integration).
-- [ ] `AGENTS.md` includes Discovery Guardrails section with full `DISCOVERY_ERROR_CODES` list.
-- [ ] `docs/guides/job-discovery.md` passes a basic structural check (includes sections: setup, filter semantics, cursor, review triage, troubleshooting).
-- [ ] `check-integrity` detects all 4 new orphan types (validated via fixtures).
+- [x] 156 batch-2 tests pass.
+- [x] New test count: ≥45 (Phase 1: ~17, Phase 2: ~7, Phase 3: ~12, Phase 4: ~20, Phase 5: ~5 integration).
+- [x] `AGENTS.md` includes Discovery Guardrails section with full `DISCOVERY_ERROR_CODES` list.
+- [x] `docs/guides/job-discovery.md` passes a basic structural check (includes sections: setup, filter semantics, cursor, review triage, troubleshooting).
+- [x] `check-integrity` detects all 4 new orphan types (validated via fixtures).
 
 **Estimated effort:** 1 session.
 
@@ -1713,83 +1713,83 @@ Batch 2 and batch 3 produce leads of the same shape. New optional field (`discov
 
 ### Functional Requirements
 
-- [ ] `discover-jobs` writes new leads to `data/leads/` with `discovered_via` populated.
-- [ ] All 7 dedup buckets appear in the run artifact JSON (empty arrays when no members).
-- [ ] Filters evaluate with documented precedence; substring + case-insensitive; `keywords_none` wins.
-- [ ] `--dry-run` is a true no-op on disk.
-- [ ] `--max-ingest N` caps leads written AND leaves cursor unchanged for budget-capped sources.
-- [ ] `--no-score` leaves leads at `status: discovered` with no `fit_assessment`.
-- [ ] `--sources greenhouse,lever,careers` accepted; unknown tokens rejected.
-- [ ] `--score-concurrency N` parallelizes batched scoring.
-- [ ] `--reset-cursor "ExampleCo|greenhouse"` and `--reset-cursor "ExampleCo|*"` both supported (v3: `|` separator).
-- [ ] `--watchlist PATH` loads an alternate config.
-- [ ] `discovery-state` emits JSON listing all `(company, source, last_run_at, last_run_status, last_entry_count)` tuples; `--last-run` and `--bucket` filter the latest run artifact (v3).
-- [ ] `watchlist-show` / `watchlist-add` / `watchlist-remove` / `watchlist-validate` manipulate `config/watchlist.yaml` atomically with safe input escaping (v3).
-- [ ] `watchlist-add` raises `watchlist_comments_present` when target file has comments unless `--force` supplied (v3).
-- [ ] `review-list` / `review-promote` / `review-dismiss` operate on `data/discovery/review/<entry_id>.md` by ID (v3: single-file design).
-- [ ] `review-promote` validates `entry_id` against `ENTRY_ID_RE` before filesystem access; calls `ingest_url` (which re-validates `candidate_url` through `_validate_url_for_fetch`); writes `discovered_via: careers_html_review` on the new lead; updates review frontmatter `status: promoted`.
-- [ ] `robots-cache-clear` flushes `data/discovery/robots_cache.json` (v3).
-- [ ] Greenhouse and Lever listing fetchers return `ListingEntry.posting_url` values accepted by existing `ingest_url`.
-- [ ] Career crawler tries JSON-LD → ATS subdomain → heuristic, in that order.
-- [ ] Career crawler requires ≥2 signals for auto-queue; 1-signal lands in `data/discovery/review/`.
-- [ ] LinkedIn and Indeed hard-fail at every entry point.
-- [ ] HTTPS-only enforced on `careers_url` (schema pattern `^https://`).
-- [ ] Anti-bot challenge detected via status + header (NOT body-alone) (v3); host marked `anti_bot_blocked`, not retried mid-run.
-- [ ] Cursor persists at `data/discovery/state.json` validated against `discovery-cursor.schema.json` with `schema_version: 1` and `|` key separator (v3).
-- [ ] Cursor advances ONLY for complete, non-truncated, non-budget-capped sources; `last_run_status` only writes `complete` or `failed` (v3: `partial` removed).
-- [ ] Run artifact persists at `data/discovery/history/<timestamp>.json` validated against concretely-specified `discovery-run.schema.json` (v3).
-- [ ] Review entries persist as **single `.md` with YAML frontmatter** (v3, collapsed from paired `.md`+`.json`); frontmatter validates against `discovery-review.schema.json`; body uses nonce-fenced block for attacker-controlled content.
-- [ ] Robots cache persists at `data/discovery/robots_cache.json` with differentiated TTLs (allow 24h, disallow 1h) and resolved-IP invalidation (v3).
-- [ ] Watchlist config validates against `watchlist.schema.json`; malformed raises `watchlist_invalid`.
-- [ ] Watchlist `name` regex `^[A-Za-z0-9 ._-]{1,64}$` enforced; `careers_url` must be HTTPS; `maxItems: 200` cap enforced.
-- [ ] Review `entry_id` regex `^[a-f0-9]{16}$` enforced via schema.
-- [ ] `discovered_via` appended under per-lead-id lock (WeakValueDictionary — todo #040) on `already_known` and `duplicate_within_run` paths (provenance never lost). Missing lead file raises `lead_write_race`.
-- [ ] Malformed `discovered_via` on existing lead (non-list value) → warning logged + reset to `[]` + append proceeds (v3, todo #030).
-- [ ] Scoring phase scans `data/leads/*.json` for `status: discovered` leads missing `fit_assessment` and rescores them (v3, todo #033 — crash-recovery).
+- [x] `discover-jobs` writes new leads to `data/leads/` with `discovered_via` populated.
+- [x] All 7 dedup buckets appear in the run artifact JSON (empty arrays when no members).
+- [x] Filters evaluate with documented precedence; substring + case-insensitive; `keywords_none` wins.
+- [x] `--dry-run` is a true no-op on disk.
+- [x] `--max-ingest N` caps leads written AND leaves cursor unchanged for budget-capped sources.
+- [x] `--no-score` leaves leads at `status: discovered` with no `fit_assessment`.
+- [x] `--sources greenhouse,lever,careers` accepted; unknown tokens rejected.
+- [x] `--score-concurrency N` parallelizes batched scoring.
+- [x] `--reset-cursor "ExampleCo|greenhouse"` and `--reset-cursor "ExampleCo|*"` both supported (v3: `|` separator).
+- [x] `--watchlist PATH` loads an alternate config.
+- [x] `discovery-state` emits JSON listing all `(company, source, last_run_at, last_run_status, last_entry_count)` tuples; `--last-run` and `--bucket` filter the latest run artifact (v3).
+- [x] `watchlist-show` / `watchlist-add` / `watchlist-remove` / `watchlist-validate` manipulate `config/watchlist.yaml` atomically with safe input escaping (v3).
+- [x] `watchlist-add` raises `watchlist_comments_present` when target file has comments unless `--force` supplied (v3).
+- [x] `review-list` / `review-promote` / `review-dismiss` operate on `data/discovery/review/<entry_id>.md` by ID (v3: single-file design).
+- [x] `review-promote` validates `entry_id` against `ENTRY_ID_RE` before filesystem access; calls `ingest_url` (which re-validates `candidate_url` through `_validate_url_for_fetch`); writes `discovered_via: careers_html_review` on the new lead; updates review frontmatter `status: promoted`.
+- [x] `robots-cache-clear` flushes `data/discovery/robots_cache.json` (v3).
+- [x] Greenhouse and Lever listing fetchers return `ListingEntry.posting_url` values accepted by existing `ingest_url`.
+- [x] Career crawler tries JSON-LD → ATS subdomain → heuristic, in that order.
+- [x] Career crawler requires ≥2 signals for auto-queue; 1-signal lands in `data/discovery/review/`.
+- [x] LinkedIn and Indeed hard-fail at every entry point.
+- [x] HTTPS-only enforced on `careers_url` (schema pattern `^https://`).
+- [x] Anti-bot challenge detected via status + header (NOT body-alone) (v3); host marked `anti_bot_blocked`, not retried mid-run.
+- [x] Cursor persists at `data/discovery/state.json` validated against `discovery-cursor.schema.json` with `schema_version: 1` and `|` key separator (v3).
+- [x] Cursor advances ONLY for complete, non-truncated, non-budget-capped sources; `last_run_status` only writes `complete` or `failed` (v3: `partial` removed).
+- [x] Run artifact persists at `data/discovery/history/<timestamp>.json` validated against concretely-specified `discovery-run.schema.json` (v3).
+- [x] Review entries persist as **single `.md` with YAML frontmatter** (v3, collapsed from paired `.md`+`.json`); frontmatter validates against `discovery-review.schema.json`; body uses nonce-fenced block for attacker-controlled content.
+- [x] Robots cache persists at `data/discovery/robots_cache.json` with differentiated TTLs (allow 24h, disallow 1h) and resolved-IP invalidation (v3).
+- [x] Watchlist config validates against `watchlist.schema.json`; malformed raises `watchlist_invalid`.
+- [x] Watchlist `name` regex `^[A-Za-z0-9 ._-]{1,64}$` enforced; `careers_url` must be HTTPS; `maxItems: 200` cap enforced.
+- [x] Review `entry_id` regex `^[a-f0-9]{16}$` enforced via schema.
+- [x] `discovered_via` appended under per-lead-id lock (WeakValueDictionary — todo #040) on `already_known` and `duplicate_within_run` paths (provenance never lost). Missing lead file raises `lead_write_race`.
+- [x] Malformed `discovered_via` on existing lead (non-list value) → warning logged + reset to `[]` + append proceeds (v3, todo #030).
+- [x] Scoring phase scans `data/leads/*.json` for `status: discovered` leads missing `fit_assessment` and rescores them (v3, todo #033 — crash-recovery).
 
 ### Non-Functional Requirements
 
-- [ ] No new default dependencies in `pyproject.toml`.
-- [ ] Per-domain minimum interval: 500ms, globally enforced, reserve-first (no thundering herd).
-- [ ] Max concurrent HTTP requests to same registered domain: 1 (test-enforced invariant).
-- [ ] Max parallel company workers: 3 (`ThreadPoolExecutor`).
-- [ ] Max parallel scoring workers: configurable via `--score-concurrency`, default 3.
-- [ ] All network tests use fixtures via `--html-file` or patched `fetch`; no real HTTP.
-- [ ] Listing fetch size cap: 8MB ingress, 20MB decompressed (proportional 2.5× ratio).
-- [ ] Per-posting fetch size cap unchanged from batch 2 (2MB / 5MB).
-- [ ] **DNS-rebinding TOCTOU closed via `_PinnedHTTPSConnection`** with:
+- [x] No new default dependencies in `pyproject.toml`.
+- [x] Per-domain minimum interval: 500ms, globally enforced, reserve-first (no thundering herd).
+- [x] Max concurrent HTTP requests to same registered domain: 1 (test-enforced invariant).
+- [x] Max parallel company workers: 3 (`ThreadPoolExecutor`).
+- [x] Max parallel scoring workers: configurable via `--score-concurrency`, default 3.
+- [x] All network tests use fixtures via `--html-file` or patched `fetch`; no real HTTP.
+- [x] Listing fetch size cap: 8MB ingress, 20MB decompressed (proportional 2.5× ratio).
+- [x] Per-posting fetch size cap unchanged from batch 2 (2MB / 5MB).
+- [x] **DNS-rebinding TOCTOU closed via `_PinnedHTTPSConnection`** with:
   - `server_hostname=hostname` for SNI
   - `check_hostname=True`, `verify_mode=CERT_REQUIRED`
   - `Connection: close` to defeat pool reuse
   - Per-redirect re-pin via `_StrictRedirectHandler`
-- [ ] IPv4-mapped-IPv6 addresses blocked (`::ffff:127.0.0.1` → `private_ip_blocked`).
-- [ ] `registered_domain()` handles IP URLs, IDN/Punycode, empty hostnames.
-- [ ] `urllib.robotparser` wrapped for spec-correct 5xx and BOM handling.
-- [ ] Robots body capped at 500KB.
-- [ ] Robots cache: 1h TTL for disallow decisions, 24h for allow; IP-invalidation on re-resolve.
-- [ ] `FETCH_CHAIN_TIMEOUT_S = 20` outer timeout across redirects.
-- [ ] `write_json` per-call unique tmp + parent-directory fsync (v3).
-- [ ] `_LEAD_WRITE_LOCKS` uses `WeakValueDictionary` (v3) — no memory leak.
-- [ ] Startup sweep globs `*.tmp` (catches batch-2 and batch-3 mkstemp patterns).
-- [ ] Every new CLI command emits JSON by default.
-- [ ] CLI uniform `StructuredError` handler (v3).
+- [x] IPv4-mapped-IPv6 addresses blocked (`::ffff:127.0.0.1` → `private_ip_blocked`).
+- [x] `registered_domain()` handles IP URLs, IDN/Punycode, empty hostnames.
+- [x] `urllib.robotparser` wrapped for spec-correct 5xx and BOM handling.
+- [x] Robots body capped at 500KB.
+- [x] Robots cache: 1h TTL for disallow decisions, 24h for allow; IP-invalidation on re-resolve.
+- [x] `FETCH_CHAIN_TIMEOUT_S = 20` outer timeout across redirects.
+- [x] `write_json` per-call unique tmp + parent-directory fsync (v3).
+- [x] `_LEAD_WRITE_LOCKS` uses `WeakValueDictionary` (v3) — no memory leak.
+- [x] Startup sweep globs `*.tmp` (catches batch-2 and batch-3 mkstemp patterns).
+- [x] Every new CLI command emits JSON by default.
+- [x] CLI uniform `StructuredError` handler (v3).
 
 ### Quality Gates
 
-- [ ] Every new CLI command has tests.
-- [ ] All 156 batch-2 tests continue to pass unchanged.
-- [ ] New tests ≥60 across Phases 1-5 (up from v2's ≥45 due to v3 additions).
-- [ ] `check_integrity` detects all 5 new orphan types (validated by fixtures).
-- [ ] `DISCOVERY_ERROR_CODES` frozen set matches every `raise DiscoveryError(...)` call (enforced by grep test).
-- [ ] `SOURCE_NAME_MAP` consistency test: CLI tokens, `ListingEntry.source` literals, `discovered_via.source` enum all stay aligned.
-- [ ] `DISCOVERY_USER_AGENT` constant is the single source of truth (grep test: no string-literal `"job-hunt/"` in discovery.py / net_policy.py / utils.py outside the constant definition).
-- [ ] `StructuredError` is the common base for all three structured-error subclasses; CLI handler catches it uniformly.
-- [ ] `_PinnedHTTPSConnection` used for every HTTPS fetch; TLS integrity preserved (test-enforced: cert validation under pin, redirect re-pin, no pool reuse).
-- [ ] `simple_yaml` write-path escapes all user inputs; watchlist-add rejects control characters; comment-loss requires `--force`.
-- [ ] `AGENTS.md` Discovery Guardrails section + schema versioning convention subsection.
-- [ ] `README.md` Quick Start includes discovery step.
-- [ ] `docs/guides/job-discovery.md` exists and walks a user through first-run.
-- [ ] Backward-compat test round-trips a batch-1 lead through 6 readers (validate, score, ats-check, apps-dashboard, analyze-skills-gap, check-integrity).
+- [x] Every new CLI command has tests.
+- [x] All 156 batch-2 tests continue to pass unchanged.
+- [x] New tests ≥60 across Phases 1-5 (up from v2's ≥45 due to v3 additions).
+- [x] `check_integrity` detects all 5 new orphan types (validated by fixtures).
+- [x] `DISCOVERY_ERROR_CODES` frozen set matches every `raise DiscoveryError(...)` call (enforced by grep test).
+- [x] `SOURCE_NAME_MAP` consistency test: CLI tokens, `ListingEntry.source` literals, `discovered_via.source` enum all stay aligned.
+- [x] `DISCOVERY_USER_AGENT` constant is the single source of truth (grep test: no string-literal `"job-hunt/"` in discovery.py / net_policy.py / utils.py outside the constant definition).
+- [x] `StructuredError` is the common base for all three structured-error subclasses; CLI handler catches it uniformly.
+- [x] `_PinnedHTTPSConnection` used for every HTTPS fetch; TLS integrity preserved (test-enforced: cert validation under pin, redirect re-pin, no pool reuse).
+- [x] `simple_yaml` write-path escapes all user inputs; watchlist-add rejects control characters; comment-loss requires `--force`.
+- [x] `AGENTS.md` Discovery Guardrails section + schema versioning convention subsection.
+- [x] `README.md` Quick Start includes discovery step.
+- [x] `docs/guides/job-discovery.md` exists and walks a user through first-run.
+- [x] Backward-compat test round-trips a batch-1 lead through 6 readers (validate, score, ats-check, apps-dashboard, analyze-skills-gap, check-integrity).
 
 ## Success Metrics
 
@@ -1862,12 +1862,12 @@ No external infra, no API keys, no deploy surface.
 
 ## Documentation Plan
 
-- [ ] `docs/guides/job-discovery.md` — watchlist setup, filter semantics with 3 worked examples, cursor behavior, review triage workflow, LinkedIn/Indeed policy, troubleshooting, config-tracking convention deviation.
-- [ ] `prompts/discovery/career-crawl.md` — agent guidance for review entries.
-- [ ] `README.md` Quick Start — discovery step.
-- [ ] `AGENTS.md` — Discovery Guardrails + DISCOVERY_ERROR_CODES + gitignore convention.
-- [ ] `docs/profile/README.md` — cross-link.
-- [ ] Inline module docstrings matching `ingestion.py` style.
+- [x] `docs/guides/job-discovery.md` — watchlist setup, filter semantics with 3 worked examples, cursor behavior, review triage workflow, LinkedIn/Indeed policy, troubleshooting, config-tracking convention deviation.
+- [x] `prompts/discovery/career-crawl.md` — agent guidance for review entries.
+- [x] `README.md` Quick Start — discovery step.
+- [x] `AGENTS.md` — Discovery Guardrails + DISCOVERY_ERROR_CODES + gitignore convention.
+- [x] `docs/profile/README.md` — cross-link.
+- [x] Inline module docstrings matching `ingestion.py` style.
 
 ## Recommended Sequence Of Work
 

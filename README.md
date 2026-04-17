@@ -57,7 +57,19 @@ If you only want to rerun the intake/audit pass, use:
 python3 scripts/job_hunt.py audit-profile-docs
 ```
 
-3. Add or collect a raw job description file, then extract and score it:
+3. Discover jobs from target companies:
+
+```bash
+cp config/watchlist.example.yaml config/watchlist.yaml
+# edit config/watchlist.yaml — add your target-company Greenhouse/Lever slugs
+python3 scripts/job_hunt.py discover-jobs
+```
+
+`config/watchlist.yaml` is gitignored (target-company names are
+PII-adjacent). See `docs/guides/job-discovery.md` for filter semantics,
+cursor behavior, and review-queue triage.
+
+4. Add or collect a raw job description file, then extract and score it:
 
 ```bash
 python3 scripts/job_hunt.py extract-lead --input examples/leads/senior-platform-engineer.md

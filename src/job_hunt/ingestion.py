@@ -34,6 +34,7 @@ Threading:
 from __future__ import annotations
 
 import gzip
+import http.client
 import io
 import ipaddress
 import json
@@ -41,15 +42,17 @@ import logging
 import re
 import secrets
 import socket
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
 import zlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
-from .utils import now_iso, short_hash, slugify, write_json
+from .utils import StructuredError, now_iso, short_hash, slugify, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -61,35 +64,28 @@ INGESTION_ERROR_CODES: Final = frozenset({
 })
 
 
-class IngestionError(ValueError):
-    """Structured error for agent consumption.
+class IngestionError(StructuredError):
+    """Structured error for URL ingestion failures.
 
-    Inherits ValueError per batch 1 convention (like ValidationError in
-    schema_checks). Batch 2 convention: structured error classes are used at
-    I/O/CLI boundaries (ingestion, pdf_export). Internal logic modules
-    (ats_check, analytics, tracking, generation) raise plain ValueError.
+    Inherits the shared `StructuredError` base so the CLI can catch
+    `IngestionError`, `PdfExportError`, and `DiscoveryError` uniformly.
     """
 
-    def __init__(
-        self,
-        message: str,
-        error_code: str,
-        url: str = "",
-        remediation: str = "",
-    ):
-        super().__init__(message)
-        assert error_code in INGESTION_ERROR_CODES, f"unknown error_code: {error_code}"
-        self.error_code = error_code
-        self.url = url
-        self.remediation = remediation
+    ALLOWED_ERROR_CODES = INGESTION_ERROR_CODES
 
-    def to_dict(self) -> dict[str, str]:
-        return {
-            "error_code": self.error_code,
-            "message": str(self),
-            "url": self.url,
-            "remediation": self.remediation,
-        }
+
+@dataclass(frozen=True)
+class FetchResult:
+    """Result from a `fetch()` call — status + headers + body.
+
+    Status and headers let callers detect bot-challenge pages (HTTP 403/503
+    with `cf-ray` or a Cloudflare title) and branch on HTTP metadata without
+    having to re-issue the request.
+    """
+
+    status: int
+    headers: dict[str, str]
+    body: str
 
 
 # Platforms with public JSON APIs we can use without scraping HTML.
@@ -184,12 +180,35 @@ def _sanitize_url_for_logging(url: str) -> str:
 # SSRF guards
 # =============================================================================
 
+def _ip_is_disallowed(ip: ipaddress._BaseAddress) -> bool:
+    """Check if an IP lives in a range we refuse to fetch.
+
+    IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`) get their embedded IPv4
+    checked explicitly — some Python versions report `is_private=False` for
+    the mapped form even though the underlying IPv4 is loopback/private.
+    """
+    if (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+    ):
+        return True
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        mapped = ip.ipv4_mapped
+        if (
+            mapped.is_private or mapped.is_loopback or mapped.is_link_local
+            or mapped.is_reserved or mapped.is_multicast or mapped.is_unspecified
+        ):
+            return True
+    return False
+
+
 def _validate_url_for_fetch(url: str) -> tuple[str, list[str]]:
     """SSRF guard — returns (hostname, list of resolved IPs).
 
     Blocks:
     - non-http(s) schemes
     - private/loopback/link-local/reserved/multicast/unspecified IPs (IPv4+IPv6)
+    - IPv4-mapped IPv6 addresses whose embedded IPv4 is disallowed
     - ANY returned address is validated; if ANY is in a disallowed range, reject.
     """
     parsed = urllib.parse.urlsplit(url)
@@ -221,10 +240,7 @@ def _validate_url_for_fetch(url: str) -> tuple[str, list[str]]:
             ip = ipaddress.ip_address(ip_str)
         except ValueError:
             continue
-        if (
-            ip.is_private or ip.is_loopback or ip.is_link_local
-            or ip.is_reserved or ip.is_multicast or ip.is_unspecified
-        ):
+        if _ip_is_disallowed(ip):
             raise IngestionError(
                 f"Refusing to fetch private/loopback/reserved address: {ip}",
                 error_code="private_ip_blocked",
@@ -241,11 +257,98 @@ def _validate_url_for_fetch(url: str) -> tuple[str, list[str]]:
     return parsed.hostname, ip_strs
 
 
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS connection that CONNECTs to a pre-validated IP while preserving
+    full TLS integrity (SNI, hostname verification, cert validation).
+
+    Closes the DNS-rebinding TOCTOU between `_validate_url_for_fetch` (which
+    resolves and validates an IP) and `urlopen` (which would otherwise
+    re-resolve via the OS). The socket connects to `pinned_ip`; the TLS
+    wrapper sets `server_hostname=self.host` so SNI and cert CN/SAN
+    validation still target the hostname. The HTTP `Host:` header carries
+    the hostname by default (http.client behavior).
+    """
+
+    def __init__(self, host, pinned_ip, port=443, context=None, timeout=None):
+        if context is None:
+            context = ssl.create_default_context()
+            context.check_hostname = True
+            context.verify_mode = ssl.CERT_REQUIRED
+        super().__init__(host, port=port, timeout=timeout, context=context)
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        sock = socket.create_connection(
+            (self._pinned_ip, self.port),
+            timeout=self.timeout,
+        )
+        if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """Plain-HTTP counterpart to `_PinnedHTTPSConnection`.
+
+    No TLS here — there is no DNS-rebind vs. certificate conflict to balance.
+    Used only when the caller explicitly asked for `http://`.
+    """
+
+    def __init__(self, host, pinned_ip, port=80, timeout=None):
+        super().__init__(host, port=port, timeout=timeout)
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        self.sock = socket.create_connection(
+            (self._pinned_ip, self.port),
+            timeout=self.timeout,
+        )
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, pinned_ip: str, timeout: float):
+        super().__init__()
+        self._pinned_ip = pinned_ip
+        self._timeout = timeout
+
+    def https_open(self, req):
+        return self.do_open(self._build_conn, req)
+
+    def _build_conn(self, host, timeout=None, **kwargs):
+        return _PinnedHTTPSConnection(
+            host,
+            pinned_ip=self._pinned_ip,
+            timeout=timeout if timeout is not None else self._timeout,
+        )
+
+
+class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, pinned_ip: str, timeout: float):
+        super().__init__()
+        self._pinned_ip = pinned_ip
+        self._timeout = timeout
+
+    def http_open(self, req):
+        return self.do_open(self._build_conn, req)
+
+    def _build_conn(self, host, timeout=None, **kwargs):
+        return _PinnedHTTPConnection(
+            host,
+            pinned_ip=self._pinned_ip,
+            timeout=timeout if timeout is not None else self._timeout,
+        )
+
+
 class _StrictRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Re-validate each redirect target for SSRF. Cap at 3 hops.
 
     Wraps inner validation errors with error_code='redirect_blocked' so agents
-    can distinguish direct rejections from rejections-via-redirect.
+    can distinguish direct rejections from rejections-via-redirect. The caller
+    (fetch) re-resolves and re-pins the IP for each redirect hop by replaying
+    the request with a fresh opener — this handler just enforces the
+    validation boundary so a bad redirect target never reaches the pinned
+    connection.
     """
 
     max_redirections = 3
@@ -269,6 +372,14 @@ class _StrictRedirectHandler(urllib.request.HTTPRedirectHandler):
                 remediation="The redirect chain led to a blocked destination.",
             ) from exc
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _build_pinned_opener(pinned_ip: str, timeout: float):
+    return urllib.request.build_opener(
+        _PinnedHTTPSHandler(pinned_ip, timeout),
+        _PinnedHTTPHandler(pinned_ip, timeout),
+        _StrictRedirectHandler(),
+    )
 
 
 # =============================================================================
@@ -326,24 +437,38 @@ def _decompress_bounded(raw: bytes, encoding: str, limit: int, url: str) -> byte
     return b"".join(chunks2)
 
 
-def _fetch(
+def fetch(
     url: str,
     timeout: int = MAX_FETCH_TIMEOUT_S,
     max_bytes: int = MAX_FETCH_BYTES,
-) -> str:
-    """Stdlib HTTP GET with SSRF guards, timeout, size limits, and gzip handling."""
-    _validate_url_for_fetch(url)
-    opener = urllib.request.build_opener(_StrictRedirectHandler())
+    max_decompressed_bytes: int = MAX_DECOMPRESSED_BYTES,
+) -> FetchResult:
+    """Stdlib HTTP GET with SSRF guards, IP pinning, timeout, size limits, gzip.
+
+    Closes DNS-rebinding TOCTOU: the validated IP is pinned for the socket
+    connect while TLS/SNI/cert validation target the hostname. Uses
+    `Connection: close` to defeat pool reuse where a cached (host,port)
+    connection could bypass the pin.
+
+    Returns `FetchResult(status, headers, body)` — callers can branch on
+    HTTP status and headers without issuing a second request.
+    """
+    _hostname, ip_strs = _validate_url_for_fetch(url)
+    pinned_ip = ip_strs[0]
+    opener = _build_pinned_opener(pinned_ip, float(timeout))
     req = urllib.request.Request(
         url,
         headers={
             "User-Agent": "job-hunt-cli/0.2",
             "Accept": "application/json, text/html;q=0.9",
             "Accept-Encoding": "gzip, deflate, identity",
+            "Connection": "close",
         },
     )
     try:
         with opener.open(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200) or 200
+            headers = {k.lower(): v for k, v in resp.headers.items()}
             content_length = resp.headers.get("Content-Length")
             if content_length:
                 try:
@@ -385,8 +510,12 @@ def _fetch(
             url=url,
         )
     if encoding in ("gzip", "deflate"):
-        raw = _decompress_bounded(raw, encoding, MAX_DECOMPRESSED_BYTES, url)
-    return raw.decode("utf-8", errors="replace")
+        raw = _decompress_bounded(raw, encoding, max_decompressed_bytes, url)
+    return FetchResult(
+        status=int(status),
+        headers=headers,
+        body=raw.decode("utf-8", errors="replace"),
+    )
 
 
 # =============================================================================
@@ -432,7 +561,7 @@ def _html_to_text(html: str) -> str:
 def _fetch_greenhouse(company: str, job_id: str) -> dict:
     """Greenhouse public Harvest Board API (no auth required)."""
     api_url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs/{job_id}"
-    payload = json.loads(_fetch(api_url))
+    payload = json.loads(fetch(api_url).body)
     location_obj = payload.get("location") or {}
     comp = ""
     pay_ranges = payload.get("pay_input_ranges") or []
@@ -452,7 +581,7 @@ def _fetch_greenhouse(company: str, job_id: str) -> dict:
 def _fetch_lever(company: str, job_id: str) -> dict:
     """Lever public postings API (no auth required)."""
     api_url = f"https://api.lever.co/v0/postings/{company}/{job_id}"
-    payload = json.loads(_fetch(api_url))
+    payload = json.loads(fetch(api_url).body)
     categories = payload.get("categories") or {}
     return {
         "title": str(payload.get("text", "")),
@@ -471,7 +600,7 @@ def _fetch_generic_html(url: str, html_text: str | None = None) -> dict:
     telling the user to verify extracted fields manually.
     """
     if html_text is None:
-        html_text = _fetch(url)
+        html_text = fetch(url).body
     # Extract <title> as best-guess title
     m = re.search(r"<title[^>]*>(.*?)</title>", html_text, re.I | re.S)
     title = m.group(1).strip() if m else ""

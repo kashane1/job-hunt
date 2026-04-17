@@ -1870,6 +1870,78 @@ def build_parser() -> argparse.ArgumentParser:
     )
     rej_parser.add_argument("--data-root", default="data")
 
+    # ----- Batch 3: active job discovery -----
+    disc_parser = subparsers.add_parser(
+        "discover-jobs",
+        help="Poll the watchlist for new openings (Greenhouse/Lever/careers)",
+    )
+    disc_parser.add_argument("--watchlist", default="config/watchlist.yaml")
+    disc_parser.add_argument("--leads-dir", default="data/leads")
+    disc_parser.add_argument("--discovery-root", default="data/discovery")
+    disc_parser.add_argument("--max-ingest", type=int, default=50)
+    disc_parser.add_argument("--max-workers", type=int, default=3)
+    disc_parser.add_argument("--sources", default="", help="Comma-separated: greenhouse,lever,careers")
+    disc_parser.add_argument("--dry-run", action="store_true")
+    disc_parser.add_argument("--no-score", action="store_true")
+    disc_parser.add_argument("--score-concurrency", type=int, default=3)
+    disc_parser.add_argument(
+        "--reset-cursor", default="",
+        help="'Company|source' or 'Company|*' to clear cursor before running",
+    )
+    disc_parser.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    disc_parser.add_argument("--scoring-config", default="config/scoring.yaml")
+
+    state_parser = subparsers.add_parser(
+        "discovery-state",
+        help="Show the discovery cursor or query the most recent run artifact",
+    )
+    state_parser.add_argument("--discovery-root", default="data/discovery")
+    state_parser.add_argument("--company", default="")
+    state_parser.add_argument("--source", default="")
+    state_parser.add_argument("--last-run", action="store_true")
+    state_parser.add_argument("--bucket", default="")
+
+    wls_parser = subparsers.add_parser("watchlist-show", help="Print watchlist contents as JSON")
+    wls_parser.add_argument("--watchlist", default="config/watchlist.yaml")
+    wls_parser.add_argument("--company", default="")
+
+    wla_parser = subparsers.add_parser("watchlist-add", help="Add a company to the watchlist")
+    wla_parser.add_argument("--watchlist", default="config/watchlist.yaml")
+    wla_parser.add_argument("--name", required=True)
+    wla_parser.add_argument("--greenhouse", default="")
+    wla_parser.add_argument("--lever", default="")
+    wla_parser.add_argument("--careers-url", default="")
+    wla_parser.add_argument("--notes", default="")
+    wla_parser.add_argument(
+        "--force", action="store_true",
+        help="Override comment-loss warning when the target file has comments",
+    )
+
+    wlr_parser = subparsers.add_parser("watchlist-remove", help="Remove a company from the watchlist")
+    wlr_parser.add_argument("--watchlist", default="config/watchlist.yaml")
+    wlr_parser.add_argument("--name", required=True)
+    wlr_parser.add_argument("--force", action="store_true")
+
+    wlv_parser = subparsers.add_parser("watchlist-validate", help="Check watchlist against schema")
+    wlv_parser.add_argument("--watchlist", default="config/watchlist.yaml")
+
+    rl_parser = subparsers.add_parser("review-list", help="List low-confidence discovery entries awaiting review")
+    rl_parser.add_argument("--discovery-root", default="data/discovery")
+    rl_parser.add_argument("--status", default="pending")
+
+    rp_parser = subparsers.add_parser("review-promote", help="Ingest a low-confidence entry into data/leads/")
+    rp_parser.add_argument("entry_id")
+    rp_parser.add_argument("--discovery-root", default="data/discovery")
+    rp_parser.add_argument("--leads-dir", default="data/leads")
+
+    rd_parser = subparsers.add_parser("review-dismiss", help="Mark a low-confidence entry as dismissed")
+    rd_parser.add_argument("entry_id")
+    rd_parser.add_argument("--discovery-root", default="data/discovery")
+    rd_parser.add_argument("--reason", default="")
+
+    rcc_parser = subparsers.add_parser("robots-cache-clear", help="Flush the robots.txt cache")
+    rcc_parser.add_argument("--discovery-root", default="data/discovery")
+
     return parser
 
 
@@ -2199,6 +2271,192 @@ def main(argv: list[str] | None = None) -> int:
 
         result = report_rejection_patterns(Path(args.data_root))
         print(json.dumps(result, indent=2))
+        return 0
+
+    # --- Batch 3: active job discovery ---
+    if args.command == "discover-jobs":
+        from .discovery import DiscoveryConfig, DiscoveryError, discover_jobs
+        from .utils import StructuredError
+
+        try:
+            sources = tuple(s.strip() for s in args.sources.split(",") if s.strip())
+            reset_cursor = None
+            if args.reset_cursor:
+                if "|" not in args.reset_cursor:
+                    parser.error("--reset-cursor must be 'Company|source' or 'Company|*'")
+                company, source = args.reset_cursor.split("|", 1)
+                reset_cursor = (company, source)
+            profile_path = Path(args.profile)
+            profile = read_json(profile_path) if profile_path.exists() else {}
+            scoring_config = load_yaml_file(Path(args.scoring_config), {})
+            config = DiscoveryConfig(
+                max_ingest=args.max_ingest,
+                max_workers=args.max_workers,
+                sources=sources,
+                dry_run=args.dry_run,
+                auto_score=not args.no_score,
+                score_concurrency=args.score_concurrency,
+                scoring_config=scoring_config,
+                candidate_profile=profile if profile else None,
+                reset_cursor=reset_cursor,
+            )
+            result = discover_jobs(
+                watchlist_path=Path(args.watchlist),
+                leads_dir=Path(args.leads_dir),
+                discovery_root=Path(args.discovery_root),
+                config=config,
+            )
+        except StructuredError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps(result.to_dict(), indent=2))
+        return 0
+
+    if args.command == "discovery-state":
+        from .discovery import BUCKETS, load_cursor
+
+        discovery_root = Path(args.discovery_root)
+        if args.last_run:
+            history = discovery_root / "history"
+            if not history.exists():
+                print(json.dumps({"runs": []}, indent=2))
+                return 0
+            latest = max(history.glob("*.json"), default=None, key=lambda p: p.stat().st_mtime)
+            if latest is None:
+                print(json.dumps({"runs": []}, indent=2))
+                return 0
+            payload = read_json(latest)
+            if args.bucket:
+                if args.bucket not in BUCKETS:
+                    parser.error(f"Unknown bucket: {args.bucket}")
+                filtered = [o for o in payload.get("outcomes", []) if o.get("bucket") == args.bucket]
+                payload = {"run": latest.name, "bucket": args.bucket, "outcomes": filtered}
+            print(json.dumps(payload, indent=2))
+            return 0
+        cursor_path = discovery_root / "state.json"
+        try:
+            cursor = load_cursor(cursor_path)
+        except Exception as exc:
+            print(json.dumps({"status": "error", "error_code": "cursor_corrupt", "message": str(exc)}, indent=2))
+            return 2
+        entries = cursor.get("entries", {})
+        filtered_items: list[dict] = []
+        for key, value in entries.items():
+            company, source = key.split("|", 1)
+            if args.company and company != args.company:
+                continue
+            if args.source and source != args.source:
+                continue
+            filtered_items.append({
+                "company": company, "source": source,
+                **value,
+            })
+        print(json.dumps({"entries": filtered_items}, indent=2))
+        return 0
+
+    if args.command == "watchlist-show":
+        from .watchlist import WatchlistValidationError, watchlist_show
+
+        try:
+            result = watchlist_show(Path(args.watchlist), args.company or None)
+        except WatchlistValidationError as exc:
+            print(json.dumps({"status": "error", "error_code": "watchlist_invalid", "message": str(exc)}, indent=2))
+            return 2
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "watchlist-add":
+        from .watchlist import WatchlistValidationError, validate_cli_string, watchlist_add
+
+        try:
+            for field_name in ("name", "greenhouse", "lever", "careers_url", "notes"):
+                validate_cli_string(getattr(args, field_name.replace("_", "_")) or "", field_name)
+            entry = {"name": args.name}
+            if args.greenhouse:
+                entry["greenhouse"] = args.greenhouse
+            if args.lever:
+                entry["lever"] = args.lever
+            if args.careers_url:
+                entry["careers_url"] = args.careers_url
+            if args.notes:
+                entry["notes"] = args.notes
+            watchlist_add(Path(args.watchlist), entry, force=args.force)
+        except WatchlistValidationError as exc:
+            message = str(exc)
+            if message == "watchlist_entry_exists":
+                error_code = "watchlist_entry_exists"
+            elif message == "watchlist_comments_present":
+                error_code = "watchlist_comments_present"
+            else:
+                error_code = "watchlist_invalid"
+            print(json.dumps({
+                "status": "error", "error_code": error_code, "message": message,
+                "remediation": "Use --force to overwrite a file with comments" if error_code == "watchlist_comments_present" else "",
+            }, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "name": args.name}, indent=2))
+        return 0
+
+    if args.command == "watchlist-remove":
+        from .watchlist import WatchlistValidationError, watchlist_remove
+
+        try:
+            watchlist_remove(Path(args.watchlist), args.name, force=args.force)
+        except WatchlistValidationError as exc:
+            print(json.dumps({"status": "error", "error_code": "watchlist_invalid", "message": str(exc)}, indent=2))
+            return 2
+        except FileNotFoundError:
+            print(json.dumps({"status": "error", "error_code": "watchlist_invalid", "message": f"watchlist not found: {args.watchlist}"}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "name": args.name}, indent=2))
+        return 0
+
+    if args.command == "watchlist-validate":
+        from .watchlist import watchlist_validate
+
+        result = watchlist_validate(Path(args.watchlist))
+        print(json.dumps(result, indent=2))
+        return 0 if result["valid"] else 2
+
+    if args.command == "review-list":
+        from .discovery import list_review_entries
+
+        review_dir = Path(args.discovery_root) / "review"
+        status = args.status if args.status else None
+        entries = list_review_entries(review_dir, status=status)
+        print(json.dumps({"entries": entries}, indent=2))
+        return 0
+
+    if args.command == "review-promote":
+        from .discovery import promote_review_entry
+        from .utils import StructuredError
+
+        review_dir = Path(args.discovery_root) / "review"
+        try:
+            result = promote_review_entry(review_dir, args.entry_id, Path(args.leads_dir))
+        except StructuredError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", **result}, indent=2))
+        return 0
+
+    if args.command == "review-dismiss":
+        from .discovery import DiscoveryError, update_review_status
+
+        review_dir = Path(args.discovery_root) / "review"
+        try:
+            update_review_status(review_dir, args.entry_id, "dismissed", reason=args.reason)
+        except DiscoveryError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "entry_id": args.entry_id}, indent=2))
+        return 0
+
+    if args.command == "robots-cache-clear":
+        cache_path = Path(args.discovery_root) / "robots_cache.json"
+        if cache_path.exists():
+            cache_path.unlink()
+        print(json.dumps({"status": "ok", "cleared": str(cache_path)}, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")

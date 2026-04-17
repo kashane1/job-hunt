@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DiscoveryCursor",
+  "type": "object",
+  "required": ["schema_version", "entries"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "entries": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9 ._-]{1,64}\\|(greenhouse|lever|careers)$": {
+          "type": "object",
+          "required": ["last_run_at", "last_entry_count"],
+          "properties": {
+            "last_run_at": { "type": "string" },
+            "last_entry_count": { "type": "integer" },
+            "last_run_status": { "enum": ["complete", "failed"] }
+          }
+        }
+      }
+    }
+  }
+}

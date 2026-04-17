@@ -1,0 +1,19 @@
+{
+  "jobs": [
+    {
+      "id": 4100001,
+      "title": "Senior Backend Engineer",
+      "updated_at": "2026-04-10T00:00:00Z",
+      "location": {"name": "Remote - US"},
+      "absolute_url": "https://boards.greenhouse.io/examplegh/jobs/4100001"
+    },
+    {
+      "id": 4100002,
+      "title": "Staff Software Engineer, Platform",
+      "updated_at": "2026-04-12T00:00:00Z",
+      "location": {"name": "San Francisco, CA"},
+      "absolute_url": "https://boards.greenhouse.io/examplegh/jobs/4100002"
+    }
+  ],
+  "meta": {"total": 2}
+}

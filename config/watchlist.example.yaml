@@ -1,0 +1,44 @@
+# config/watchlist.example.yaml
+#
+# Copy this file to config/watchlist.yaml and populate with your target
+# companies. `config/watchlist.yaml` is gitignored (contains target-company
+# names, which are PII-adjacent).
+#
+# Each entry needs at least ONE of greenhouse / lever / careers_url —
+# otherwise it's skipped with a warning.
+
+companies:
+  - name: "ExampleCo"
+    greenhouse: "exampleco"
+    lever: "exampleco"
+    careers_url: "https://exampleco.com/careers"
+    notes: "primary target"
+  - name: "AnotherCorp"
+    lever: "anothercorp"
+  - name: "ThirdCo"
+    careers_url: "https://thirdco.com/jobs"
+    notes: "generic crawl only"
+
+filters:
+  # Title OR location must contain at least one keyword (if list non-empty).
+  keywords_any:
+    - "engineer"
+    - "developer"
+    - "swe"
+  # Any match here excludes the listing. Highest precedence.
+  keywords_none:
+    - "clearance required"
+    - "ts/sci"
+    - "relocation required"
+    - "principal"
+  # Location must contain one of these (if list non-empty).
+  locations_any:
+    - "remote"
+    - "los angeles"
+    - "orange county"
+    - "san diego"
+  # Title must contain one of these (if list non-empty).
+  seniority_any:
+    - "senior"
+    - "staff"
+    - "lead "

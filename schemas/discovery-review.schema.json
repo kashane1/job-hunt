@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DiscoveryReviewEntry",
+  "type": "object",
+  "required": [
+    "entry_id",
+    "DATA_NOT_INSTRUCTIONS",
+    "candidate_url",
+    "anchor_text_escaped",
+    "signals",
+    "source_page",
+    "watchlist_company",
+    "discovered_at",
+    "status",
+    "fence_nonce"
+  ],
+  "properties": {
+    "entry_id": { "type": "string", "pattern": "^[a-f0-9]{16}$" },
+    "DATA_NOT_INSTRUCTIONS": { "const": true },
+    "candidate_url": { "type": "string", "pattern": "^https?://" },
+    "anchor_text_escaped": { "type": "string", "maxLength": 2000 },
+    "signals": { "type": "array", "items": { "type": "string" } },
+    "source_page": { "type": "string" },
+    "watchlist_company": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,64}$" },
+    "discovered_at": { "type": "string" },
+    "status": { "enum": ["pending", "promoted", "dismissed"] },
+    "fence_nonce": { "type": "string", "pattern": "^[a-f0-9]{12}$" }
+  }
+}

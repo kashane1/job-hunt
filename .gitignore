@@ -19,5 +19,10 @@ data/companies/
 data/applications/
 data/leads/
 data/runs/
+data/discovery/
 docs/reports/*-report.md
 examples/results/
+
+# Watchlist contains user-supplied target-company names (PII-adjacent).
+# Track config/watchlist.example.yaml as the template.
+config/watchlist.yaml
