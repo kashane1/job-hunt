@@ -4,8 +4,8 @@
 # companies. `config/watchlist.yaml` is gitignored (contains target-company
 # names, which are PII-adjacent).
 #
-# Each entry needs at least ONE of greenhouse / lever / careers_url —
-# otherwise it's skipped with a warning.
+# Each entry needs at least ONE of greenhouse / lever / careers_url /
+# indeed_search_url — otherwise it's skipped with a warning.
 
 companies:
   - name: "ExampleCo"
@@ -18,6 +18,9 @@ companies:
   - name: "ThirdCo"
     careers_url: "https://thirdco.com/jobs"
     notes: "generic crawl only"
+  - name: "Indeed platform search"
+    indeed_search_url: "https://www.indeed.com/jobs?q=senior+platform+engineer&l=Remote&radius=0"
+    notes: "batch 4 — one virtual company per saved Indeed search"
 
 filters:
   # Title OR location must contain at least one keyword (if list non-empty).

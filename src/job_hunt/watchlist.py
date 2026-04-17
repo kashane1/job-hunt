@@ -109,10 +109,16 @@ class WatchlistEntry:
     greenhouse: str = ""
     lever: str = ""
     careers_url: str = ""
+    indeed_search_url: str = ""
     notes: str = ""
 
     def has_source(self) -> bool:
-        return bool(self.greenhouse or self.lever or self.careers_url)
+        return bool(
+            self.greenhouse
+            or self.lever
+            or self.careers_url
+            or self.indeed_search_url
+        )
 
 
 @dataclass(frozen=True)
@@ -157,6 +163,7 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
     greenhouse = raw.get("greenhouse", "") or ""
     lever = raw.get("lever", "") or ""
     careers_url = raw.get("careers_url", "") or ""
+    indeed_search_url = raw.get("indeed_search_url", "") or ""
     notes = raw.get("notes", "") or ""
 
     if greenhouse and not ATS_SLUG_RE.match(greenhouse):
@@ -167,6 +174,19 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
         raise WatchlistValidationError(
             f"careers_url must be https://: {careers_url!r}"
         )
+    if indeed_search_url:
+        if not HTTPS_URL_RE.match(indeed_search_url):
+            raise WatchlistValidationError(
+                f"indeed_search_url must be https://: {indeed_search_url!r}"
+            )
+        # Keep validation narrow — the richer parser lives in
+        # indeed_discovery.IndeedSearchConfig.from_url. Here we only gate
+        # on the host so the watchlist doesn't accept arbitrary URLs that
+        # would surface as confusing errors at discover-jobs time.
+        if "indeed.com" not in indeed_search_url.lower():
+            raise WatchlistValidationError(
+                f"indeed_search_url must target indeed.com: {indeed_search_url!r}"
+            )
     if len(notes) > MAX_NOTES_LEN:
         raise WatchlistValidationError(
             f"notes too long ({len(notes)} > {MAX_NOTES_LEN})"
@@ -176,6 +196,7 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
         greenhouse=greenhouse,
         lever=lever,
         careers_url=careers_url,
+        indeed_search_url=indeed_search_url,
         notes=notes,
     )
     return entry
@@ -235,6 +256,8 @@ def watchlist_to_dict(wl: Watchlist) -> dict:
             entry["lever"] = c.lever
         if c.careers_url:
             entry["careers_url"] = c.careers_url
+        if c.indeed_search_url:
+            entry["indeed_search_url"] = c.indeed_search_url
         if c.notes:
             entry["notes"] = c.notes
         companies.append(entry)
@@ -304,6 +327,8 @@ def _entry_dict(c: WatchlistEntry) -> dict:
         out["lever"] = c.lever
     if c.careers_url:
         out["careers_url"] = c.careers_url
+    if c.indeed_search_url:
+        out["indeed_search_url"] = c.indeed_search_url
     if c.notes:
         out["notes"] = c.notes
     return out
@@ -359,6 +384,7 @@ def watchlist_validate(path: Path) -> dict:
     for c in wl.companies:
         if not c.has_source():
             result["warnings"].append(
-                f"{c.name!r} has no greenhouse/lever/careers_url source — will be skipped"
+                f"{c.name!r} has no greenhouse/lever/careers_url/indeed_search_url "
+                "source — will be skipped"
             )
     return result

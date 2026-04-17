@@ -1739,6 +1739,7 @@ def build_parser() -> argparse.ArgumentParser:
     wla_parser.add_argument("--greenhouse", default="")
     wla_parser.add_argument("--lever", default="")
     wla_parser.add_argument("--careers-url", default="")
+    wla_parser.add_argument("--indeed-search-url", default="")
     wla_parser.add_argument("--notes", default="")
     wla_parser.add_argument(
         "--force", action="store_true",
@@ -2270,7 +2271,7 @@ def main(argv: list[str] | None = None) -> int:
         from .watchlist import WatchlistValidationError, validate_cli_string, watchlist_add
 
         try:
-            for field_name in ("name", "greenhouse", "lever", "careers_url", "notes"):
+            for field_name in ("name", "greenhouse", "lever", "careers_url", "indeed_search_url", "notes"):
                 validate_cli_string(getattr(args, field_name.replace("_", "_")) or "", field_name)
             entry = {"name": args.name}
             if args.greenhouse:
@@ -2279,6 +2280,8 @@ def main(argv: list[str] | None = None) -> int:
                 entry["lever"] = args.lever
             if args.careers_url:
                 entry["careers_url"] = args.careers_url
+            if args.indeed_search_url:
+                entry["indeed_search_url"] = args.indeed_search_url
             if args.notes:
                 entry["notes"] = args.notes
             watchlist_add(Path(args.watchlist), entry, force=args.force)

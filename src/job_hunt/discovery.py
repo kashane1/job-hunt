@@ -88,6 +88,7 @@ SOURCE_NAME_MAP: Final = {
     "greenhouse": ("greenhouse", "greenhouse_board"),
     "lever": ("lever", "lever_board"),
     "careers": ("careers_html", "careers_html"),
+    "indeed_search": ("indeed_search", "indeed_search"),
 }
 
 
@@ -920,6 +921,28 @@ def _run_source(
                     [],
                 )
             entries, truncated = discover_lever_board(company.lever, rate_limiter)
+        elif source_token == "indeed_search":
+            if not company.indeed_search_url:
+                return (
+                    SourceRun(
+                        company=company.name, source=source_token, started_at=started_at,
+                        completed=True, listing_truncated=False, budget_exhausted=False,
+                        entry_count=0,
+                    ),
+                    [],
+                    [],
+                )
+            from .indeed_discovery import discover_indeed_search
+
+            from dataclasses import replace
+
+            entries, truncated = discover_indeed_search(
+                company.indeed_search_url,
+                rate_limiter,
+            )
+            # Overwrite source_company with the watchlist name so downstream
+            # filters group Indeed hits under the human-readable target.
+            entries = [replace(e, source_company=company.name) for e in entries]
         elif source_token == "careers":
             if not company.careers_url:
                 return (
@@ -1200,13 +1223,15 @@ def discover_jobs(
         reset_cursor_entries(cursor, company, source if source != "" else None)
         save_cursor(cursor_path, cursor)
 
-    sources_filter = tuple(config.sources) if config.sources else ("greenhouse", "lever", "careers")
+    sources_filter = tuple(config.sources) if config.sources else (
+        "greenhouse", "lever", "careers", "indeed_search",
+    )
     invalid = [s for s in sources_filter if s not in SOURCE_NAME_MAP]
     if invalid:
         raise DiscoveryError(
             f"Unknown source token(s): {invalid!r}",
             error_code="unknown_platform",
-            remediation="Accepted tokens: greenhouse, lever, careers",
+            remediation="Accepted tokens: greenhouse, lever, careers, indeed_search",
         )
 
     rate_limiter = DomainRateLimiter(default_interval_s=0.5)
