@@ -21,11 +21,14 @@ import json
 import logging
 import re
 import secrets
+import threading
 import urllib.parse
+import weakref
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final, Literal
+from typing import Final, Iterable, Literal
 
 from .ingestion import (
     FetchResult,
@@ -33,10 +36,11 @@ from .ingestion import (
     HARD_FAIL_URL_PATTERNS,
     IngestionError,
     LEVER_URL_RE,
+    canonicalize_url,
     fetch,
 )
 from .net_policy import DomainRateLimiter, RobotsCache
-from .utils import StructuredError, ensure_dir, now_iso
+from .utils import StructuredError, ensure_dir, now_iso, read_json, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -666,3 +670,728 @@ def _yaml_quote(value: str) -> str:
         .replace("\r", "\\r")
         .replace("\t", "\\t")
     )
+
+
+# =============================================================================
+# Cursor management
+# =============================================================================
+
+def _cursor_key(company: str, source: str) -> str:
+    return f"{company}{CURSOR_KEY_SEPARATOR}{source}"
+
+
+def load_cursor(cursor_path: Path) -> dict:
+    if not cursor_path.exists():
+        return {"schema_version": 1, "entries": {}}
+    try:
+        data = read_json(cursor_path)
+    except Exception as exc:
+        raise DiscoveryError(
+            f"Cursor file is corrupt: {cursor_path}",
+            error_code="cursor_corrupt",
+            remediation=f"Delete {cursor_path} and re-run discover-jobs.",
+        ) from exc
+    if data.get("schema_version") != 1:
+        raise DiscoveryError(
+            f"Unknown cursor schema_version in {cursor_path}",
+            error_code="cursor_corrupt",
+            remediation=f"Delete {cursor_path} and re-run discover-jobs.",
+        )
+    if not isinstance(data.get("entries"), dict):
+        raise DiscoveryError(
+            f"Cursor has no entries map: {cursor_path}",
+            error_code="cursor_corrupt",
+            remediation=f"Delete {cursor_path} and re-run discover-jobs.",
+        )
+    return data
+
+
+def save_cursor(cursor_path: Path, cursor: dict) -> None:
+    cursor["schema_version"] = 1
+    write_json(cursor_path, cursor)
+
+
+def reset_cursor_entries(
+    cursor: dict,
+    company: str,
+    source: str | None,
+) -> int:
+    """Remove matching entries. `source=None` matches every source for the
+    company. Returns the number of entries removed."""
+    entries = cursor.get("entries", {})
+    removed = 0
+    if source is None or source == "*":
+        prefix = f"{company}{CURSOR_KEY_SEPARATOR}"
+        for key in list(entries.keys()):
+            if key.startswith(prefix):
+                entries.pop(key)
+                removed += 1
+    else:
+        key = _cursor_key(company, source)
+        if key in entries:
+            entries.pop(key)
+            removed = 1
+    if removed == 0:
+        raise DiscoveryError(
+            f"No cursor entry for company={company!r} source={source!r}",
+            error_code="cursor_tuple_not_found",
+            remediation="Run `discovery-state` to see available entries.",
+        )
+    return removed
+
+
+# =============================================================================
+# Existing-lead scan + provenance append
+# =============================================================================
+
+_LEAD_WRITE_LOCKS: "weakref.WeakValueDictionary[str, threading.Lock]" = weakref.WeakValueDictionary()
+_LEAD_WRITE_LOCKS_LOCK = threading.Lock()
+
+
+def _lock_for_lead(lead_id: str) -> threading.Lock:
+    with _LEAD_WRITE_LOCKS_LOCK:
+        lock = _LEAD_WRITE_LOCKS.get(lead_id)
+        if lock is None:
+            lock = threading.Lock()
+            _LEAD_WRITE_LOCKS[lead_id] = lock
+        return lock
+
+
+def _scan_existing_leads(leads_dir: Path) -> tuple[dict[str, Path], dict[str, Path]]:
+    """Scan data/leads/*.json and return two maps: {canonical_url: path} and
+    {application_url: path}. Used for dedup on `discover_jobs` entry."""
+    by_canonical: dict[str, Path] = {}
+    by_apply: dict[str, Path] = {}
+    if not leads_dir.exists():
+        return by_canonical, by_apply
+    for lead_path in leads_dir.glob("*.json"):
+        try:
+            lead = read_json(lead_path)
+        except Exception:
+            continue
+        canonical = lead.get("canonical_url") or ""
+        if canonical:
+            by_canonical[canonical] = lead_path
+        apply_url = lead.get("application_url") or ""
+        if apply_url:
+            by_apply[apply_url] = lead_path
+    return by_canonical, by_apply
+
+
+def _append_discovered_via(
+    lead_path: Path,
+    entry: ListingEntry,
+    watchlist_company: str,
+) -> None:
+    """Read-modify-write `discovered_via` on an existing lead, under a
+    per-lead-id lock. Missing files surface a `lead_write_race`.
+
+    The lock is keyed on the lead_id derived from the file name so path
+    normalization (`Path("./foo.json")` vs `Path("foo.json")`) cannot split
+    the lock.
+    """
+    lead_id = lead_path.stem
+    lock = _lock_for_lead(lead_id)
+    with lock:
+        if not lead_path.exists():
+            raise DiscoveryError(
+                f"Lead file missing during provenance append: {lead_path}",
+                error_code="lead_write_race",
+                remediation="Re-run discover-jobs; within-run dedup should prevent this.",
+            )
+        lead = read_json(lead_path)
+        existing = lead.get("discovered_via")
+        if not isinstance(existing, list):
+            if existing is not None:
+                logger.warning(
+                    "lead %s had non-list discovered_via (%r); resetting to []",
+                    lead_id, type(existing).__name__,
+                )
+            existing = []
+        existing.append({
+            "source": SOURCE_NAME_MAP[entry.source][1] if entry.source in SOURCE_NAME_MAP else entry.source,
+            "company": watchlist_company,
+            "discovered_at": now_iso(),
+            "listing_updated_at": entry.updated_at or None,
+            "confidence": entry.confidence,
+        })
+        lead["discovered_via"] = existing
+        write_json(lead_path, lead)
+
+
+# =============================================================================
+# Orchestrator
+# =============================================================================
+
+def _startup_sweep(data_root: Path) -> list[str]:
+    """Return human-readable warnings about stale intake / .tmp / review files.
+
+    Caller logs them; run artifact retains them under `warnings`.
+    """
+    warnings: list[str] = []
+    if not data_root.exists():
+        return warnings
+    # Stale .tmp files — mkstemp strays and batch 2 leftovers
+    for tmp_path in data_root.rglob("*.tmp"):
+        try:
+            age = datetime.now(UTC).timestamp() - tmp_path.stat().st_mtime
+        except OSError:
+            continue
+        if age > 3600:
+            warnings.append(f"stale .tmp file: {tmp_path}")
+    # Stale _intake/pending/*.md > 1h
+    intake_pending = data_root / "leads" / "_intake" / "pending"
+    if intake_pending.exists():
+        for p in intake_pending.glob("*.md"):
+            age = datetime.now(UTC).timestamp() - p.stat().st_mtime
+            if age > 3600:
+                warnings.append(f"stale _intake/pending: {p}")
+    # Stale review entries > 30 days
+    review_dir = data_root / "discovery" / "review"
+    if review_dir.exists():
+        for p in review_dir.glob("*.md"):
+            age = datetime.now(UTC).timestamp() - p.stat().st_mtime
+            if age > 30 * 24 * 3600:
+                warnings.append(f"stale review entry (>30d): {p}")
+    # Leads discovered without fit_assessment > 1h
+    leads_dir = data_root / "leads"
+    if leads_dir.exists():
+        for lead_path in leads_dir.glob("*.json"):
+            try:
+                lead = read_json(lead_path)
+            except Exception:
+                continue
+            if lead.get("status") == "discovered" and not lead.get("fit_assessment"):
+                age = datetime.now(UTC).timestamp() - lead_path.stat().st_mtime
+                if age > 3600:
+                    warnings.append(f"unscored discovered lead (>1h): {lead_path}")
+    return warnings
+
+
+def _run_source(
+    company,  # watchlist.WatchlistEntry
+    source_token: str,
+    watchlist_filters,  # watchlist.WatchlistFilters
+    rate_limiter: DomainRateLimiter,
+    robots: RobotsCache,
+    existing_canonical: dict[str, Path],
+    within_run_seen: dict[str, ListingEntry],
+    within_run_lock: threading.Lock,
+    leads_dir: Path,
+    budget_remaining: list[int],  # single-element mutable int
+    budget_lock: threading.Lock,
+    dry_run: bool,
+    review_dir: Path,
+) -> tuple[SourceRun, list[Outcome], list[Path]]:
+    """Execute one (company, source) tuple. Returns (source_run, outcomes, new_lead_paths).
+
+    new_lead_paths lists freshly written leads so the scoring phase can find them
+    even when they haven't been persisted yet across threads.
+    """
+    started_at = now_iso()
+    outcomes: list[Outcome] = []
+    new_lead_paths: list[Path] = []
+    entries: list[ListingEntry] = []
+    ats_spawned: list[tuple[str, str]] = []
+    truncated = False
+
+    try:
+        if source_token == "greenhouse":
+            if not company.greenhouse:
+                return (
+                    SourceRun(
+                        company=company.name, source=source_token, started_at=started_at,
+                        completed=True, listing_truncated=False, budget_exhausted=False,
+                        entry_count=0,
+                    ),
+                    [],
+                    [],
+                )
+            entries, truncated = discover_greenhouse_board(company.greenhouse, rate_limiter)
+        elif source_token == "lever":
+            if not company.lever:
+                return (
+                    SourceRun(
+                        company=company.name, source=source_token, started_at=started_at,
+                        completed=True, listing_truncated=False, budget_exhausted=False,
+                        entry_count=0,
+                    ),
+                    [],
+                    [],
+                )
+            entries, truncated = discover_lever_board(company.lever, rate_limiter)
+        elif source_token == "careers":
+            if not company.careers_url:
+                return (
+                    SourceRun(
+                        company=company.name, source=source_token, started_at=started_at,
+                        completed=True, listing_truncated=False, budget_exhausted=False,
+                        entry_count=0,
+                    ),
+                    [],
+                    [],
+                )
+            crawl = discover_company_careers(
+                company.careers_url, rate_limiter, robots,
+                watchlist_company=company.name,
+            )
+            entries = list(crawl.high_confidence)
+            ats_spawned = list(crawl.ats_hits)
+            for low in crawl.low_confidence:
+                entry_id = _entry_id_from_url(low["candidate_url"])
+                try:
+                    if not dry_run:
+                        write_review_entry(
+                            review_dir,
+                            entry_id=entry_id,
+                            candidate_url=low["candidate_url"],
+                            anchor_text=low["anchor_text"],
+                            signals=low["signals"],
+                            source_page=low["source_page"],
+                            watchlist_company=company.name,
+                        )
+                except DiscoveryError as exc:
+                    outcomes.append(Outcome(bucket="failed", entry=None, detail=exc.to_dict()))
+                    continue
+                outcomes.append(Outcome(
+                    bucket="low_confidence",
+                    entry=None,
+                    detail={
+                        "entry_id": entry_id,
+                        "candidate_url": low["candidate_url"],
+                        "signals": ",".join(low["signals"]),
+                        "company": company.name,
+                    },
+                ))
+        else:
+            raise DiscoveryError(
+                f"Unknown source token: {source_token!r}",
+                error_code="unknown_platform",
+            )
+    except IngestionError as exc:
+        outcomes.append(Outcome(bucket="failed", entry=None, detail=exc.to_dict()))
+        return (
+            SourceRun(
+                company=company.name, source=source_token, started_at=started_at,
+                completed=False, listing_truncated=False, budget_exhausted=False,
+                entry_count=0,
+            ),
+            outcomes,
+            [],
+        )
+    except DiscoveryError as exc:
+        outcomes.append(Outcome(bucket="failed", entry=None, detail=exc.to_dict()))
+        return (
+            SourceRun(
+                company=company.name, source=source_token, started_at=started_at,
+                completed=False, listing_truncated=False, budget_exhausted=False,
+                entry_count=0,
+            ),
+            outcomes,
+            [],
+        )
+
+    budget_exhausted = False
+    entry_count = 0
+
+    # Expand ATS hits (from careers crawl) by fetching the underlying boards.
+    for platform, ats_url in ats_spawned:
+        m = re.match(r"https?://[^/]+/([^/]+)/?$", ats_url)
+        if not m:
+            continue
+        slug = m.group(1)
+        try:
+            if platform == "greenhouse":
+                extra, extra_truncated = discover_greenhouse_board(slug, rate_limiter)
+            elif platform == "lever":
+                extra, extra_truncated = discover_lever_board(slug, rate_limiter)
+            else:
+                continue
+        except IngestionError as exc:
+            outcomes.append(Outcome(bucket="failed", entry=None, detail=exc.to_dict()))
+            continue
+        entries.extend(extra)
+        if extra_truncated:
+            truncated = True
+
+    for entry in entries:
+        entry_count += 1
+        if not watchlist_filters.passes(entry.title, entry.location)[0]:
+            outcomes.append(Outcome(
+                bucket="filtered_out",
+                entry=entry,
+                detail={"reason": watchlist_filters.passes(entry.title, entry.location)[1]},
+            ))
+            continue
+        canonical = canonicalize_url(entry.posting_url)
+        with within_run_lock:
+            existing_in_run = within_run_seen.get(canonical)
+            if existing_in_run is None:
+                within_run_seen[canonical] = entry
+                is_within_run_dup = False
+            else:
+                is_within_run_dup = True
+        if is_within_run_dup:
+            existing_path = existing_canonical.get(canonical)
+            if existing_path is not None and not dry_run:
+                try:
+                    _append_discovered_via(existing_path, entry, company.name)
+                except DiscoveryError as exc:
+                    outcomes.append(Outcome(bucket="failed", entry=entry, detail=exc.to_dict()))
+                    continue
+            outcomes.append(Outcome(
+                bucket="duplicate_within_run",
+                entry=entry,
+                detail={"canonical_url": canonical},
+            ))
+            continue
+        if canonical in existing_canonical:
+            if not dry_run:
+                try:
+                    _append_discovered_via(
+                        existing_canonical[canonical], entry, company.name,
+                    )
+                except DiscoveryError as exc:
+                    outcomes.append(Outcome(bucket="failed", entry=entry, detail=exc.to_dict()))
+                    continue
+            outcomes.append(Outcome(
+                bucket="already_known",
+                entry=entry,
+                detail={"canonical_url": canonical, "lead_path": str(existing_canonical[canonical])},
+            ))
+            continue
+
+        # Budget gate
+        with budget_lock:
+            if budget_remaining[0] <= 0:
+                budget_exhausted = True
+                outcomes.append(Outcome(
+                    bucket="skipped_by_budget",
+                    entry=entry,
+                    detail={"canonical_url": canonical},
+                ))
+                continue
+            budget_remaining[0] -= 1
+
+        if dry_run:
+            outcomes.append(Outcome(
+                bucket="discovered",
+                entry=entry,
+                detail={"canonical_url": canonical, "dry_run": "true"},
+            ))
+            continue
+
+        try:
+            from .ingestion import ingest_url
+            lead = ingest_url(entry.posting_url, leads_dir)
+        except IngestionError as exc:
+            outcomes.append(Outcome(bucket="failed", entry=entry, detail=exc.to_dict()))
+            continue
+
+        lead_path = leads_dir / f"{lead['lead_id']}.json"
+        # Append the first discovered_via entry to the freshly written lead.
+        lead_obj = read_json(lead_path)
+        lead_obj.setdefault("discovered_via", [])
+        lead_obj["discovered_via"].append({
+            "source": SOURCE_NAME_MAP.get(entry.source, (entry.source, entry.source))[1],
+            "company": company.name,
+            "discovered_at": now_iso(),
+            "listing_updated_at": entry.updated_at or None,
+            "confidence": entry.confidence,
+        })
+        lead_obj.setdefault("status", "discovered")
+        write_json(lead_path, lead_obj)
+        existing_canonical[canonical] = lead_path
+        new_lead_paths.append(lead_path)
+        outcomes.append(Outcome(
+            bucket="discovered",
+            entry=entry,
+            detail={"canonical_url": canonical, "lead_id": lead["lead_id"]},
+        ))
+
+    source_run = SourceRun(
+        company=company.name,
+        source=source_token,
+        started_at=started_at,
+        completed=not budget_exhausted and not truncated,
+        listing_truncated=truncated,
+        budget_exhausted=budget_exhausted,
+        entry_count=entry_count,
+    )
+    return source_run, outcomes, new_lead_paths
+
+
+def _find_unscored_leads(leads_dir: Path) -> list[Path]:
+    unscored: list[Path] = []
+    if not leads_dir.exists():
+        return unscored
+    for path in leads_dir.glob("*.json"):
+        try:
+            lead = read_json(path)
+        except Exception:
+            continue
+        if lead.get("status") == "discovered" and not lead.get("fit_assessment"):
+            unscored.append(path)
+    return unscored
+
+
+def _batched_score(
+    lead_paths: list[Path],
+    profile: dict,
+    scoring_config: dict,
+    concurrency: int,
+) -> None:
+    if not lead_paths:
+        return
+    from .core import score_lead  # local import to avoid top-level cycles
+
+    def _score_one(path: Path) -> None:
+        try:
+            lead = read_json(path)
+            updated = score_lead(lead, profile, scoring_config)
+            write_json(path, updated)
+        except Exception as exc:
+            logger.warning("scoring failed for %s: %s", path, exc)
+
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        list(pool.map(_score_one, lead_paths))
+
+
+def discover_jobs(
+    watchlist_path: Path,
+    leads_dir: Path,
+    discovery_root: Path,
+    config: DiscoveryConfig = DiscoveryConfig(),
+) -> DiscoveryResult:
+    """Poll every configured source, dedupe, filter, ingest, batch-score.
+
+    Cursor advances only for complete, non-budget-capped, non-truncated
+    sources. Scoring phase scans ALL `data/leads/*.json` for leads with
+    `status: discovered` AND missing `fit_assessment` — a mid-batch crash
+    heals on the next run without manual intervention.
+    """
+    from .watchlist import load_watchlist, WatchlistValidationError  # local import
+
+    run_started_at = now_iso()
+    try:
+        wl = load_watchlist(watchlist_path)
+    except FileNotFoundError as exc:
+        raise DiscoveryError(
+            f"Watchlist not found: {watchlist_path}",
+            error_code="watchlist_invalid",
+            remediation="Create config/watchlist.yaml from config/watchlist.example.yaml.",
+        ) from exc
+    except WatchlistValidationError as exc:
+        raise DiscoveryError(
+            str(exc), error_code="watchlist_invalid",
+        ) from exc
+
+    ensure_dir(discovery_root)
+    cursor_path = discovery_root / "state.json"
+    history_dir = discovery_root / "history"
+    review_dir = discovery_root / "review"
+    ensure_dir(history_dir)
+    ensure_dir(review_dir)
+    robots_cache_path = discovery_root / "robots_cache.json"
+
+    cursor = load_cursor(cursor_path)
+    if config.reset_cursor is not None:
+        company, source = config.reset_cursor
+        reset_cursor_entries(cursor, company, source if source != "" else None)
+        save_cursor(cursor_path, cursor)
+
+    sources_filter = tuple(config.sources) if config.sources else ("greenhouse", "lever", "careers")
+    invalid = [s for s in sources_filter if s not in SOURCE_NAME_MAP]
+    if invalid:
+        raise DiscoveryError(
+            f"Unknown source token(s): {invalid!r}",
+            error_code="unknown_platform",
+            remediation="Accepted tokens: greenhouse, lever, careers",
+        )
+
+    rate_limiter = DomainRateLimiter(default_interval_s=0.5)
+    robots = RobotsCache(
+        robots_cache_path, rate_limiter, DISCOVERY_USER_AGENT,
+    )
+    existing_canonical, _existing_apply = _scan_existing_leads(leads_dir)
+    within_run_seen: dict[str, ListingEntry] = {}
+    within_run_lock = threading.Lock()
+
+    budget_remaining = [config.max_ingest]
+    budget_lock = threading.Lock()
+
+    all_outcomes: list[Outcome] = []
+    all_source_runs: list[SourceRun] = []
+    freshly_written: list[Path] = []
+
+    def run_company(entry) -> tuple[list[SourceRun], list[Outcome], list[Path]]:
+        company_runs: list[SourceRun] = []
+        company_outcomes: list[Outcome] = []
+        company_paths: list[Path] = []
+        for source_token in sources_filter:
+            sr, outs, paths = _run_source(
+                entry, source_token, wl.filters, rate_limiter, robots,
+                existing_canonical, within_run_seen, within_run_lock,
+                leads_dir, budget_remaining, budget_lock, config.dry_run,
+                review_dir,
+            )
+            company_runs.append(sr)
+            company_outcomes.extend(outs)
+            company_paths.extend(paths)
+        return company_runs, company_outcomes, company_paths
+
+    with ThreadPoolExecutor(max_workers=max(1, config.max_workers)) as pool:
+        future_to_entry = {
+            pool.submit(run_company, entry): entry for entry in wl.companies
+        }
+        for future in as_completed(future_to_entry):
+            runs, outs, paths = future.result()
+            all_source_runs.extend(runs)
+            all_outcomes.extend(outs)
+            freshly_written.extend(paths)
+
+    # Cursor advancement — only for complete, non-capped, non-truncated sources
+    for sr in all_source_runs:
+        if sr.completed and not sr.listing_truncated and not sr.budget_exhausted:
+            key = _cursor_key(sr.company, sr.source)
+            cursor.setdefault("entries", {})[key] = {
+                "last_run_at": sr.started_at,
+                "last_entry_count": sr.entry_count,
+                "last_run_status": "complete",
+            }
+    if not config.dry_run:
+        save_cursor(cursor_path, cursor)
+
+    # Batched scoring phase — includes crash-recovery sweep
+    if config.auto_score and config.candidate_profile is not None and not config.dry_run:
+        unscored = list({p.resolve() for p in freshly_written + _find_unscored_leads(leads_dir)})
+        _batched_score(
+            unscored,
+            config.candidate_profile,
+            config.scoring_config or {},
+            config.score_concurrency,
+        )
+
+    run_completed_at = now_iso()
+    result = DiscoveryResult(
+        outcomes=all_outcomes,
+        sources_run=all_source_runs,
+        run_started_at=run_started_at,
+        run_completed_at=run_completed_at,
+    )
+
+    if not config.dry_run:
+        artifact_name = run_completed_at.replace(":", "").replace("-", "") + ".json"
+        write_json(history_dir / artifact_name, result.to_dict())
+    return result
+
+
+# =============================================================================
+# Review-entry lookup helpers — used by CLI
+# =============================================================================
+
+def parse_review_frontmatter(path: Path) -> dict:
+    from .utils import parse_frontmatter
+    text = path.read_text(encoding="utf-8")
+    frontmatter, _ = parse_frontmatter(text)
+    return frontmatter
+
+
+def list_review_entries(review_dir: Path, status: str | None = None) -> list[dict]:
+    out: list[dict] = []
+    if not review_dir.exists():
+        return out
+    for path in sorted(review_dir.glob("*.md")):
+        try:
+            fm = parse_review_frontmatter(path)
+        except Exception:
+            continue
+        if status is not None and fm.get("status") != status:
+            continue
+        out.append({
+            "entry_id": fm.get("entry_id", path.stem),
+            "candidate_url": fm.get("candidate_url", ""),
+            "watchlist_company": fm.get("watchlist_company", ""),
+            "signals": fm.get("signals", []),
+            "status": fm.get("status", ""),
+            "discovered_at": fm.get("discovered_at", ""),
+        })
+    return out
+
+
+def update_review_status(
+    review_dir: Path,
+    entry_id: str,
+    new_status: str,
+    reason: str = "",
+) -> Path:
+    if not ENTRY_ID_RE.match(entry_id):
+        raise DiscoveryError(
+            f"Invalid entry_id: {entry_id!r}",
+            error_code="review_schema_invalid",
+        )
+    path = review_dir / f"{entry_id}.md"
+    if not path.exists():
+        raise DiscoveryError(
+            f"Review entry not found: {entry_id}",
+            error_code="review_entry_not_found",
+        )
+    text = path.read_text(encoding="utf-8")
+    # Naive frontmatter status replacement — matches the exact line we emit
+    replaced = re.sub(
+        r'^status:\s*".*?"$',
+        f'status: "{new_status}"',
+        text,
+        count=1,
+        flags=re.M,
+    )
+    if reason:
+        safe = _yaml_quote(reason)
+        replaced = re.sub(
+            r"^fence_nonce:",
+            f'dismiss_reason: "{safe}"\nfence_nonce:',
+            replaced,
+            count=1,
+            flags=re.M,
+        )
+    path.write_text(replaced, encoding="utf-8")
+    return path
+
+
+def promote_review_entry(
+    review_dir: Path,
+    entry_id: str,
+    leads_dir: Path,
+) -> dict:
+    """Ingest the stored `candidate_url` via `ingest_url`, append provenance,
+    mark the review entry as promoted. Re-validates the URL through batch-2
+    SSRF guards, so a loopback-pointing stored URL is still blocked."""
+    if not ENTRY_ID_RE.match(entry_id):
+        raise DiscoveryError(
+            f"Invalid entry_id: {entry_id!r}",
+            error_code="review_schema_invalid",
+        )
+    path = review_dir / f"{entry_id}.md"
+    if not path.exists():
+        raise DiscoveryError(
+            f"Review entry not found: {entry_id}",
+            error_code="review_entry_not_found",
+        )
+    fm = parse_review_frontmatter(path)
+    candidate_url = fm.get("candidate_url", "")
+    watchlist_company = fm.get("watchlist_company", "Unknown")
+
+    from .ingestion import ingest_url
+    lead = ingest_url(candidate_url, leads_dir)
+    lead_path = leads_dir / f"{lead['lead_id']}.json"
+    lead_obj = read_json(lead_path)
+    lead_obj.setdefault("discovered_via", []).append({
+        "source": "careers_html_review",
+        "company": watchlist_company,
+        "discovered_at": now_iso(),
+        "confidence": "weak_inference",
+    })
+    lead_obj.setdefault("status", "discovered")
+    write_json(lead_path, lead_obj)
+    update_review_status(review_dir, entry_id, "promoted")
+    return {"entry_id": entry_id, "lead_id": lead["lead_id"]}
