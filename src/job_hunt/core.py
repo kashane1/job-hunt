@@ -1972,6 +1972,24 @@ def build_parser() -> argparse.ArgumentParser:
     bc.add_argument("--data-root", default="data")
     bc.add_argument("--dry-run", action="store_true")
 
+    # ----- Batch 4 Phase 8: Gmail-driven confirmation -----
+    ic = subparsers.add_parser(
+        "ingest-confirmation",
+        help="Parse a single Gmail confirmation email and update status.json",
+    )
+    ic.add_argument("--draft-id", default="", help="Optional; auto-correlated when omitted")
+    ic.add_argument("--gmail-message-file", required=True, help="Path to JSON Gmail payload OR raw .eml")
+    ic.add_argument("--data-root", default="data")
+    ic.add_argument("--dry-run", action="store_true")
+
+    pc = subparsers.add_parser(
+        "poll-confirmations",
+        help="Iterate a batch of parsed emails, updating each matching draft",
+    )
+    pc.add_argument("--inbox-file", required=True, help="JSON list of Gmail payloads or eml file paths")
+    pc.add_argument("--data-root", default="data")
+    pc.add_argument("--window-days", type=int, default=None)
+
     return parser
 
 
@@ -2872,6 +2890,78 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
             return 2
         print(json.dumps({"status": "ok", **payload}, indent=2))
+        return 0
+
+    # --- Batch 4 Phase 8: Gmail-driven confirmation ---
+    if args.command == "ingest-confirmation":
+        from .application import ApplicationError, PlanError
+        from .confirmation import ingest_confirmation
+
+        msg_path = Path(args.gmail_message_file)
+        raw_bytes: bytes | None = None
+        payload: dict | None = None
+        if msg_path.suffix.lower() == ".json":
+            payload = read_json(msg_path)
+        else:
+            raw_bytes = msg_path.read_bytes()
+
+        if args.dry_run:
+            from .confirmation import parse_email, parse_email_dict
+            parsed = parse_email_dict(payload) if payload is not None else parse_email(raw_bytes)
+            print(json.dumps({
+                "status": "ok",
+                "dry_run": True,
+                "parsed": {
+                    "sender": parsed.sender,
+                    "message_id": parsed.message_id,
+                    "subject": parsed.subject,
+                    "event_type": parsed.event_type,
+                    "indeed_jk": parsed.indeed_jk,
+                    "posting_url": parsed.posting_url,
+                },
+            }, indent=2))
+            return 0
+
+        try:
+            updated = ingest_confirmation(
+                raw_bytes=raw_bytes,
+                payload=payload,
+                draft_id=args.draft_id or None,
+                data_root=Path(args.data_root),
+            )
+        except (ApplicationError, PlanError) as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({
+            "status": "ok",
+            "draft_id": updated.get("draft_id") or args.draft_id,
+            "lifecycle_state": updated.get("lifecycle_state"),
+        }, indent=2))
+        return 0
+
+    if args.command == "poll-confirmations":
+        from .confirmation import (
+            parse_email,
+            parse_email_dict,
+            poll_confirmations,
+        )
+
+        inbox = read_json(Path(args.inbox_file))
+        if not isinstance(inbox, list):
+            print(json.dumps({
+                "status": "error",
+                "error_code": "plan_schema_invalid",
+                "message": "inbox-file must be a JSON list",
+            }, indent=2))
+            return 2
+        parsed_list = []
+        for item in inbox:
+            if isinstance(item, dict):
+                parsed_list.append(parse_email_dict(item))
+            elif isinstance(item, str):
+                parsed_list.append(parse_email(Path(item).read_bytes()))
+        rollup = poll_confirmations(parsed_list, data_root=Path(args.data_root))
+        print(json.dumps({"status": "ok", **rollup}, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")
