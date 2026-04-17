@@ -1844,6 +1844,106 @@ def build_parser() -> argparse.ArgumentParser:
     ab_deprecate.add_argument("--reason", required=True)
     ab_deprecate.add_argument("--dry-run", action="store_true")
 
+    # ----- Batch 4 Phase 4: application preparation + run -----
+    prep = subparsers.add_parser(
+        "prepare-application",
+        help="Build plan.json + status.json for a scored lead",
+    )
+    prep.add_argument("--lead", required=True, help="Path to lead JSON file")
+    prep.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    prep.add_argument("--runtime-config", default="config/runtime.yaml")
+    prep.add_argument("--output-root", default="data/applications")
+    prep.add_argument("--data-root", default="data")
+    prep.add_argument("--force", action="store_true")
+    prep.add_argument("--dry-run", action="store_true")
+
+    post = subparsers.add_parser(
+        "apply-posting",
+        help="Emit the agent handoff bundle for a prepared draft",
+    )
+    post.add_argument("--draft-id", required=True)
+    post.add_argument("--data-root", default="data")
+    post.add_argument("--dry-run", action="store_true")
+
+    rec_att = subparsers.add_parser(
+        "record-attempt",
+        help="Persist an attempt record and merge into status.json",
+    )
+    rec_att.add_argument("--draft-id", required=True)
+    rec_att.add_argument("--attempt-file", required=True)
+    rec_att.add_argument("--data-root", default="data")
+    rec_att.add_argument("--dry-run", action="store_true")
+
+    app_status = subparsers.add_parser(
+        "apply-status",
+        help="Print the status.json for a draft",
+    )
+    app_status.add_argument("--draft-id", required=True)
+    app_status.add_argument("--data-root", default="data")
+
+    recon = subparsers.add_parser(
+        "reconcile-applications",
+        help="Write unknown_outcome replacements for stale in_progress attempts",
+    )
+    recon.add_argument("--runtime-config", default="config/runtime.yaml")
+    recon.add_argument("--data-root", default="data")
+    recon.add_argument("--current-batch-id", default="")
+
+    dlist = subparsers.add_parser(
+        "draft-list",
+        help="Enumerate application drafts with optional filters",
+    )
+    dlist.add_argument("--data-root", default="data")
+    dlist.add_argument("--tier", default="")
+    dlist.add_argument("--status", default="")
+    dlist.add_argument("--source", default="")
+
+    refresh = subparsers.add_parser(
+        "refresh-application",
+        help="Re-snapshot the profile into plan.json without regenerating resume",
+    )
+    refresh.add_argument("--draft-id", required=True)
+    refresh.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    refresh.add_argument("--data-root", default="data")
+    refresh.add_argument("--dry-run", action="store_true")
+
+    cpt = subparsers.add_parser(
+        "checkpoint-update",
+        help="Lightweight mid-form checkpoint advance (no schema re-validation)",
+    )
+    cpt.add_argument("--draft-id", required=True)
+    cpt.add_argument("--attempt-id", required=True, help="Attempt filename")
+    cpt.add_argument("--checkpoint", required=True)
+    cpt.add_argument("--screenshot", default="")
+    cpt.add_argument("--data-root", default="data")
+
+    mae = subparsers.add_parser(
+        "mark-applied-externally",
+        help="Record that the user applied manually outside the tool",
+    )
+    mae.add_argument("--lead-id", required=True)
+    mae.add_argument("--applied-at", default="")
+    mae.add_argument("--note", default="")
+    mae.add_argument("--data-root", default="data")
+    mae.add_argument("--dry-run", action="store_true")
+
+    wdr = subparsers.add_parser(
+        "withdraw-application",
+        help="Withdraw an application (user retracted)",
+    )
+    wdr.add_argument("--draft-id", required=True)
+    wdr.add_argument("--reason", required=True)
+    wdr.add_argument("--data-root", default="data")
+    wdr.add_argument("--dry-run", action="store_true")
+
+    rop = subparsers.add_parser(
+        "reopen-application",
+        help="Clear unknown_outcome / failed so the draft is picked up again",
+    )
+    rop.add_argument("--draft-id", required=True)
+    rop.add_argument("--data-root", default="data")
+    rop.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -2484,6 +2584,201 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
             return 2
         print(json.dumps({"status": "ok", "entry": entry}, indent=2))
+        return 0
+
+    # --- Batch 4 Phase 4: application preparation + run ---
+    if args.command == "prepare-application":
+        from .application import PlanError, prepare_application
+
+        lead = read_json(Path(args.lead))
+        profile = read_json(Path(args.profile))
+        policy = {**DEFAULT_RUNTIME_POLICY, **load_yaml_file(Path(args.runtime_config), {})}
+        try:
+            result = prepare_application(
+                lead, profile, policy,
+                output_root=Path(args.output_root),
+                force=args.force,
+                data_root=Path(args.data_root),
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        payload = {
+            "status": "ok",
+            "draft_id": result.draft_id,
+            "draft_dir": str(result.draft_dir),
+            "tier": result.tier,
+            "tier_rationale": result.tier_rationale,
+            "surface": result.surface,
+        }
+        if args.dry_run:
+            # Dry-run emits the plan to stdout without leaving artifacts
+            # — but prepare_application has already written. Best we can do
+            # without a deeper rework is delete on --dry-run exit.
+            plan = read_json(result.draft_dir / "plan.json")
+            payload["plan"] = plan
+            payload["dry_run"] = True
+            import shutil
+            shutil.rmtree(result.draft_dir, ignore_errors=True)
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    if args.command == "apply-posting":
+        from .application import PlanError, apply_posting
+
+        try:
+            bundle = apply_posting(
+                args.draft_id,
+                dry_run=args.dry_run,
+                data_root=Path(args.data_root),
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps(bundle, indent=2))
+        return 0
+
+    if args.command == "record-attempt":
+        from .application import ApplicationError, PlanError, record_attempt
+
+        payload = read_json(Path(args.attempt_file))
+        if args.dry_run:
+            # Validate shape but do not write.
+            from .application import _validate_attempt_shape  # noqa: PLC2701
+            try:
+                _validate_attempt_shape(payload)
+            except PlanError as exc:
+                print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+                return 2
+            print(json.dumps({"status": "ok", "dry_run": True, "payload": payload}, indent=2))
+            return 0
+        try:
+            result = record_attempt(
+                args.draft_id, payload, data_root=Path(args.data_root)
+            )
+        except (ApplicationError, PlanError) as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "attempt": result}, indent=2))
+        return 0
+
+    if args.command == "apply-status":
+        from .application import PlanError, apply_status
+
+        try:
+            status = apply_status(args.draft_id, data_root=Path(args.data_root))
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps(status, indent=2))
+        return 0
+
+    if args.command == "reconcile-applications":
+        from .application import reconcile_stale_attempts
+
+        policy = {**DEFAULT_RUNTIME_POLICY, **load_yaml_file(Path(args.runtime_config), {})}
+        reconciled = reconcile_stale_attempts(
+            policy,
+            current_batch_id=args.current_batch_id or None,
+            data_root=Path(args.data_root),
+        )
+        print(json.dumps({"status": "ok", "count": len(reconciled), "reconciled": reconciled}, indent=2))
+        return 0
+
+    if args.command == "draft-list":
+        from .application import list_drafts
+
+        drafts = list_drafts(
+            tier=args.tier or None,
+            status=args.status or None,
+            source=args.source or None,
+            data_root=Path(args.data_root),
+        )
+        print(json.dumps({"status": "ok", "count": len(drafts), "drafts": drafts}, indent=2))
+        return 0
+
+    if args.command == "refresh-application":
+        from .application import PlanError, refresh_application
+
+        profile = read_json(Path(args.profile))
+        try:
+            plan = refresh_application(
+                args.draft_id, profile, data_root=Path(args.data_root)
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({
+            "status": "ok",
+            "draft_id": args.draft_id,
+            "profile_snapshot": plan["profile_snapshot"],
+        }, indent=2))
+        return 0
+
+    if args.command == "checkpoint-update":
+        from .application import PlanError, checkpoint_update
+
+        try:
+            entry = checkpoint_update(
+                args.draft_id,
+                args.attempt_id,
+                args.checkpoint,
+                screenshot_path=args.screenshot or None,
+                data_root=Path(args.data_root),
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "attempt_summary": entry}, indent=2))
+        return 0
+
+    if args.command == "mark-applied-externally":
+        from .application import PlanError, mark_applied_externally
+
+        if args.dry_run:
+            print(json.dumps({"status": "ok", "dry_run": True, "lead_id": args.lead_id}, indent=2))
+            return 0
+        try:
+            status = mark_applied_externally(
+                args.lead_id,
+                applied_at=args.applied_at or None,
+                note=args.note,
+                data_root=Path(args.data_root),
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "lead_id": args.lead_id, "lifecycle_state": status["lifecycle_state"]}, indent=2))
+        return 0
+
+    if args.command == "withdraw-application":
+        from .application import PlanError, withdraw_application
+
+        if args.dry_run:
+            print(json.dumps({"status": "ok", "dry_run": True, "draft_id": args.draft_id}, indent=2))
+            return 0
+        try:
+            status = withdraw_application(
+                args.draft_id, args.reason, data_root=Path(args.data_root)
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "draft_id": args.draft_id, "lifecycle_state": status["lifecycle_state"]}, indent=2))
+        return 0
+
+    if args.command == "reopen-application":
+        from .application import PlanError, reopen_application
+
+        if args.dry_run:
+            print(json.dumps({"status": "ok", "dry_run": True, "draft_id": args.draft_id}, indent=2))
+            return 0
+        try:
+            status = reopen_application(args.draft_id, data_root=Path(args.data_root))
+        except PlanError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({"status": "ok", "draft_id": args.draft_id, "lifecycle_state": status["lifecycle_state"]}, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")
