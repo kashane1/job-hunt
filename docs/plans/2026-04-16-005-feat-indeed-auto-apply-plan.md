@@ -1,7 +1,8 @@
 ---
 title: "feat: Autonomous Indeed job application with tiered approval and close-the-loop tracking"
 type: feat
-status: active
+status: completed
+completed_at: 2026-04-17
 date: 2026-04-16
 deepened: 2026-04-17
 origin: docs/brainstorms/2026-04-16-indeed-auto-apply-brainstorm.md

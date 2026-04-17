@@ -353,6 +353,103 @@ def check_integrity(data_root: Path) -> dict:
                     "age_seconds": int(age.total_seconds()),
                 })
 
+    # Batch 4: application-bundle integrity checks
+    stale_in_progress_attempts: list[dict] = []
+    stale_inferred_bank_entries: list[dict] = []
+    orphan_checkpoints_dirs: list[dict] = []
+    quarantined_confirmations: list[dict] = []
+    retention_overdue_drafts: list[dict] = []
+    playbook_missing_checkpoint_sequence: list[dict] = []
+
+    apps_root = data_root / "applications"
+    if apps_root.is_dir():
+        # in_progress attempts past 45 minutes (default; AGENTS.md threshold)
+        in_progress_threshold = timedelta(minutes=45)
+        retention_threshold = timedelta(days=365)
+        for draft_dir in apps_root.iterdir():
+            if not draft_dir.is_dir() or draft_dir.name in ("batches", "_suspicious"):
+                continue
+            attempts_dir = draft_dir / "attempts"
+            checkpoints_dir = draft_dir / "checkpoints"
+            plan_path = draft_dir / "plan.json"
+            status_path = draft_dir / "status.json"
+
+            # Orphan checkpoints/ dir without a plan.json or status.json
+            if checkpoints_dir.is_dir() and not (plan_path.exists() or status_path.exists()):
+                orphan_checkpoints_dirs.append({"path": str(checkpoints_dir)})
+
+            if attempts_dir.is_dir():
+                for ap in attempts_dir.glob("*.json"):
+                    try:
+                        attempt = read_json(ap)
+                    except (json.JSONDecodeError, KeyError):
+                        continue
+                    if attempt.get("status") != "in_progress":
+                        continue
+                    recorded_at = attempt.get("recorded_at", "")
+                    try:
+                        recorded_dt = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if (now - recorded_dt) > in_progress_threshold:
+                        stale_in_progress_attempts.append({
+                            "draft_id": attempt.get("draft_id", draft_dir.name),
+                            "filename": ap.name,
+                            "age_seconds": int((now - recorded_dt).total_seconds()),
+                        })
+
+            # Retention check
+            if plan_path.exists():
+                try:
+                    plan = read_json(plan_path)
+                    prepared_at = plan.get("prepared_at", "")
+                    prepared_dt = datetime.fromisoformat(prepared_at.replace("Z", "+00:00"))
+                    if (now - prepared_dt) > retention_threshold:
+                        retention_overdue_drafts.append({
+                            "draft_id": plan.get("draft_id", draft_dir.name),
+                            "age_days": int((now - prepared_dt).days),
+                        })
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    pass
+
+        # Quarantined confirmations
+        suspicious_dir = apps_root / "_suspicious"
+        if suspicious_dir.is_dir():
+            for sp in suspicious_dir.glob("*.json"):
+                quarantined_confirmations.append({"path": str(sp)})
+
+    # Stale inferred answer-bank entries
+    bank_path = data_root / "answer-bank.json"
+    if bank_path.exists():
+        try:
+            bank = read_json(bank_path)
+            for entry in bank.get("entries", []):
+                if entry.get("source") != "inferred" or entry.get("reviewed"):
+                    continue
+                created_at = entry.get("created_at", "")
+                try:
+                    created_dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if (now - created_dt) > timedelta(days=30):
+                    stale_inferred_bank_entries.append({
+                        "entry_id": entry.get("entry_id"),
+                        "age_days": int((now - created_dt).days),
+                    })
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    # Playbook frontmatter compliance
+    playbook_dir = data_root.parent / "playbooks" / "application"
+    if playbook_dir.is_dir():
+        from .playbooks import load_checkpoint_dag
+        for pb in playbook_dir.glob("*.md"):
+            if pb.stem == "generic-application":
+                continue  # router; no checkpoint sequence by design
+            seq = load_checkpoint_dag(str(pb.relative_to(data_root.parent)))
+            if not seq:
+                playbook_missing_checkpoint_sequence.append({"path": str(pb)})
+
     report = {
         "orphaned_content": sorted(content_ids - referenced_content_ids),
         "dangling_leads": sorted(status_lead_ids - lead_ids),
@@ -370,12 +467,20 @@ def check_integrity(data_root: Path) -> dict:
         "stale_review_entries": stale_review_entries,
         "unscored_discovered_leads": unscored_discovered_leads,
         "stale_tmp_files": stale_tmp_files,
+        "stale_in_progress_attempts": stale_in_progress_attempts,
+        "stale_inferred_bank_entries": stale_inferred_bank_entries,
+        "orphan_checkpoints_dirs": orphan_checkpoints_dirs,
+        "quarantined_confirmations": quarantined_confirmations,
+        "retention_overdue_drafts": retention_overdue_drafts,
+        "playbook_missing_checkpoint_sequence": playbook_missing_checkpoint_sequence,
     }
+    # Quarantined confirmations are informational, not pass/fail.
+    informational = {"unreferenced_companies", "quarantined_confirmations"}
     has_issues = any(
-        bool(v) for k, v in report.items() if k != "unreferenced_companies"
+        bool(v) for k, v in report.items() if k not in informational
     )
     report["summary"] = {
         "has_issues": has_issues,
-        "issue_counts": {k: len(v) for k, v in report.items() if isinstance(v, list) and k != "unreferenced_companies"},
+        "issue_counts": {k: len(v) for k, v in report.items() if isinstance(v, list) and k not in informational},
     }
     return report

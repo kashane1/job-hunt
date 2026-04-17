@@ -13,11 +13,12 @@ The repo is designed for Claude Code style operation:
 
 V1 is optimized for trust, not volume.
 
-- human approval is required before every final submit
-- a separate approval gate is required before account creation in v1
+- **The agent fills application forms but never clicks the final Submit button — the human always does** (Batch 4 v4 invariant; see `docs/guides/indeed-auto-apply.md`)
+- a separate approval gate is required before account creation
 - speculative facts are disabled by default
 - browser execution has a soft limit of 10 tabs and a hard limit of 15
 - credentials must never be written to git-tracked artifacts
+- LinkedIn URLs hard-fail; Indeed.com is the only allowlisted login-walled domain (per `config/domain-allowlist.yaml`)
 
 ## Repository Layout
 
@@ -101,6 +102,19 @@ Generated reports now capture:
 - submit attempted vs confirmed submitted
 - browser tab budget metrics and hard-limit breaches
 - redaction status for any secret-like fields present in runtime attempt data
+
+## Batch 4: Autonomous Indeed Apply
+
+End-to-end pipeline for applying to Indeed postings: lead discovery →
+prepare-application (form-field plan + tailored resume + ATS check) →
+agent drives Chrome via the Claude-in-Chrome MCP → **human clicks Submit**
+→ Gmail-driven confirmation closes the lifecycle. The user-facing guide
+lives at [`docs/guides/indeed-auto-apply.md`](docs/guides/indeed-auto-apply.md).
+
+The v4 policy invariant: the agent never clicks Submit. Tiers describe
+how much field-level review the human does before clicking, not whether
+the click happens. See `docs/solutions/security-issues/human-in-the-loop-on-submit-as-tos-defense.md`
+for the design rationale.
 
 ## Batch 2: URL Ingestion, PDF Export, ATS Checks, Analytics
 

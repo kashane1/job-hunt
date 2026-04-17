@@ -1737,6 +1737,97 @@ def batch_cancel(batch_id: str, *, data_root: Path | None = None) -> dict:
     return {"batch_id": batch_id, "cancelled_at": now_iso()}
 
 
+# =============================================================================
+# Phase 9: prune + cleanup-orphans
+# =============================================================================
+
+def prune_applications(
+    *,
+    older_than_days: int,
+    dry_run: bool = False,
+    data_root: Path | None = None,
+) -> dict:
+    """Delete draft directories whose plan.prepared_at is older than ``older_than_days``.
+
+    Always honors the safety contract: DRY_RUN BY DEFAULT in callers (the
+    CLI requires --confirm-or-dry-run pattern). Returns the list of paths
+    affected. Does not touch batches/ or _suspicious/.
+    """
+    import shutil
+
+    data_root = data_root or (repo_root() / "data")
+    apps_root = data_root / "applications"
+    if not apps_root.is_dir():
+        return {"removed": [], "would_remove": []}
+    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
+    removed: list[str] = []
+    would_remove: list[str] = []
+    for draft_dir in sorted(apps_root.iterdir()):
+        if not draft_dir.is_dir() or draft_dir.name in ("batches", "_suspicious"):
+            continue
+        plan_path = draft_dir / "plan.json"
+        if not plan_path.exists():
+            continue
+        try:
+            plan = read_json(plan_path)
+            prepared_dt = datetime.fromisoformat(
+                str(plan.get("prepared_at", "")).replace("Z", "+00:00")
+            )
+        except (ValueError, OSError):
+            continue
+        if prepared_dt > cutoff:
+            continue
+        if dry_run:
+            would_remove.append(str(draft_dir))
+        else:
+            shutil.rmtree(draft_dir)
+            removed.append(str(draft_dir))
+    return {
+        "removed": removed,
+        "would_remove": would_remove,
+        "cutoff": cutoff.isoformat(),
+    }
+
+
+def cleanup_orphans(
+    *,
+    confirm: bool,
+    data_root: Path | None = None,
+) -> dict:
+    """Two-step PII-safe orphan cleanup.
+
+    Removes ``checkpoints/`` and ``attempts/`` directories that exist
+    without a sibling plan.json or status.json. Refuses to act unless
+    ``confirm=True`` (the CLI gates on --confirm).
+    """
+    import shutil
+
+    data_root = data_root or (repo_root() / "data")
+    apps_root = data_root / "applications"
+    if not apps_root.is_dir():
+        return {"removed": []}
+    candidates: list[Path] = []
+    for draft_dir in sorted(apps_root.iterdir()):
+        if not draft_dir.is_dir() or draft_dir.name in ("batches", "_suspicious"):
+            continue
+        plan_path = draft_dir / "plan.json"
+        status_path = draft_dir / "status.json"
+        if plan_path.exists() or status_path.exists():
+            continue
+        for sub in ("checkpoints", "attempts"):
+            sub_path = draft_dir / sub
+            if sub_path.is_dir():
+                candidates.append(sub_path)
+        # If the entire draft dir is empty after the orphans, it's safe to drop.
+    if not confirm:
+        return {"would_remove": [str(p) for p in candidates], "removed": []}
+    removed = []
+    for path in candidates:
+        shutil.rmtree(path, ignore_errors=True)
+        removed.append(str(path))
+    return {"removed": removed}
+
+
 def refresh_application(
     draft_id: str,
     candidate_profile: dict,

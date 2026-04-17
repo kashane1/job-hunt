@@ -1990,6 +1990,22 @@ def build_parser() -> argparse.ArgumentParser:
     pc.add_argument("--data-root", default="data")
     pc.add_argument("--window-days", type=int, default=None)
 
+    # ----- Batch 4 Phase 9: retention + orphan cleanup -----
+    prn = subparsers.add_parser(
+        "prune-applications",
+        help="Delete draft directories whose plan.prepared_at exceeds retention",
+    )
+    prn.add_argument("--older-than", type=int, required=True, help="Days threshold")
+    prn.add_argument("--data-root", default="data")
+    prn.add_argument("--dry-run", action="store_true")
+
+    co = subparsers.add_parser(
+        "cleanup-orphans",
+        help="Remove orphaned checkpoints/ and attempts/ dirs (no plan.json/status.json sibling)",
+    )
+    co.add_argument("--data-root", default="data")
+    co.add_argument("--confirm", action="store_true")
+
     return parser
 
 
@@ -2962,6 +2978,28 @@ def main(argv: list[str] | None = None) -> int:
                 parsed_list.append(parse_email(Path(item).read_bytes()))
         rollup = poll_confirmations(parsed_list, data_root=Path(args.data_root))
         print(json.dumps({"status": "ok", **rollup}, indent=2))
+        return 0
+
+    # --- Batch 4 Phase 9: retention + cleanup ---
+    if args.command == "prune-applications":
+        from .application import prune_applications
+
+        result = prune_applications(
+            older_than_days=args.older_than,
+            dry_run=args.dry_run,
+            data_root=Path(args.data_root),
+        )
+        print(json.dumps({"status": "ok", **result}, indent=2))
+        return 0
+
+    if args.command == "cleanup-orphans":
+        from .application import cleanup_orphans
+
+        result = cleanup_orphans(
+            confirm=args.confirm,
+            data_root=Path(args.data_root),
+        )
+        print(json.dumps({"status": "ok", **result}, indent=2))
         return 0
 
     parser.error(f"Unknown command: {args.command}")
