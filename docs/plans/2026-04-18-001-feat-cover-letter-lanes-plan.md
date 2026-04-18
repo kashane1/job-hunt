@@ -1,10 +1,12 @@
 ---
 title: "feat: Improve cover-letter generation with strength lanes and safer job-specific grounding"
 type: feat
-status: active
+status: completed
 date: 2026-04-18
 deepened: 2026-04-18
+completed: 2026-04-18
 origin: docs/brainstorms/2026-04-17-cover-letter-planning-prompt.md
+notes: "Phases 0-4 shipped. Phase 5 (normalized fragment layer) is a deliberate later slice and remains unscheduled."
 ---
 
 # feat: Improve Cover-Letter Generation With Strength Lanes and Safer Job-Specific Grounding
@@ -865,11 +867,11 @@ To avoid Phase 1 and Phase 3 duplicating regex logic:
 - This keeps ATS as a downstream consumer of `generation.py` (same direction as today's dependency graph) and avoids a third "shared" module for two small helpers.
 - If a future module also needs them, extract to a tiny neutral module then — not pre-emptively.
 
-### Phase 4: Prompt and Documentation Alignment
+### Phase 4: Prompt and Documentation Alignment ✅
 
-- update `prompts/generation/cover-letter.md`
-- document lane behavior, grounding rules, and stale-language guardrails
-- document no-research fallback language and explicit-override semantics
+- [x] update `prompts/generation/cover-letter.md`
+- [x] document lane behavior, grounding rules, and stale-language guardrails
+- [x] document no-research fallback language and explicit-override semantics
 
 ### Phase 5: Higher-Quality Normalized Fragment Layer
 
