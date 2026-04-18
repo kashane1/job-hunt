@@ -824,18 +824,18 @@ Per `docs/solutions/workflow-issues/ship-tolerant-consumers-before-strict-produc
 - [x] Add helper-level unit tests (lane selection, evidence selection, rendering, guardrail detection) before widening CLI or schema surfaces.
 - [x] Introduce only one internal frozen dataclass: `CoverLetterLaneSpec`. Evidence buckets and section plans remain plain dicts/tuples in v1.
 
-### Phase 2: CLI and Metadata Wiring
+### Phase 2: CLI and Metadata Wiring ✅
 
-- Extend `generate_cover_letter(...)` with an optional `lane` parameter before wiring the CLI flag.
-- Add `--lane` option to `generate-cover-letter` in `src/job_hunt/core.py`
-- support values:
+- [x] Extend `generate_cover_letter(...)` with an optional `lane` parameter before wiring the CLI flag.
+- [x] Add `--lane` option to `generate-cover-letter` in `src/job_hunt/core.py`
+- [x] support values:
   - `auto`
   - `platform_internal_tools`
   - `ai_engineer`
   - `product_minded_engineer`
-- extend the generated-content record with the seven optional fields listed in "Schema Evolution" (`lane_id`, `lane_source`, `lane_rationale`, `selected_question_bank_questions`, `company_facts_used`, `generation_warnings`, plus the upgraded `source_document_ids`).
-- record what was actually used from company research in `company_facts_used`; its presence/absence implicitly encodes whether research was provided and usable.
-- continue writing `variant_style` as the resolved lane id.
+- [x] extend the generated-content record with the seven optional fields listed in "Schema Evolution" (`lane_id`, `lane_source`, `lane_rationale`, `selected_question_bank_questions`, `company_facts_used`, `generation_warnings`, plus the upgraded `source_document_ids`).
+- [x] record what was actually used from company research in `company_facts_used`; its presence/absence implicitly encodes whether research was provided and usable.
+- [x] continue writing `variant_style` as the resolved lane id.
 
 ### Phase 3: ATS and Safety Checks
 

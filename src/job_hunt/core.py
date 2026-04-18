@@ -1607,6 +1607,12 @@ def build_parser() -> argparse.ArgumentParser:
     gen_cl.add_argument("--profile", default="profile/normalized/candidate-profile.json")
     gen_cl.add_argument("--company", default="", help="Path to company research JSON")
     gen_cl.add_argument("--output-dir", default="data/generated/cover-letters")
+    gen_cl.add_argument(
+        "--lane",
+        choices=["auto", "platform_internal_tools", "ai_engineer", "product_minded_engineer"],
+        default="auto",
+        help="Cover-letter strength lane. 'auto' picks based on lead signal.",
+    )
 
     # --- Research commands ---
     res_co = subparsers.add_parser("research-company", help="Create company research scaffold")
@@ -2161,7 +2167,9 @@ def main(argv: list[str] | None = None) -> int:
         lead = read_json(Path(args.lead))
         profile = read_json(Path(args.profile))
         company = read_json(Path(args.company)) if args.company else None
-        result = generate_cover_letter(lead, profile, company, Path(args.output_dir))
+        result = generate_cover_letter(
+            lead, profile, company, Path(args.output_dir), lane=args.lane,
+        )
 
         # CLI-orchestrated ATS check post-hook
         if not args.skip_ats_check:
