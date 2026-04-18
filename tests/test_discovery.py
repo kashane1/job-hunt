@@ -420,14 +420,27 @@ class ReviewFileWriterTest(unittest.TestCase):
 
 class DiscoveryUserAgentTest(unittest.TestCase):
     def test_discovery_user_agent_constant_single_sourced(self) -> None:
-        import job_hunt.discovery as disc
-        # Only the DISCOVERY_USER_AGENT definition should carry the string
-        src = (ROOT / "src" / "job_hunt" / "discovery.py").read_text(encoding="utf-8")
-        occurrences = [
-            line for line in src.splitlines() if "job-hunt/" in line
-        ]
-        # Exactly one — the constant definition
-        self.assertEqual(len(occurrences), 1, occurrences)
+        # The UA literal must appear exactly once across src/ — at the
+        # module-level definition. Everything else imports by name. Uses AST
+        # so implicit-concatenation multi-line string literals collapse to a
+        # single constant (grep-based single-file tests cannot handle that).
+        import ast
+        from job_hunt.discovery import DISCOVERY_USER_AGENT
+
+        src_root = ROOT / "src" / "job_hunt"
+        hits: list[str] = []
+        for py_file in src_root.rglob("*.py"):
+            try:
+                tree = ast.parse(py_file.read_text(encoding="utf-8"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and node.value == DISCOVERY_USER_AGENT:
+                    hits.append(f"{py_file.relative_to(src_root)}:{node.lineno}")
+        self.assertEqual(
+            len(hits), 1,
+            f"Expected exactly one literal defining DISCOVERY_USER_AGENT, got: {hits}",
+        )
 
 
 if __name__ == "__main__":
