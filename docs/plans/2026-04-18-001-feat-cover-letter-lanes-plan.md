@@ -809,20 +809,20 @@ Per `docs/solutions/workflow-issues/ship-tolerant-consumers-before-strict-produc
 - [x] Add a regression test that existing generated-content records (without the new fields) continue to pass ATS and downstream consumers unchanged.
 - [x] Commit Phase 0 separately so the tolerant-consumer ordering is visible in `git log`.
 
-### Phase 1: Lane-Aware Generator Refactor
+### Phase 1: Lane-Aware Generator Refactor ✅
 
-- Keep the entire first-slice lane pipeline inside `src/job_hunt/generation.py`.
-- Keep `generate_cover_letter(...)` in `src/job_hunt/generation.py` as a thin orchestration wrapper.
-- Add lane constants and scoring rules per "Phase 1 Concrete Constants" §1–§3.
-- Add support for question-bank and project-note-aware evidence selection using already-loaded normalized profile data.
-- Enforce the minimum evidence bar per §4, including the auto→fallback and explicit-mode-warn behavior.
-- Add the stale-name denylist per §5.
-- Write detection helpers at `generation.py` module scope: `find_unresolved_placeholders(text) -> list[str]` and `find_stale_company_mentions(text, target_company, denylist) -> list[str]` (see "Detection Helper Ownership" below).
-- Add a pre-write validation gate that invokes both detection helpers; on any hit, raise hard-failure exceptions with `code` attached.
-- Keep `generate_cover_letter(...)` as the public interface.
-- Preserve current file-output contract.
-- Add helper-level unit tests (lane selection, evidence selection, rendering, guardrail detection) before widening CLI or schema surfaces.
-- Introduce only one internal frozen dataclass: `CoverLetterLaneSpec`. Evidence buckets and section plans remain plain dicts/tuples in v1.
+- [x] Keep the entire first-slice lane pipeline inside `src/job_hunt/generation.py`.
+- [x] Keep `generate_cover_letter(...)` in `src/job_hunt/generation.py` as a thin orchestration wrapper.
+- [x] Add lane constants and scoring rules per "Phase 1 Concrete Constants" §1–§3.
+- [x] Add support for question-bank and project-note-aware evidence selection using already-loaded normalized profile data.
+- [x] Enforce the minimum evidence bar per §4, including the auto→fallback and explicit-mode-warn behavior.
+- [x] Add the stale-name denylist per §5.
+- [x] Write detection helpers at `generation.py` module scope: `find_unresolved_placeholders(text) -> list[str]` and `find_stale_company_mentions(text, target_company, denylist) -> list[str]` (see "Detection Helper Ownership" below).
+- [x] Add a pre-write validation gate that invokes both detection helpers; on any hit, raise hard-failure exceptions with `code` attached.
+- [x] Keep `generate_cover_letter(...)` as the public interface.
+- [x] Preserve current file-output contract.
+- [x] Add helper-level unit tests (lane selection, evidence selection, rendering, guardrail detection) before widening CLI or schema surfaces.
+- [x] Introduce only one internal frozen dataclass: `CoverLetterLaneSpec`. Evidence buckets and section plans remain plain dicts/tuples in v1.
 
 ### Phase 2: CLI and Metadata Wiring
 
