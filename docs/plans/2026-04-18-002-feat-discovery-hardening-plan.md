@@ -127,7 +127,7 @@ Numeric / format decisions referenced inline in later phases. Kept minimal; the 
 
 - [ ] Commit: `test(discovery-hardening): Phase 0 — retarget UA single-sourcing test across src/`
 
-### Phase 1: net_policy jitter primitive + wire it up
+### Phase 1: net_policy jitter primitive + wire it up ✅
 
 Merged from a prior 2-phase split — the primitive is useless without callers, and the combined commit is still under ~80 lines.
 

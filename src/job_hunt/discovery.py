@@ -50,7 +50,10 @@ logger = logging.getLogger(__name__)
 # Constants
 # =============================================================================
 
-DISCOVERY_USER_AGENT: Final = "job-hunt/0.3"
+DISCOVERY_USER_AGENT: Final = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 MAX_LISTING_BYTES: Final = 8_000_000
 MAX_LISTING_DECOMPRESSED_BYTES: Final = 20_000_000
@@ -131,6 +134,11 @@ class ListingEntry:
     updated_at: str
     signals: tuple[str, ...] = ()
     confidence: Confidence = "high"
+    # Real employer name parsed from the listing card. Distinct from
+    # source_company, which discovery.py rewrites to the watchlist's
+    # virtual-company name for Indeed searches. Used to patch the lead
+    # after url_fetch_fallback ingestion, whose scrape yields "www".
+    employer_name: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -143,6 +151,7 @@ class ListingEntry:
             "updated_at": self.updated_at,
             "signals": list(self.signals),
             "confidence": self.confidence,
+            "employer_name": self.employer_name,
         }
 
 
@@ -1123,6 +1132,19 @@ def _run_source(
             "confidence": entry.confidence,
         })
         lead_obj.setdefault("status", "discovered")
+        # For sources that parsed listing-card metadata directly (Indeed
+        # search today, other aggregators later), prefer the card's
+        # title/company/location over whatever ingest_url's fallback
+        # scrape produced — the fallback reads <title> and the URL host,
+        # which yields garbage like "www" / "Unknown" / "...- Indeed.com".
+        if entry.title and (
+            not lead_obj.get("title") or "indeed.com" in lead_obj["title"].lower()
+        ):
+            lead_obj["title"] = entry.title
+        if entry.employer_name and lead_obj.get("company") in (None, "", "www"):
+            lead_obj["company"] = entry.employer_name
+        if entry.location and lead_obj.get("location") in (None, "", "Unknown"):
+            lead_obj["location"] = entry.location
         write_json(lead_path, lead_obj)
         existing_canonical[canonical] = lead_path
         new_lead_paths.append(lead_path)
@@ -1235,6 +1257,12 @@ def discover_jobs(
         )
 
     rate_limiter = DomainRateLimiter(default_interval_s=0.5)
+    # Anti-bot-prone hosts get human-like pacing: 3-7s randomized between
+    # requests. Clockwork cadence is itself a bot fingerprint; uniform jitter
+    # breaks the pattern and keeps us inside the ToS-defense pacing envelope.
+    # Greenhouse/Lever/etc. are public JSON APIs and stay on the fast default.
+    rate_limiter.set_human_jitter("indeed.com", 3.0, 7.0)
+    rate_limiter.set_human_jitter("linkedin.com", 3.0, 7.0)
     robots = RobotsCache(
         robots_cache_path, rate_limiter, DISCOVERY_USER_AGENT,
     )

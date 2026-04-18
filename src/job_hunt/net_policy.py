@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import random
 import socket
 import threading
 import time
@@ -88,7 +89,16 @@ def registered_domain(url: str) -> str:
 @dataclass
 class _DomainBudget:
     min_interval_s: float
+    # When max_interval_s > min_interval_s each acquire picks a uniform
+    # random interval in [min, max]. Used for anti-bot-prone hosts where
+    # deterministic pacing is itself a fingerprint.
+    max_interval_s: float = 0.0
     next_slot_at: float = 0.0
+
+    def pick_interval(self) -> float:
+        if self.max_interval_s > self.min_interval_s:
+            return random.uniform(self.min_interval_s, self.max_interval_s)
+        return self.min_interval_s
 
 
 class DomainRateLimiter:
@@ -98,6 +108,10 @@ class DomainRateLimiter:
     unlocked. N threads that all enter acquire() simultaneously land at
     staggered slots (T=0, T=interval, T=2*interval, ...) rather than all
     clustering at T=interval.
+
+    For anti-bot-prone hosts, `set_human_jitter(domain, min, max)` swaps the
+    fixed interval for a uniform sample in [min, max] on each acquire —
+    prevents the clockwork cadence that rule-based bot detectors flag.
     """
 
     def __init__(self, default_interval_s: float = 0.5):
@@ -109,6 +123,36 @@ class DomainRateLimiter:
         with self._lock:
             budget = self._budgets.setdefault(domain, _DomainBudget(seconds))
             budget.min_interval_s = seconds
+            budget.max_interval_s = 0.0
+
+    def set_human_jitter(self, domain: str, min_s: float, max_s: float) -> None:
+        """Configure this domain to sample a random delay in [min_s, max_s].
+
+        Intended use: defensive read-path pacing for the user's own job-search
+        automation against public listing pages (discovery / ingestion). Not a
+        general-purpose throttle — callers outside `discover_jobs` should
+        prefer `set_interval`. `random.uniform` is appropriate here because
+        the use case is anti-fingerprint cadence, not unpredictability against
+        an adversary (Python's own `secrets` docs scope that module to auth).
+
+        Validation:
+        - `min_s > 0` and `max_s > 0`
+        - `max_s >= min_s`
+        - `max_s <= 30.0` — upper-bound guard against accidental misuse on
+          budget-sensitive hosts (a 60s call on `greenhouse.io` would starve
+          the discovery run).
+        """
+        if min_s <= 0 or max_s <= 0 or max_s < min_s:
+            raise ValueError(f"invalid jitter range for {domain}: [{min_s}, {max_s}]")
+        if max_s > 30.0:
+            raise ValueError(
+                f"jitter max_s {max_s}s exceeds 30.0s cap for {domain}; "
+                f"use set_interval(...) for longer deterministic pacing instead."
+            )
+        with self._lock:
+            budget = self._budgets.setdefault(domain, _DomainBudget(min_s))
+            budget.min_interval_s = min_s
+            budget.max_interval_s = max_s
 
     def acquire(self, url: str) -> float:
         """Block until this domain's next slot. Returns seconds slept."""
@@ -119,7 +163,7 @@ class DomainRateLimiter:
             )
             now = time.monotonic()
             slot = max(now, budget.next_slot_at)
-            budget.next_slot_at = slot + budget.min_interval_s
+            budget.next_slot_at = slot + budget.pick_interval()
             wait = slot - now
         if wait > 0:
             time.sleep(wait)

@@ -90,6 +90,67 @@ class DomainRateLimiterSerializesSameDomainTest(unittest.TestCase):
         self.assertGreaterEqual(spread, 0.15)
 
 
+class DomainRateLimiterHumanJitterTest(unittest.TestCase):
+    def test_rejects_non_positive_bounds(self) -> None:
+        rl = DomainRateLimiter()
+        with self.assertRaises(ValueError):
+            rl.set_human_jitter("x.com", 0.0, 1.0)
+        with self.assertRaises(ValueError):
+            rl.set_human_jitter("x.com", 1.0, 0.0)
+        with self.assertRaises(ValueError):
+            rl.set_human_jitter("x.com", -1.0, 1.0)
+
+    def test_rejects_inverted_range(self) -> None:
+        rl = DomainRateLimiter()
+        with self.assertRaises(ValueError):
+            rl.set_human_jitter("x.com", 5.0, 3.0)
+
+    def test_rejects_above_upper_bound_cap(self) -> None:
+        rl = DomainRateLimiter()
+        with self.assertRaises(ValueError):
+            rl.set_human_jitter("x.com", 1.0, 60.0)  # > 30s cap
+
+    def test_pick_interval_samples_in_range(self) -> None:
+        from job_hunt.net_policy import _DomainBudget
+        budget = _DomainBudget(min_interval_s=1.0, max_interval_s=2.0)
+        for _ in range(100):
+            value = budget.pick_interval()
+            self.assertGreaterEqual(value, 1.0)
+            self.assertLessEqual(value, 2.0)
+
+    def test_pick_interval_without_jitter_returns_min(self) -> None:
+        from job_hunt.net_policy import _DomainBudget
+        budget = _DomainBudget(min_interval_s=0.5)  # max defaults to 0.0
+        self.assertEqual(budget.pick_interval(), 0.5)
+
+    def test_set_interval_resets_jitter(self) -> None:
+        rl = DomainRateLimiter()
+        rl.set_human_jitter("x.com", 1.0, 2.0)
+        rl.set_interval("x.com", 0.5)
+        # Inspect the budget directly — set_interval must have reset max to 0.
+        budget = rl._budgets["x.com"]  # type: ignore[attr-defined]
+        self.assertEqual(budget.max_interval_s, 0.0)
+        self.assertEqual(budget.pick_interval(), 0.5)
+
+
+class DiscoverJobsJitterWiringTest(unittest.TestCase):
+    """Phase 1 wiring assertion: discover_jobs installs human jitter for the
+    anti-bot-prone hosts. Structural assertion against the source rather than
+    a live call, because discover_jobs's runtime path needs a populated
+    watchlist + real fixtures that are out of scope for a unit test."""
+
+    def test_discover_jobs_source_installs_jitter_for_indeed_and_linkedin(self) -> None:
+        src = (ROOT / "src" / "job_hunt" / "discovery.py").read_text(encoding="utf-8")
+        self.assertIn(
+            'set_human_jitter("indeed.com", 3.0, 7.0)', src,
+            "discover_jobs must install 3-7s jitter on indeed.com",
+        )
+        self.assertIn(
+            'set_human_jitter("linkedin.com", 3.0, 7.0)', src,
+            "discover_jobs must install 3-7s jitter on linkedin.com",
+        )
+
+
 class RobotsCacheTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
