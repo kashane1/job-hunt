@@ -1,10 +1,11 @@
 ---
 title: "feat: Discovery hardening — anti-bot pacing, Indeed parser refresh, keyword hygiene, ATS tier fix, curated resume lanes"
 type: feat
-status: active
+status: completed
 date: 2026-04-18
+completed: 2026-04-18
 origin: accumulated uncommitted changes in working tree on 2026-04-18 after feat/cover-letter-lanes PR
-notes: "Splits ~553 lines of WIP across 8 src files + 2 docs into 10 reviewable phases. Does NOT touch candidate_name gap or Phase 5 of the cover-letter-lanes plan."
+notes: "Eight phases landed. override_hints refactor for Phase 3 deferred to a follow-up PR (lead patch-after-write remains guarded). Does NOT touch candidate_name gap or Phase 5 of the cover-letter-lanes plan."
 ---
 
 # feat: Discovery Hardening
@@ -275,7 +276,7 @@ Coupled phase: the ATS density threshold only makes sense once stopwords are gon
   - `test_recompute_tiers_leaves_records_with_other_reasons_unchanged`
 - [ ] Commit: `fix(discovery-hardening): Phase 6 — advisory warnings, report-path load, tier back-fill`
 
-### Phase 7: Curated resume lanes (+ docs tail)
+### Phase 7: Curated resume lanes (+ docs tail) ✅
 
 - [ ] `src/job_hunt/generation.py`:
   - Add `CURATED_RESUME_LANES: Final[tuple[tuple[tuple[str, ...], str], ...]]` at module scope. AI lane first; wildcard default last.

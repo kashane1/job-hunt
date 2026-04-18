@@ -17,7 +17,11 @@
     "output_path": { "type": "string" },
     "pdf_path": { "type": "string" },
     "pdf_generated_at": { "type": "string" },
-    "provenance": { "enum": ["grounded", "synthesized", "weak_inference"] },
+    "provenance": { "enum": ["grounded", "synthesized", "weak_inference", "curated"] },
+    "curated_source": {
+      "type": "string",
+      "description": "Repo-relative path to the curated resume markdown that this variant copied. Present only when provenance='curated'."
+    },
     "ats_check": {
       "type": "object",
       "properties": {

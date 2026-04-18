@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
-from .utils import ensure_dir, now_iso, short_hash, slugify, tokens, write_json
+from .utils import ensure_dir, now_iso, repo_root, short_hash, slugify, tokens, write_json
 
 # --- Resume variant styles ---
 
@@ -30,6 +30,59 @@ VARIANT_BOOST_PHRASES: dict[str, list[str]] = {
         "api integration", "full stack", "cross-functional", "mentoring",
     ],
 }
+
+
+# Curated resume lanes — pre-written, ATS-passing resumes authored in the
+# resume-rehab session. When a lead's title matches a lane, the generator
+# uses the curated markdown verbatim instead of rendering from the thin
+# template, which produces 190-word keyword-stuffed output that fails ATS.
+# Fallback to the template only when no lane matches.
+CURATED_RESUME_LANES: list[tuple[tuple[str, ...], str]] = [
+    # (title_keyword_tuple, curated_resume_relative_path)
+    (
+        ("ai engineer", "ai systems", "applied ai", "machine learning",
+         "ml engineer", "llm", "genai"),
+        "data/generated/resumes/kashane-sakhakorn-ai-engineer-2026-04-17.md",
+    ),
+    # Default lane — picks up everything else (backend, full-stack,
+    # platform, generic SWE). Must be last.
+    (
+        (),  # empty tuple → wildcard
+        "data/generated/resumes/kashane-sakhakorn-mid-senior-software-engineer-2026-04-17.md",
+    ),
+]
+
+
+def _pick_curated_resume(lead: dict) -> tuple[Path | None, str]:
+    """Resolve the curated resume lane for this lead.
+
+    Returns ``(path, warning_code)``:
+    - ``(Path, "")`` — lane matched and the source file exists on disk.
+    - ``(None, "curated_source_missing")`` — a non-wildcard lane matched
+      but its source file is missing. Caller should emit a warning and
+      fall back to the template so the user sees the audit trail.
+    - ``(None, "")`` — wildcard default with no source on disk, or no
+      lane matched at all. Silent fallback to the template.
+
+    Uses `utils.repo_root()` to resolve file paths — same convention as
+    `application.py`, `playbooks.py`, and `confirmation.py`.
+    """
+    title_lc = str(lead.get("title") or "").lower()
+    root = repo_root()
+    for keywords, rel_path in CURATED_RESUME_LANES:
+        is_wildcard = not keywords
+        matched = is_wildcard or any(kw in title_lc for kw in keywords)
+        if not matched:
+            continue
+        candidate = root / rel_path
+        if candidate.exists():
+            return candidate, ""
+        # Non-wildcard lane matched but file missing — audit-worthy.
+        if not is_wildcard:
+            return None, "curated_source_missing"
+        # Wildcard: silent fallback.
+        return None, ""
+    return None, ""
 
 
 def generation_tokens(text: str) -> list[str]:
@@ -212,15 +265,37 @@ def generate_resume_variants(
     ts = now_iso()
     ts_compact = ts.replace(":", "").replace("-", "").replace("+", "").replace("T", "T")[:15] or ts
 
+    curated_path, lane_warning = _pick_curated_resume(lead)
+    root = repo_root()
+
     for style in variant_styles:
         selected_acc = select_accomplishments_for_variant(highlights, lead_keywords, style)
         selected_sk = select_skills_for_variant(skills, lead_keywords, style)
-        md_content = render_resume_markdown(candidate_profile, selected_acc, selected_sk, style, lead)
+        generation_warnings: list[dict] = []
+        if curated_path is not None:
+            # Use the curated, hand-crafted, ATS-passing resume verbatim.
+            md_content = curated_path.read_text(encoding="utf-8")
+            provenance = "curated"
+        else:
+            md_content = render_resume_markdown(candidate_profile, selected_acc, selected_sk, style, lead)
+            provenance = "grounded"
+            if lane_warning == "curated_source_missing":
+                # Audit-visible: a curated lane matched but the source file is
+                # missing on disk. Fall back to the template (already done
+                # above) but surface the miss so the user can reconcile.
+                generation_warnings.append({
+                    "code": "curated_source_missing",
+                    "severity": "warning",
+                    "detail": (
+                        "curated resume lane matched but the source file was "
+                        "missing on disk; fell back to templated resume"
+                    ),
+                })
 
         lead_slug = slugify(f"{lead.get('company', 'unknown')}-{lead.get('title', 'role')}")
         content_id = f"{lead_slug}-{style}-{ts_compact}"
 
-        record = {
+        record: dict = {
             "content_id": content_id,
             "content_type": "resume",
             "variant_style": style,
@@ -231,8 +306,17 @@ def generate_resume_variants(
             "selected_accomplishments": selected_acc,
             "selected_skills": selected_sk,
             "output_path": str(output_dir / f"{content_id}.md"),
-            "provenance": "grounded",
+            "provenance": provenance,
         }
+        if curated_path is not None:
+            # Store the repo-relative path so records remain portable across
+            # machines; absolute paths would pin to this checkout.
+            try:
+                record["curated_source"] = str(curated_path.relative_to(root))
+            except ValueError:
+                record["curated_source"] = str(curated_path)
+        if generation_warnings:
+            record["generation_warnings"] = generation_warnings
         write_json(output_dir / f"{content_id}.json", record)
         (output_dir / f"{content_id}.md").write_text(md_content, encoding="utf-8")
         results.append(record)

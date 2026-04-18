@@ -1,33 +1,33 @@
 # Profile Document Audit
 
-- Generated at: 2026-04-17T18:21:51+00:00
-- Raw documents scanned: 14
-- Supported documents normalized: 14
-- Average quality: 62.1
-- Average quantity: 46.6
-- Average value: 59.1
+- Generated at: 2026-04-18T02:49:38+00:00
+- Raw documents scanned: 16
+- Supported documents normalized: 16
+- Average quality: 61.9
+- Average quantity: 41.5
+- Average value: 57.6
 
 ## Highest-Value Documents
-### question-examples
-- Path: profile/raw/question-examples.txt
-- Type: question_bank (inferred)
-- Scores: quality 75, quantity 93, value 90
-- Skill hits: ai, api, automation, aws, browser, css, data, frontend, html, javascript, kysely, mysql
-- Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
-
-### Kashane Sakhakorn Resume
+### Master Resume
 - Path: profile/raw/Kashane Sakhakorn Resume.txt
-- Type: resume (inferred)
-- Scores: quality 60, quantity 38, value 84
-- Skill hits: api, aws, data, docker, ecs, git, javascript, jest, kafka, mysql, php, postgres
-- Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
+- Type: resume (explicit)
+- Scores: quality 86, quantity 42, value 84
+- Skill hits: ai, api, automation, aws, backend, browser, data, docker, ecs, infrastructure, javascript, jest
+- Suggestions: none
 
 ### Accomplishment and Impact Bank
 - Path: profile/raw/accomplishments.md
 - Type: question_bank (explicit)
-- Scores: quality 81, quantity 50, value 78
-- Skill hits: ai, api, automation, aws, data, javascript, kysely, mysql, php, platform, postgres, react
+- Scores: quality 82, quantity 50, value 80
+- Skill hits: ai, api, automation, aws, browser, data, javascript, kysely, mysql, php, platform, postgres
 - Suggestions: none
+
+### question-examples
+- Path: profile/raw/question-examples.txt
+- Type: question_bank (inferred)
+- Scores: quality 65, quantity 78, value 78
+- Skill hits: ai, api, automation, aws, backend, browser, css, data, frontend, html, javascript, kysely
+- Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
 
 ### Work Notes 2025
 - Path: profile/raw/Work Notes 2025.txt
@@ -45,29 +45,29 @@
 
 ## All Documents
 
-### question-examples
-- Path: profile/raw/question-examples.txt
-- Type: question_bank
-- Metrics: 2992 words, 10 bullets, 4 quantified phrases, 18 Q/A pairs
-- Scores: quality 75 (medium), quantity 93 (high), value 90 (high)
-- Highlights: I’m a tech enthusiast and natural born software engineer. Ready to make the world a better place, one line of code at a time. | I’m a tech enthusiast and a natural born software engineer with a passion for building solutions that matter. I make the world a better place, one line of code at a time. My journey in tech is fueled by my enthusiasm for learning new things, whether it’s mastering a new programming language or tool, diving into complex algorithms, or exploring the latest advancements in artificial intelligence. I’m not just a coder; I’m a builder, a thinker, and a lifelong learner who sees every challenge as an opportunity to grow. | AI Chatbot Project with Amazon Q Business
-- Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
-
-### Kashane Sakhakorn Resume
+### Master Resume
 - Path: profile/raw/Kashane Sakhakorn Resume.txt
 - Type: resume
-- Metrics: 336 words, 9 bullets, 4 quantified phrases, 0 Q/A pairs
-- Scores: quality 60 (medium), quantity 38 (low), value 84 (high)
-- Highlights: Led data synchronization initiative, migrating 10+ years of legacy MySQL data to Postgres, ensuring 100% data integrity and system interoperability | Collaborated on migrating a legacy PHP monolith to a modern TypeScript, Postgres, and AWS stack, accelerating transaction processing and enabling seamless onboarding of new users | Engineered Ticketmaster API integration with internal systems using PHP, JavaScript, and MySQL, boosting annual revenue to over $10M
-- Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
+- Metrics: 520 words, 10 bullets, 4 quantified phrases, 0 Q/A pairs
+- Scores: quality 86 (high), quantity 42 (low), value 84 (high)
+- Highlights: Continue modernization of internal operations and ticketing workflows following the Apogeeze acquisition, working across TypeScript, PostgreSQL, AWS, and legacy systems. | Improved internal user workflows and database query performance, reducing interaction time by up to 50% across key operations surfaces. | Resolved a purchase-attribution data integrity issue by auditing 8,844 purchases, identifying 530 records needing correction, and improving the matching logic behind the fix.
+- Suggestions: none
 
 ### Accomplishment and Impact Bank
 - Path: profile/raw/accomplishments.md
 - Type: question_bank
-- Metrics: 658 words, 3 bullets, 4 quantified phrases, 10 Q/A pairs
-- Scores: quality 81 (high), quantity 50 (low), value 78 (medium)
-- Highlights: [Fill in any additional quantified achievements] | [Fill in any open-source contributions or side projects] | [Fill in any leadership or initiative examples]
+- Metrics: 768 words, 2 bullets, 4 quantified phrases, 13 Q/A pairs
+- Scores: quality 82 (high), quantity 50 (low), value 80 (high)
+- Highlights: [Fill in any additional quantified achievements] | [Fill in any leadership or initiative examples]
 - Suggestions: none
+
+### question-examples
+- Path: profile/raw/question-examples.txt
+- Type: question_bank
+- Metrics: 2696 words, 10 bullets, 1 quantified phrases, 18 Q/A pairs
+- Scores: quality 65 (medium), quantity 78 (medium), value 78 (medium)
+- Highlights: I’m a tech enthusiast and natural born software engineer. Ready to make the world a better place, one line of code at a time. | I’m a tech enthusiast and a natural born software engineer with a passion for building solutions that matter. I make the world a better place, one line of code at a time. My journey in tech is fueled by my enthusiasm for learning new things, whether it’s mastering a new programming language or tool, diving into complex algorithms, or exploring the latest advancements in artificial intelligence. I’m not just a coder; I’m a builder, a thinker, and a lifelong learner who sees every challenge as an opportunity to grow. | AI Chatbot Project with Amazon Q Business
+- Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
 
 ### Work Notes 2025
 - Path: profile/raw/Work Notes 2025.txt
@@ -109,21 +109,29 @@
 - Highlights: Past events only, or can we look at future events / current offers in metrics form? | If available for all events, should we add something to the event details page? Link to Offer Metrics or a small table? | What counts as “offer metrics”? What questions will this project answer?
 - Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
 
-### Candidate Identity Card
-- Path: profile/raw/candidate-identity.md
-- Type: resume
-- Metrics: 127 words, 10 bullets, 0 quantified phrases, 0 Q/A pairs
-- Scores: quality 53 (low), quantity 22 (low), value 50 (low)
-- Highlights: Email: ksakhakorn@gmail.com | Phone: (818) 282-3532 | Location: [current city, state — fill in]
-- Suggestions: Add more quantified outcomes so achievements are easier to ground in applications.; Mention key technologies explicitly to make skill extraction less lossy.
+### ai-company-os Project Note
+- Path: profile/raw/ai-company-os.md
+- Type: project_note
+- Metrics: 147 words, 6 bullets, 0 quantified phrases, 0 Q/A pairs
+- Scores: quality 57 (low), quantity 14 (low), value 54 (low)
+- Highlights: Built a local-first, policy-driven platform for AI-assisted product delivery with persistent workers, typed tasks, explicit approval gates, and dedicated engineering, iOS, and App Store lanes. | Designed the system so orchestration lives in the platform, runtime state lives outside source folders, and repo mutations happen through isolated worktrees instead of hidden prompt logic. | Defined clear ownership boundaries across platform policy, Codex execution, Postgres memory, Redis queueing, GitHub delivery, and optional external interfaces.
+- Suggestions: Add more quantified outcomes so achievements are easier to ground in applications.
 
 ### Candidate Preferences
 - Path: profile/raw/preferences.md
 - Type: preferences
-- Metrics: 154 words, 10 bullets, 2 quantified phrases, 0 Q/A pairs
-- Scores: quality 62 (medium), quantity 30 (low), value 48 (low)
+- Metrics: 146 words, 10 bullets, 1 quantified phrases, 0 Q/A pairs
+- Scores: quality 63 (medium), quantity 26 (low), value 54 (low)
 - Highlights: US Citizen / Authorized to work in the United States: YES | Requires sponsorship: NO | Minimum base salary: $140,000
 - Suggestions: none
+
+### Candidate Identity Card
+- Path: profile/raw/candidate-identity.md
+- Type: resume
+- Metrics: 110 words, 10 bullets, 0 quantified phrases, 0 Q/A pairs
+- Scores: quality 48 (low), quantity 21 (low), value 50 (low)
+- Highlights: Email: ksakhakorn@gmail.com | Phone: (818) 282-3532 | LinkedIn: https://www.linkedin.com/in/kashanesakhakorn/
+- Suggestions: Add more quantified outcomes so achievements are easier to ground in applications.; Mention key technologies explicitly to make skill extraction less lossy.
 
 ### cover-letter2
 - Path: profile/raw/cover-letter2.txt
@@ -132,6 +140,14 @@
 - Scores: quality 39 (low), quantity 11 (low), value 48 (low)
 - Highlights: In 2022, I completed a Full-Stack Software Developer Bootcamp at Georgia Tech, which led to an internal promotion to Junior Software Engineer. As the only engineer with prior experience as a user of our system, I brought a unique perspective to the role. | Over the following years, I honed my engineering skills both on the job and in my free time. I played a pivotal role in helping my company exceed eight figures in annual revenue, earning performance bonuses in addition to my annual bonus. Initially, I enhanced our legacy PHP and JavaScript monolith, which had been evolving since the company’s founding in 2007. Later, I contributed to a critical project migrating our codebase to TypeScript and Postgres, leveraging AWS and modern tools and frameworks. | To stay at the forefront of technology, I actively integrate state-of-the-art AI tools into my development and research workflows, using platforms like Cursor and Claude to streamline coding and problem-solving. I consistently follow AI trends and best practices, keeping up with advancements through daily engagement with tech communities and podcasts. This commitment ensures I apply cutting-edge techniques to deliver efficient, innovative solutions.
 - Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.; Add more quantified outcomes so achievements are easier to ground in applications.
+
+### job-hunt Project Note
+- Path: profile/raw/job-hunt.md
+- Type: project_note
+- Metrics: 146 words, 6 bullets, 0 quantified phrases, 0 Q/A pairs
+- Scores: quality 51 (low), quantity 14 (low), value 44 (low)
+- Highlights: Built an agent-first, file-backed workflow for discovering, scoring, reviewing, and drafting job applications on behalf of one person. | Structured the system around candidate profile normalization, job lead ingestion, resume and cover-letter generation, ATS checks, analytics, and approval-gated application drafting. | Added explicit human approval gates before account creation and final submission, along with browser tab budgets, secret redaction expectations, and durable audit trails.
+- Suggestions: Add more quantified outcomes so achievements are easier to ground in applications.
 
 ### cover-letter
 - Path: profile/raw/cover-letter.txt

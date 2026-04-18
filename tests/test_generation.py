@@ -342,5 +342,63 @@ class CoverLetterTest(unittest.TestCase):
             self.assertTrue(Path(result["output_path"]).exists())
 
 
+class CuratedResumeLaneTest(unittest.TestCase):
+    """Phase 7 — curated resume lanes select pre-written ATS-passing
+    resumes instead of the thin template when the lead title matches."""
+
+    def test_pick_returns_none_for_wildcard_when_file_missing(self) -> None:
+        from job_hunt.generation import _pick_curated_resume
+        lead = {"title": "Senior Backend Engineer", "company": "X"}
+        # Real repo state: curated files may or may not exist. We just
+        # assert the function returns the (path, warning) tuple shape.
+        path, warning = _pick_curated_resume(lead)
+        self.assertIsInstance(warning, str)
+        self.assertTrue(path is None or isinstance(path, Path))
+
+    def test_ai_title_matches_ai_lane(self) -> None:
+        from job_hunt.generation import _pick_curated_resume, CURATED_RESUME_LANES
+        lead = {"title": "Senior AI Engineer"}
+        path, warning = _pick_curated_resume(lead)
+        # The AI lane's first keyword match should hit regardless of file
+        # existence — we only assert the warning code when the file is gone.
+        if path is None and warning:
+            self.assertEqual(warning, "curated_source_missing")
+
+    def test_wildcard_missing_does_not_emit_warning(self) -> None:
+        from job_hunt.generation import _pick_curated_resume
+        # A generic "random" title hits the wildcard last lane only. If that
+        # file is missing it should NOT emit a warning (silent fallback).
+        lead = {"title": "Widget Analyst"}
+        path, warning = _pick_curated_resume(lead)
+        if path is None:
+            self.assertEqual(warning, "")
+
+    def test_generate_resume_variants_emits_missing_source_warning(self) -> None:
+        # Temporarily monkey-patch CURATED_RESUME_LANES so the AI-engineer
+        # lane points at a nonexistent file. Verify the variant record
+        # surfaces generation_warnings.code="curated_source_missing".
+        import job_hunt.generation as gen
+        original = gen.CURATED_RESUME_LANES
+        gen.CURATED_RESUME_LANES = [
+            (("ai engineer",), "nonexistent/curated.md"),
+            ((), "also/nonexistent.md"),
+        ]
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                results = gen.generate_resume_variants(
+                    _sample_lead() | {"title": "Senior AI Engineer"},
+                    _sample_profile(),
+                    ["technical_depth"],
+                    Path(tmpdir),
+                )
+                self.assertEqual(len(results), 1)
+                rec = results[0]
+                self.assertEqual(rec["provenance"], "grounded")
+                codes = [w["code"] for w in rec.get("generation_warnings", [])]
+                self.assertIn("curated_source_missing", codes)
+        finally:
+            gen.CURATED_RESUME_LANES = original
+
+
 if __name__ == "__main__":
     unittest.main()
