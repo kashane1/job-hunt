@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 import time
@@ -29,6 +30,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final
+
+logger = logging.getLogger(__name__)
 
 from .utils import (
     FileLockContentionError,
@@ -658,16 +661,23 @@ def recompute_tiers(applications_dir: Path) -> dict:
 
     Called by `recompute-tiers` CLI subcommand after the Phase 6 policy
     flip so existing status records catch up with the new semantics.
+
+    Skips symlinked status files to avoid writing back through a symlink
+    that points outside applications_dir. Run with no concurrent
+    `prepare_application` / `apply_batch` in flight — the function does not
+    hold a file lock, so a mid-run status mutation could be clobbered.
     """
     scanned = 0
     updated = 0
     skipped = 0
-    updated_paths: list[str] = []
     for status_path in applications_dir.glob("*-status.json"):
         scanned += 1
+        if status_path.is_symlink():
+            skipped += 1
+            continue
         try:
             record = read_json(status_path)
-        except Exception:
+        except (OSError, ValueError):
             skipped += 1
             continue
         tier = record.get("tier")
@@ -680,12 +690,10 @@ def recompute_tiers(applications_dir: Path) -> dict:
         record["tier_recomputed_at"] = now_iso()
         write_json(status_path, record)
         updated += 1
-        updated_paths.append(str(status_path.name))
     return {
         "scanned": scanned,
         "updated": updated,
         "skipped": skipped,
-        "updated_paths": updated_paths,
     }
 
 
@@ -735,8 +743,11 @@ def _run_ats_check(lead: dict, profile: dict, data_root: Path) -> tuple[str, lis
             report = read_json(Path(report_path))
             errors = [str(e) for e in report.get("errors", [])]
             warnings = [str(w) for w in report.get("warnings", [])]
-        except Exception:
-            pass
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            # ATS report unreadable — corrupt or missing. Keep going with
+            # empty lists so the caller sees status from the record itself,
+            # but surface in debug logs so silent corruption isn't invisible.
+            logger.debug("ATS report unreadable at %s: %s", report_path, exc)
     if status == "check_failed" and ats_meta.get("error"):
         errors.append(str(ats_meta["error"]))
     return status, errors, warnings

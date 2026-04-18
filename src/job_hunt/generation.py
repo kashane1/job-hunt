@@ -37,7 +37,7 @@ VARIANT_BOOST_PHRASES: dict[str, list[str]] = {
 # uses the curated markdown verbatim instead of rendering from the thin
 # template, which produces 190-word keyword-stuffed output that fails ATS.
 # Fallback to the template only when no lane matches.
-CURATED_RESUME_LANES: list[tuple[tuple[str, ...], str]] = [
+CURATED_RESUME_LANES: Final[tuple[tuple[tuple[str, ...], str], ...]] = (
     # (title_keyword_tuple, curated_resume_relative_path)
     (
         ("ai engineer", "ai systems", "applied ai", "machine learning",
@@ -50,7 +50,7 @@ CURATED_RESUME_LANES: list[tuple[tuple[str, ...], str]] = [
         (),  # empty tuple → wildcard
         "data/generated/resumes/kashane-sakhakorn-mid-senior-software-engineer-2026-04-17.md",
     ),
-]
+)
 
 
 def _pick_curated_resume(lead: dict) -> tuple[Path | None, str]:

@@ -11,7 +11,7 @@ import subprocess
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Final, Iterable
 
 from .schema_checks import validate
 from .simple_yaml import loads as load_yaml
@@ -22,7 +22,7 @@ from .simple_yaml import loads as load_yaml
 # keyword-density stuffing check in ats_check.check_resume because every
 # normal resume naturally contains these. Skills/tech terms are what we
 # actually want to score fit and ATS alignment against.
-KEYWORD_STOPWORDS: frozenset[str] = frozenset({
+KEYWORD_STOPWORDS: Final[frozenset[str]] = frozenset({
     "and", "the", "with", "for", "you", "our", "your", "are", "will",
     "not", "but", "can", "has", "have", "had", "was", "were", "been",
     "this", "that", "these", "those", "from", "into", "onto", "over",

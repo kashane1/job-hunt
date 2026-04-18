@@ -46,8 +46,12 @@ def parse_retry_after(value: str) -> float | None:
     """Parse an HTTP Retry-After header value per RFC 9110 §10.2.3.
 
     Accepts both delta-seconds (e.g. "120") and HTTP-date (e.g.
-    "Fri, 31 Dec 2026 23:59:59 GMT"). Returns seconds from now, or None
-    on unparseable input. Negative (past) dates are clamped to 0.
+    "Fri, 31 Dec 2026 23:59:59 GMT"). Returns seconds-from-now, or None
+    on unparseable input.
+
+    Clamping applies only to past HTTP-dates (which return 0). Negative
+    delta-seconds are not valid per RFC 9110 and return None — the "-"
+    sign fails `str.isdigit()` and `parsedate_to_datetime` rejects it.
 
     Uses email.utils.parsedate_to_datetime — the canonical stdlib HTTP-date
     parser (urllib3 uses the same approach internally).

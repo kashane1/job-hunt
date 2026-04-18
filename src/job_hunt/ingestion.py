@@ -561,7 +561,7 @@ def fetch(
             raw_retry = ""
             try:
                 raw_retry = exc.headers.get("Retry-After", "") if exc.headers else ""
-            except Exception:
+            except AttributeError:
                 raw_retry = ""
             retry_seconds = parse_retry_after(raw_retry) if raw_retry else None
             parts: list[str] = [f"HTTP {exc.code} from {url}"]
@@ -686,14 +686,12 @@ _INDEED_VIEWJOB_URL_RE = re.compile(r"https?://(?:www\.)?indeed\.com/viewjob")
 # Canonical JSON-LD block extractor — tolerates attribute reordering,
 # single/double quotes, and trailing attributes. Lazy quantifier against a
 # literal closing tag: no ReDoS hazard.
+# Total payload size is already bounded by fetch()'s MAX_FETCH_BYTES, so we
+# don't need a per-block size gate on top of that.
 _LD_JSON_RE = re.compile(
     r'<script\b[^>]*?\btype\s*=\s*["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.DOTALL | re.IGNORECASE,
 )
-# Hard cap per block before json.loads. Hostile pages can embed huge JSON
-# payloads to DoS the parser; anything over 512KB is almost certainly
-# malicious or broken. Real JobPosting LD+JSON is ~5-30KB.
-_MAX_LD_BLOCK_BYTES: Final = 512_000
 
 
 def _walk_ld_nodes(obj):
@@ -744,15 +742,19 @@ def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
         if found:
             break
         raw = match.group(1).strip()
-        if len(raw) > _MAX_LD_BLOCK_BYTES:
-            continue
         # Some sites HTML-escape </script> as <\/script>; restore it.
         raw = raw.replace(r"<\/", "</")
         try:
             data = json.loads(raw)
         except (json.JSONDecodeError, ValueError, RecursionError):
             continue
-        for node in _walk_ld_nodes(data):
+        # Wrap the walker too — deeply nested JSON-LD can crash the recursive
+        # tree walk even after json.loads succeeds.
+        try:
+            ld_nodes = list(_walk_ld_nodes(data))
+        except RecursionError:
+            continue
+        for node in ld_nodes:
             if not isinstance(node, dict) or not _is_jobposting(node):
                 continue
             title = str(node.get("title") or "").strip()

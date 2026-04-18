@@ -621,6 +621,33 @@ class RecomputeTiersBackfillTest(unittest.TestCase):
             self.assertEqual(first["updated"], 1)
             self.assertEqual(second["updated"], 0)
 
+    def test_skips_symlinked_status_files(self) -> None:
+        # Symlinks pointing outside applications_dir must not be written
+        # back through — would enable targeted overwrite.
+        from job_hunt.application import recompute_tiers
+        from job_hunt.utils import read_json
+        with tempfile.TemporaryDirectory() as tmpdir_a, \
+             tempfile.TemporaryDirectory() as tmpdir_b:
+            apps = Path(tmpdir_a)
+            outside = Path(tmpdir_b) / "outside-status.json"
+            outside_record = {
+                "draft_id": "victim",
+                "tier": "tier_2",
+                "tier_rationale": "ats_status:warnings",
+            }
+            from job_hunt.utils import write_json
+            write_json(outside, outside_record)
+            # Create a symlink inside apps/ pointing at the outside file.
+            link = apps / "malicious-status.json"
+            link.symlink_to(outside)
+            result = recompute_tiers(apps)
+            self.assertEqual(result["updated"], 0)
+            self.assertEqual(result["skipped"], 1)
+            # Outside file must be untouched (same tier, no tier_recomputed_at).
+            survivor = read_json(outside)
+            self.assertEqual(survivor["tier"], "tier_2")
+            self.assertNotIn("tier_recomputed_at", survivor)
+
 
 if __name__ == "__main__":
     unittest.main()

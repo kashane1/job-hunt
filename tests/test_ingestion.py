@@ -460,18 +460,21 @@ class IndeedViewjobJsonLdTest(unittest.TestCase):
                                        html_text=html_text)
         self.assertIn("Plain text description", result["raw_description_html"])
 
-    def test_rejects_oversized_ld_block(self) -> None:
+    def test_handles_deeply_nested_ld_without_crash(self) -> None:
+        # RecursionError guard: a valid-but-pathologically-nested payload
+        # falls through to the #jobDescriptionText fallback instead of
+        # crashing the whole viewjob fetch.
         from job_hunt.ingestion import _fetch_indeed_viewjob
-        # 600KB JSON-LD block — skipped before json.loads.
-        huge = '"padding":"' + ("x" * 600_000) + '"'
+        nested = "{" + '"a":{' * 2000 + '"@type":"JobPosting","title":"Nested"' + "}" * 2001
         html_text = self._wrap(
-            '<script type="application/ld+json">'
-            '{"@type":"JobPosting","title":"Huge",' + huge + "}"
-            "</script>"
+            f'<script type="application/ld+json">{nested}</script>'
+            '<div id="jobDescriptionText">Fallback text</div></div></div></div>'
         )
-        result = _fetch_indeed_viewjob("https://indeed.com/viewjob?jk=h",
+        result = _fetch_indeed_viewjob("https://indeed.com/viewjob?jk=n",
                                        html_text=html_text)
-        self.assertEqual(result["title"], "")  # oversized block was skipped
+        # Either the block was invalid JSON (json.loads error) or the walk
+        # hit recursion depth; both must fall through to the fallback.
+        self.assertIn("Fallback text", result["raw_description_html"])
 
 
 class RetryAfterParsingTest(unittest.TestCase):
@@ -498,6 +501,11 @@ class RetryAfterParsingTest(unittest.TestCase):
         self.assertIsNone(parse_retry_after("not a date"))
         self.assertIsNone(parse_retry_after(""))
         self.assertIsNone(parse_retry_after("   "))
+
+    def test_negative_delta_seconds_returns_none(self) -> None:
+        from job_hunt.net_policy import parse_retry_after
+        # RFC 9110 forbids negative deltas; contract matches the docstring.
+        self.assertIsNone(parse_retry_after("-5"))
 
 
 class FetchChromeUserAgentTest(unittest.TestCase):
