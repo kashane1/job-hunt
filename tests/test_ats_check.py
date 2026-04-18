@@ -179,6 +179,76 @@ class CheckCoverLetterTest(unittest.TestCase):
         self.assertIn("cover_letter_too_long", codes)
 
 
+LEAD_WITH_COMPANY = dict(LEAD_TEMPLATE)
+LEAD_WITH_COMPANY["company"] = "ExampleCorp"
+
+
+class CheckCoverLetterHardErrorsTest(unittest.TestCase):
+    """Phase 3: deterministic hard-error backstops when generation skipped them."""
+
+    def test_unresolved_placeholder_is_hard_error(self) -> None:
+        letter = (
+            "Dear Hiring Manager,\n\nI'd love to work at [Company] as a [Role]. "
+            "\n\nSincerely,\nJane"
+        )
+        result = check_cover_letter(letter, LEAD_WITH_COMPANY)
+        codes = [e["code"] for e in result["errors"]]
+        self.assertIn("unresolved_placeholder", codes)
+
+    def test_wrong_company_name_is_hard_error(self) -> None:
+        letter = (
+            "Dear Hiring Manager,\n\nI bring launch experience from SpaceX and "
+            "would love to join ExampleCorp.\n\nSincerely,\nJane"
+        )
+        result = check_cover_letter(letter, LEAD_WITH_COMPANY)
+        codes = [e["code"] for e in result["errors"]]
+        self.assertIn("wrong_company_name", codes)
+
+    def test_wrong_company_escape_hatch_when_target_is_denylisted(self) -> None:
+        lead = dict(LEAD_WITH_COMPANY)
+        lead["company"] = "SpaceX"
+        letter = (
+            "Dear Hiring Manager,\n\nI'm excited to apply at SpaceX for this role. "
+            "\n\nSincerely,\nJane"
+        )
+        result = check_cover_letter(letter, lead)
+        codes = [e["code"] for e in result["errors"]]
+        self.assertNotIn("wrong_company_name", codes)
+
+    def test_unsupported_company_language_warning(self) -> None:
+        # Letter makes an unsupported claim about ExampleCorp's mission; no
+        # company_research backs "mission" → warning fires.
+        letter = (
+            "Dear Hiring Manager,\n\nI deeply believe in ExampleCorp's mission "
+            "and want to contribute.\n\nSincerely,\nJane"
+        )
+        result = check_cover_letter(letter, LEAD_WITH_COMPANY, company_research=None)
+        codes = [w["code"] for w in result["warnings"]]
+        self.assertIn("unsupported_company_language", codes)
+
+    def test_unsupported_company_language_silenced_when_grounded(self) -> None:
+        letter = (
+            "Dear Hiring Manager,\n\nExampleCorp's product in the data-engineering "
+            "space is exactly the kind of work I want to be part of.\n\nSincerely,\nJane"
+        )
+        research = {
+            "company_name": "ExampleCorp",
+            "product": "Postgres-backed analytics product",
+            "industry": "data engineering",
+        }
+        result = check_cover_letter(letter, LEAD_WITH_COMPANY, company_research=research)
+        codes = [w["code"] for w in result["warnings"]]
+        self.assertNotIn("unsupported_company_language", codes)
+
+    def test_weak_evidence_density_warning(self) -> None:
+        letter = "Dear Hiring Manager,\n\n" + (
+            "I am writing to apply. I enjoy software. I hope to hear back. " * 20
+        ) + "\n\nSincerely,\nJane"
+        result = check_cover_letter(letter, LEAD_WITH_COMPANY)
+        codes = [w["code"] for w in result["warnings"]]
+        self.assertIn("weak_evidence_density", codes)
+
+
 class RunAtsCheckTest(unittest.TestCase):
     def test_writes_report_file_and_returns_dict(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -379,13 +449,16 @@ class RunAtsCheckWithRecoveryTest(unittest.TestCase):
 
             observed: dict = {}
 
-            def peek_and_delegate(record, lead, output_dir, max_pages=1):
+            def peek_and_delegate(record, lead, output_dir, max_pages=1, company_research=None):
                 # Mid-flight read — the record file should currently show "pending"
                 mid = read_json(record_path)
                 observed["mid_status"] = mid["ats_check"]["status"]
                 # Delegate to real run_ats_check
                 from job_hunt.ats_check import run_ats_check as real_run
-                return real_run(record, lead, output_dir, max_pages=max_pages)
+                return real_run(
+                    record, lead, output_dir, max_pages=max_pages,
+                    company_research=company_research,
+                )
 
             with patch("job_hunt.ats_check.run_ats_check", side_effect=peek_and_delegate):
                 run_ats_check_with_recovery(record_path, LEAD_TEMPLATE, root, max_pages=2)

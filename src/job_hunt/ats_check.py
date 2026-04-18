@@ -24,7 +24,12 @@ import re
 from pathlib import Path
 from typing import Final
 
-from .generation import generation_tokens
+from .generation import (
+    UNSUPPORTED_COMPANY_NOUNS,
+    find_stale_company_mentions,
+    find_unresolved_placeholders,
+    generation_tokens,
+)
 from .utils import now_iso, read_json, write_json
 
 # Resume structure — derived from render_resume_markdown output
@@ -153,8 +158,26 @@ def check_resume(
     return {"errors": errors, "warnings": warnings, "metrics": metrics}
 
 
-def check_cover_letter(md_text: str, lead: dict | None) -> dict:
-    """Validate a cover letter markdown."""
+def check_cover_letter(
+    md_text: str,
+    lead: dict | None,
+    company_research: dict | None = None,
+) -> dict:
+    """Validate a cover letter markdown.
+
+    Hard errors (as of Phase 3):
+    - `unresolved_placeholder`: [Company]/[Role] style leakage
+    - `wrong_company_name`: denylisted non-target company appears in output
+
+    Warnings (Phase 3 additions):
+    - `unsupported_company_language`: deterministic matcher for "<company> ...
+      mission|vision|culture|customers|product|values" sentences where the
+      noun is not grounded by company_research
+    - `weak_evidence_density`: too few matched keywords for the letter length
+
+    These are deterministic backstops for what generation-time should already
+    enforce; ATS is the last line of defense when the producer skips it.
+    """
     errors: list[dict] = []
     warnings: list[dict] = []
     metrics: dict = {}
@@ -176,7 +199,27 @@ def check_cover_letter(md_text: str, lead: dict | None) -> dict:
             ),
         })
 
+    # --- Hard trust-boundary errors (Phase 3) ---
+    placeholders = find_unresolved_placeholders(md_text)
+    if placeholders:
+        errors.append({
+            "code": "unresolved_placeholder",
+            "message": f"Unresolved template placeholders present: {placeholders}",
+        })
+
     if lead is not None:
+        target_company = (lead.get("company") or "").strip()
+        if target_company:
+            stale_hits = find_stale_company_mentions(md_text, target_company)
+            if stale_hits:
+                errors.append({
+                    "code": "wrong_company_name",
+                    "message": (
+                        f"Non-target company name(s) {stale_hits} present in letter "
+                        f"for target {target_company!r}."
+                    ),
+                })
+
         lead_keywords = set(
             lead.get("normalized_requirements", {}).get("keywords", [])
         )
@@ -188,7 +231,70 @@ def check_cover_letter(md_text: str, lead: dict | None) -> dict:
         )
         metrics["matched_keywords"] = matched
 
+        # Weak-evidence-density heuristic: if the letter has more than a minimum
+        # length but very few matched keywords, the alignment paragraph is
+        # likely too generic. Deliberately soft — warning only.
+        if metrics["word_count"] >= 150 and lead_keywords and len(matched) <= 1:
+            warnings.append({
+                "code": "weak_evidence_density",
+                "message": (
+                    f"Only {len(matched)} lead keyword(s) present in a "
+                    f"{metrics['word_count']}-word letter; alignment reads generic."
+                ),
+            })
+
+        # Unsupported-company-language deterministic matcher.
+        unsupported = _find_unsupported_company_language(
+            md_text, target_company, company_research,
+        )
+        for snippet in unsupported:
+            warnings.append({
+                "code": "unsupported_company_language",
+                "message": snippet,
+            })
+
     return {"errors": errors, "warnings": warnings, "metrics": metrics}
+
+
+def _find_unsupported_company_language(
+    md_text: str,
+    target_company: str,
+    company_research: dict | None,
+) -> list[str]:
+    """Flag sentences that mention the target company with unsupported nouns.
+
+    Per plan §6: a sentence that pairs `target_company` with one of
+    {mission, vision, culture, customers, product, values} where that noun
+    text does NOT appear in any company_research field is likely unsupported
+    praise. Returns short flagged-sentence snippets.
+    """
+    if not target_company:
+        return []
+    research_text = ""
+    if company_research:
+        parts: list[str] = []
+        for value in company_research.values():
+            if isinstance(value, str):
+                parts.append(value)
+            elif isinstance(value, list):
+                parts.extend(str(v) for v in value)
+        research_text = " ".join(parts).lower()
+
+    flagged: list[str] = []
+    # Split on sentence terminators; cheap, no third-party NLP dep.
+    for sentence in re.split(r"(?<=[.!?])\s+", md_text):
+        sentence_lower = sentence.lower()
+        if target_company.lower() not in sentence_lower:
+            continue
+        for noun in UNSUPPORTED_COMPANY_NOUNS:
+            if noun in sentence_lower and noun not in research_text:
+                # Short snippet for the warning message.
+                snippet = sentence.strip()
+                if len(snippet) > 160:
+                    snippet = snippet[:157] + "..."
+                flagged.append(f"{noun!r} claim for {target_company!r} not grounded: {snippet}")
+                break  # one finding per sentence is enough
+    return flagged
 
 
 def run_ats_check(
@@ -196,9 +302,13 @@ def run_ats_check(
     lead: dict | None,
     output_dir: Path,
     max_pages: int = RESUME_MAX_PAGES_DEFAULT,
+    company_research: dict | None = None,
 ) -> dict:
     """Run the appropriate check for content_type, write report to output_dir,
-    return the full report dict (matching ats-check-report.schema.json)."""
+    return the full report dict (matching ats-check-report.schema.json).
+
+    company_research is used for the deterministic unsupported-company-language
+    check in cover letters; pass None when not available."""
     content_type = content_record.get("content_type")
     output_path_str = content_record.get("output_path", "")
     if not output_path_str:
@@ -211,7 +321,7 @@ def run_ats_check(
     if content_type == "resume":
         result = check_resume(md_text, lead, max_pages=max_pages)
     elif content_type == "cover_letter":
-        result = check_cover_letter(md_text, lead)
+        result = check_cover_letter(md_text, lead, company_research=company_research)
     else:
         # Answer sets etc. have no per-document checks today — report passed.
         result = {"errors": [], "warnings": [], "metrics": {"word_count": len(md_text.split())}}
@@ -257,6 +367,7 @@ def run_ats_check_with_recovery(
     lead: dict | None,
     ats_check_dir: Path,
     max_pages: int = RESUME_MAX_PAGES_DEFAULT,
+    company_research: dict | None = None,
 ) -> dict:
     """Crash-safe two-phase update of the content record's ats_check field.
 
@@ -272,7 +383,10 @@ def run_ats_check_with_recovery(
     write_json(record_path, record)  # atomic per-call via utils.write_json
 
     try:
-        report = run_ats_check(record, lead, ats_check_dir, max_pages=max_pages)
+        report = run_ats_check(
+            record, lead, ats_check_dir, max_pages=max_pages,
+            company_research=company_research,
+        )
         record["ats_check"] = {
             "status": report["status"],
             "report_path": str(ats_check_dir / f"{report['report_id']}.json"),

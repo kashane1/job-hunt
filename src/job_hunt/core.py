@@ -2176,7 +2176,9 @@ def main(argv: list[str] | None = None) -> int:
             from .ats_check import run_ats_check_with_recovery
             ats_check_dir = Path(args.output_dir).parent / "ats-checks"
             record_path = Path(args.output_dir) / f"{result['content_id']}.json"
-            run_ats_check_with_recovery(record_path, lead, ats_check_dir)
+            run_ats_check_with_recovery(
+                record_path, lead, ats_check_dir, company_research=company,
+            )
 
         print(result["content_id"])
         return 0

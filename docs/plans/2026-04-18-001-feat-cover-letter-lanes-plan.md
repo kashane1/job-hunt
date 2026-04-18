@@ -837,19 +837,19 @@ Per `docs/solutions/workflow-issues/ship-tolerant-consumers-before-strict-produc
 - [x] record what was actually used from company research in `company_facts_used`; its presence/absence implicitly encodes whether research was provided and usable.
 - [x] continue writing `variant_style` as the resolved lane id.
 
-### Phase 3: ATS and Safety Checks
+### Phase 3: ATS and Safety Checks ✅
 
-- expand `check_cover_letter(...)` in `src/job_hunt/ats_check.py`
-- **import the Phase 1 detection helpers from `generation.py`** rather than re-implementing regex logic — single source of truth (see "Detection Helper Ownership").
-- add ATS hard errors (backstop for anything that escapes generation-time gates):
-  - placeholder leakage (`find_unresolved_placeholders` returns non-empty)
-  - wrong-company-name leakage (`find_stale_company_mentions` returns non-empty)
-- add ATS warnings:
-  - weak evidence density (heuristic on letter length vs matched-keyword count)
-  - unsupported company-specific language (the deterministic matcher from §6)
-  - forced role-specific fallback when company facts were unavailable (reads `company_facts_used` being null/empty while `--company` was provided)
-- ATS warning codes align with `generation_warnings` codes where they overlap; the ATS layer emits additional codes for heuristic suspicion that generation-time cannot determine.
-- no new consumer behavior on the new optional fields is required beyond reading them — Phase 0 already wired tolerant reads.
+- [x] expand `check_cover_letter(...)` in `src/job_hunt/ats_check.py`
+- [x] **import the Phase 1 detection helpers from `generation.py`** rather than re-implementing regex logic — single source of truth (see "Detection Helper Ownership").
+- [x] add ATS hard errors (backstop for anything that escapes generation-time gates):
+  - [x] placeholder leakage (`find_unresolved_placeholders` returns non-empty)
+  - [x] wrong-company-name leakage (`find_stale_company_mentions` returns non-empty)
+- [x] add ATS warnings:
+  - [x] weak evidence density (heuristic on letter length vs matched-keyword count)
+  - [x] unsupported company-specific language (the deterministic matcher from §6)
+  - [ ] forced role-specific fallback when company facts were unavailable — deferred: derivable from `company_facts_used` + `lane_source`, but would be noisy as an ATS warning. Revisit if production use shows signal.
+- [x] ATS warning codes align with `generation_warnings` codes where they overlap; the ATS layer emits additional codes for heuristic suspicion that generation-time cannot determine.
+- [x] no new consumer behavior on the new optional fields is required beyond reading them — Phase 0 already wired tolerant reads.
 
 ### Phase 3a: Stricter Expectations (deferred)
 
