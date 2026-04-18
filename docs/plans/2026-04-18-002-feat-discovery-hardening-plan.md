@@ -192,7 +192,7 @@ Merged from a prior 2-phase split — the primitive is useless without callers, 
   - `test_ingest_url_merges_override_hints` — pass hints; assert the written lead reflects them without requiring a second write
 - [ ] Commit: `feat(discovery-hardening): Phase 3 — Indeed 2026 card shape + override-hints lead plumbing`
 
-### Phase 4: Indeed viewjob ingestion
+### Phase 4: Indeed viewjob ingestion ✅
 
 - [ ] Add `_fetch_indeed_viewjob(url, html_text=None)` in `src/job_hunt/ingestion.py`. Uses a canonical stdlib-only JSON-LD extractor:
 

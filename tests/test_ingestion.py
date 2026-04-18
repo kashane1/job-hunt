@@ -396,6 +396,84 @@ class FrontmatterSynthesisTest(unittest.TestCase):
         self.assertIn("# Senior Engineer", md)
 
 
+class IndeedViewjobJsonLdTest(unittest.TestCase):
+    """Phase 4 — Indeed viewjob pages parse via JobPosting JSON-LD with
+    hostile-input safety (size cap, malformed blocks, @graph, @type list)."""
+
+    def _wrap(self, body: str) -> str:
+        return f"<html><body>{body}</body></html>"
+
+    def test_parses_jobposting_json_ld(self) -> None:
+        from job_hunt.ingestion import _fetch_indeed_viewjob
+        html_text = self._wrap(
+            '<script type="application/ld+json">'
+            '{"@type":"JobPosting","title":"Staff Engineer",'
+            '"hiringOrganization":{"@type":"Organization","name":"Acme"},'
+            '"jobLocation":{"@type":"Place","address":{"addressLocality":"Remote"}},'
+            '"description":"&lt;p&gt;Build systems&lt;/p&gt;"}'
+            "</script>"
+        )
+        result = _fetch_indeed_viewjob("https://www.indeed.com/viewjob?jk=x",
+                                       html_text=html_text)
+        self.assertEqual(result["title"], "Staff Engineer")
+        self.assertEqual(result["company"], "Acme")
+        self.assertEqual(result["location"], "Remote")
+        self.assertEqual(result["ingestion_method"], "url_fetch_jsonld")
+        # html.unescape must run on the description
+        self.assertIn("<p>Build systems</p>", result["raw_description_html"])
+
+    def test_walks_graph_wrapper(self) -> None:
+        from job_hunt.ingestion import _fetch_indeed_viewjob
+        html_text = self._wrap(
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@graph":['
+            '{"@type":"WebSite","name":"ignored"},'
+            '{"@type":"JobPosting","title":"Graph Lane",'
+            ' "hiringOrganization":{"name":"GraphCo"}}]}'
+            "</script>"
+        )
+        result = _fetch_indeed_viewjob("https://indeed.com/viewjob?jk=y",
+                                       html_text=html_text)
+        self.assertEqual(result["title"], "Graph Lane")
+        self.assertEqual(result["company"], "GraphCo")
+
+    def test_handles_type_as_list(self) -> None:
+        from job_hunt.ingestion import _fetch_indeed_viewjob
+        html_text = self._wrap(
+            '<script type="application/ld+json">'
+            '{"@type":["Thing","JobPosting"],"title":"Listed Type",'
+            ' "hiringOrganization":{"name":"TypeCo"}}'
+            "</script>"
+        )
+        result = _fetch_indeed_viewjob("https://indeed.com/viewjob?jk=z",
+                                       html_text=html_text)
+        self.assertEqual(result["title"], "Listed Type")
+
+    def test_falls_back_to_jobdescription_on_malformed_json(self) -> None:
+        from job_hunt.ingestion import _fetch_indeed_viewjob
+        html_text = self._wrap(
+            '<script type="application/ld+json">{broken json</script>'
+            '<div id="jobDescriptionText">Plain text description</div>'
+            '</div></div></div>'
+        )
+        result = _fetch_indeed_viewjob("https://indeed.com/viewjob?jk=m",
+                                       html_text=html_text)
+        self.assertIn("Plain text description", result["raw_description_html"])
+
+    def test_rejects_oversized_ld_block(self) -> None:
+        from job_hunt.ingestion import _fetch_indeed_viewjob
+        # 600KB JSON-LD block — skipped before json.loads.
+        huge = '"padding":"' + ("x" * 600_000) + '"'
+        html_text = self._wrap(
+            '<script type="application/ld+json">'
+            '{"@type":"JobPosting","title":"Huge",' + huge + "}"
+            "</script>"
+        )
+        result = _fetch_indeed_viewjob("https://indeed.com/viewjob?jk=h",
+                                       html_text=html_text)
+        self.assertEqual(result["title"], "")  # oversized block was skipped
+
+
 class RetryAfterParsingTest(unittest.TestCase):
     """Phase 2 — RFC 9110 §10.2.3 Retry-After parsing (delta-seconds or HTTP-date)."""
 

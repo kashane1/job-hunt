@@ -683,6 +683,38 @@ def _fetch_lever(company: str, job_id: str) -> dict:
 
 _INDEED_VIEWJOB_URL_RE = re.compile(r"https?://(?:www\.)?indeed\.com/viewjob")
 
+# Canonical JSON-LD block extractor — tolerates attribute reordering,
+# single/double quotes, and trailing attributes. Lazy quantifier against a
+# literal closing tag: no ReDoS hazard.
+_LD_JSON_RE = re.compile(
+    r'<script\b[^>]*?\btype\s*=\s*["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+    re.DOTALL | re.IGNORECASE,
+)
+# Hard cap per block before json.loads. Hostile pages can embed huge JSON
+# payloads to DoS the parser; anything over 512KB is almost certainly
+# malicious or broken. Real JobPosting LD+JSON is ~5-30KB.
+_MAX_LD_BLOCK_BYTES: Final = 512_000
+
+
+def _walk_ld_nodes(obj):
+    """Yield every dict node in an LD+JSON blob, flattening @graph wrappers."""
+    if isinstance(obj, dict):
+        if "@graph" in obj and isinstance(obj["@graph"], list):
+            for x in obj["@graph"]:
+                yield from _walk_ld_nodes(x)
+        else:
+            yield obj
+            for v in obj.values():
+                yield from _walk_ld_nodes(v)
+    elif isinstance(obj, list):
+        for x in obj:
+            yield from _walk_ld_nodes(x)
+
+
+def _is_jobposting(node: dict) -> bool:
+    t = node.get("@type")
+    return t == "JobPosting" or (isinstance(t, list) and "JobPosting" in t)
+
 
 def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
     """Indeed viewjob pages — extract from the embedded JobPosting JSON-LD.
@@ -691,7 +723,14 @@ def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
     the entire app, so ``_fetch_generic_html`` pulls the whole page as the
     description and poisons skills/keyword extraction. JSON-LD is stable
     across Indeed's DOM reshuffles and carries the full posting schema.
+
+    Hostile-input safety: each LD+JSON block is size-capped, escaped
+    </script> sequences are tolerated, @graph wrappers are flattened,
+    @type may be a string OR a list, and broad parse errors fall through
+    to the #jobDescriptionText fallback.
     """
+    import html as _html_mod
+
     if html_text is None:
         html_text = fetch(url).body
     title = ""
@@ -700,49 +739,59 @@ def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
     description_html = ""
     compensation = ""
     employment_type = ""
-    for match in re.finditer(
-        r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
-        html_text,
-        re.I | re.S,
-    ):
+    found = False
+    for match in _LD_JSON_RE.finditer(html_text):
+        if found:
+            break
+        raw = match.group(1).strip()
+        if len(raw) > _MAX_LD_BLOCK_BYTES:
+            continue
+        # Some sites HTML-escape </script> as <\/script>; restore it.
+        raw = raw.replace(r"<\/", "</")
         try:
-            node = json.loads(match.group(1).strip())
-        except ValueError:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError, RecursionError):
             continue
-        if not isinstance(node, dict) or node.get("@type") != "JobPosting":
-            continue
-        title = str(node.get("title") or "").strip()
-        org = node.get("hiringOrganization")
-        if isinstance(org, dict):
-            company = str(org.get("name") or "").strip()
-        loc_node = node.get("jobLocation")
-        if isinstance(loc_node, list):
-            loc_node = loc_node[0] if loc_node else None
-        if isinstance(loc_node, dict):
-            addr = loc_node.get("address")
-            if isinstance(addr, dict):
-                parts = [
-                    str(addr.get(k) or "").strip()
-                    for k in ("addressLocality", "addressRegion", "addressCountry")
-                ]
-                location = ", ".join(p for p in parts if p)
-        if not location and node.get("jobLocationType") == "TELECOMMUTE":
-            location = "Remote"
-        description_html = str(node.get("description") or "")
-        base_salary = node.get("baseSalary")
-        if isinstance(base_salary, dict):
-            value = base_salary.get("value") or {}
-            if isinstance(value, dict):
-                lo = value.get("minValue")
-                hi = value.get("maxValue")
-                unit = value.get("unitText") or ""
-                currency = base_salary.get("currency") or ""
-                if lo and hi:
-                    compensation = f"{currency} {lo}–{hi} {unit}".strip()
-                elif lo:
-                    compensation = f"{currency} {lo} {unit}".strip()
-        employment_type = str(node.get("employmentType") or "")
-        break
+        for node in _walk_ld_nodes(data):
+            if not isinstance(node, dict) or not _is_jobposting(node):
+                continue
+            title = str(node.get("title") or "").strip()
+            org = node.get("hiringOrganization")
+            if isinstance(org, dict):
+                company = str(org.get("name") or "").strip()
+            loc_node = node.get("jobLocation")
+            if isinstance(loc_node, list):
+                loc_node = loc_node[0] if loc_node else None
+            if isinstance(loc_node, dict):
+                addr = loc_node.get("address")
+                if isinstance(addr, dict):
+                    parts = [
+                        str(addr.get(k) or "").strip()
+                        for k in ("addressLocality", "addressRegion", "addressCountry")
+                    ]
+                    location = ", ".join(p for p in parts if p)
+            if not location and node.get("jobLocationType") == "TELECOMMUTE":
+                location = "Remote"
+            description_html = str(node.get("description") or "")
+            if description_html:
+                # schema.org JobPosting.description is typically HTML-escaped.
+                # Unescape now so downstream raw_description renders cleanly.
+                description_html = _html_mod.unescape(description_html)
+            base_salary = node.get("baseSalary")
+            if isinstance(base_salary, dict):
+                value = base_salary.get("value") or {}
+                if isinstance(value, dict):
+                    lo = value.get("minValue")
+                    hi = value.get("maxValue")
+                    unit = value.get("unitText") or ""
+                    currency = base_salary.get("currency") or ""
+                    if lo and hi:
+                        compensation = f"{currency} {lo}–{hi} {unit}".strip()
+                    elif lo:
+                        compensation = f"{currency} {lo} {unit}".strip()
+            employment_type = str(node.get("employmentType") or "")
+            found = True
+            break
     if not description_html:
         # JSON-LD missing: prefer the #jobDescriptionText container over the
         # full page. This keeps the page chrome out of raw_description.
