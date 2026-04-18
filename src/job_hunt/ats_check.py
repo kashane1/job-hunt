@@ -216,9 +216,19 @@ def run_ats_check(
         # Answer sets etc. have no per-document checks today — report passed.
         result = {"errors": [], "warnings": [], "metrics": {"word_count": len(md_text.split())}}
 
+    # Tolerantly surface generator-side warnings from the content record.
+    # Pre-lane artifacts omit this field; treat absence as an empty list.
+    # Map {code, severity, detail} → {code, message} to match ats-check-report schema.
+    raw_generation_warnings = content_record.get("generation_warnings", []) or []
+    generation_warnings = [
+        {"code": w.get("code", ""), "message": w.get("detail", w.get("code", ""))}
+        for w in raw_generation_warnings
+    ]
+    combined_warnings = list(result["warnings"]) + generation_warnings
+
     status = (
         "errors" if result["errors"]
-        else ("warnings" if result["warnings"] else "passed")
+        else ("warnings" if combined_warnings else "passed")
     )
     content_id = content_record.get("content_id", "unknown")
     report = {
@@ -228,9 +238,15 @@ def run_ats_check(
         "checked_at": now_iso(),
         "status": status,
         "errors": result["errors"],
-        "warnings": result["warnings"],
+        "warnings": combined_warnings,
         "metrics": result["metrics"],
     }
+    # Pass through lane metadata when present so consumers of the ATS report
+    # can correlate status with lane choice without re-reading the content record.
+    for field in ("lane_id", "lane_source", "lane_rationale"):
+        value = content_record.get(field)
+        if value is not None:
+            report[field] = value
     output_dir.mkdir(parents=True, exist_ok=True)
     write_json(output_dir / f"{report['report_id']}.json", report)
     return report

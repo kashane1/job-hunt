@@ -231,6 +231,94 @@ class RunAtsCheckTest(unittest.TestCase):
             self.assertEqual(report["status"], "passed")
 
 
+class TolerantReaderTest(unittest.TestCase):
+    """Phase 0: ATS must read new optional lane/warning fields without breaking
+    when they are absent (pre-lane artifacts) and surface them when present."""
+
+    def _write_letter(self, root: Path, name: str = "cl1.md") -> Path:
+        md_path = root / name
+        md_path.write_text(
+            "Dear Hiring Manager,\n\nA short but valid letter.\n\nSincerely,\nJane",
+            encoding="utf-8",
+        )
+        return md_path
+
+    def test_pre_lane_record_still_passes(self) -> None:
+        """Records written before lane fields existed must still validate and pass."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            md_path = self._write_letter(root)
+            record = {
+                "content_id": "cl1",
+                "content_type": "cover_letter",
+                "output_path": str(md_path),
+            }
+            report = run_ats_check(record, None, root)
+            self.assertEqual(report["status"], "passed")
+            # No lane fields should appear on the report when the record lacks them.
+            self.assertNotIn("lane_id", report)
+            self.assertNotIn("lane_source", report)
+            schema = json.loads(
+                (ROOT / "schemas" / "ats-check-report.schema.json").read_text()
+            )
+            validate(report, schema)
+
+    def test_generation_warnings_surface_into_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            md_path = self._write_letter(root)
+            record = {
+                "content_id": "cl1",
+                "content_type": "cover_letter",
+                "output_path": str(md_path),
+                "generation_warnings": [
+                    {"code": "lane_low_confidence", "severity": "warning",
+                     "detail": "top-2 margin 0.02 below 0.05 threshold"},
+                ],
+            }
+            report = run_ats_check(record, None, root)
+            self.assertEqual(report["status"], "warnings")
+            codes = [w["code"] for w in report["warnings"]]
+            self.assertIn("lane_low_confidence", codes)
+            # Schema requires {code, message}; detail maps to message.
+            relayed = next(w for w in report["warnings"] if w["code"] == "lane_low_confidence")
+            self.assertIn("margin", relayed["message"])
+            schema = json.loads(
+                (ROOT / "schemas" / "ats-check-report.schema.json").read_text()
+            )
+            validate(report, schema)
+
+    def test_lane_metadata_passes_through(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            md_path = self._write_letter(root)
+            record = {
+                "content_id": "cl1",
+                "content_type": "cover_letter",
+                "output_path": str(md_path),
+                "lane_id": "ai_engineer",
+                "lane_source": "auto",
+                "lane_rationale": "strong overlap on ml / llm keywords",
+            }
+            report = run_ats_check(record, None, root)
+            self.assertEqual(report["lane_id"], "ai_engineer")
+            self.assertEqual(report["lane_source"], "auto")
+            self.assertEqual(report["lane_rationale"], "strong overlap on ml / llm keywords")
+
+    def test_empty_generation_warnings_list_is_benign(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            md_path = self._write_letter(root)
+            record = {
+                "content_id": "cl1",
+                "content_type": "cover_letter",
+                "output_path": str(md_path),
+                "generation_warnings": [],
+            }
+            report = run_ats_check(record, None, root)
+            self.assertEqual(report["status"], "passed")
+
+
 class RunAtsCheckWithRecoveryTest(unittest.TestCase):
     def test_happy_path_sets_result_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

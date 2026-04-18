@@ -26,6 +26,49 @@
         "checked_at": { "type": "string" },
         "error": { "type": "string" }
       }
+    },
+    "lane_id": {
+      "type": "string",
+      "description": "Cover-letter lane id (one of platform_internal_tools, ai_engineer, product_minded_engineer). Mirrors variant_style for cover letters. Optional; absent for pre-lane artifacts."
+    },
+    "lane_source": {
+      "enum": ["auto", "explicit"],
+      "description": "Whether the lane was auto-selected from signal scoring or passed explicitly via --lane."
+    },
+    "lane_rationale": {
+      "type": "string",
+      "description": "Short human-readable explanation of why this lane was chosen."
+    },
+    "selected_question_bank_questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Question-bank prompts whose answers contributed to the generated letter."
+    },
+    "company_facts_used": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "field", "value"],
+        "properties": {
+          "source": { "enum": ["lead", "company_research"] },
+          "field": { "type": "string" },
+          "value": { "type": "string" }
+        }
+      },
+      "description": "Grounded company facts actually used in the rendered prose. Empty list means research was present but unusable; absent field means no research was supplied."
+    },
+    "generation_warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "severity"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "enum": ["warning"] },
+          "detail": { "type": "string" }
+        }
+      },
+      "description": "Soft warnings recorded by the generator (lane_low_confidence, weak_lane_evidence, stale_name_filtered)."
     }
   }
 }
