@@ -44,11 +44,15 @@ INDEED_POSTING_JK_RE: Final = re.compile(r"^[a-f0-9]{16}$")
 _JK_DATA_ATTR_RE: Final = re.compile(r'data-jk="([a-f0-9]{16})"')
 _JK_URL_PARAM_RE: Final = re.compile(r'[?&]jk=([a-f0-9]{16})')
 
-# Heuristic title + location. Indeed wraps card metadata in h2.jobTitle and
-# div[data-testid="text-location"]; we tolerate either old or new class
-# names because the agent spike may reveal drift.
+# Heuristic title + location. Indeed's rendered card currently puts the
+# clickable link first with `aria-label="full details of <title>"`, then a
+# `<span id="jobTitle-{jk}">…</span>`, a `data-testid="company-name"` span,
+# and a `data-testid="text-location"` div. We tolerate multiple shapes
+# because Indeed re-shuffles markup roughly yearly.
 _TITLE_RE: Final = re.compile(
-    r'<(?:h2|h3)[^>]*(?:class="jobTitle[^"]*"|data-testid="jobtitle")[^>]*>(.*?)</(?:h2|h3)>',
+    r'<span[^>]*id="jobTitle-[a-f0-9]{16}"[^>]*>(.*?)</span>'
+    r'|aria-label="(?:full details of |)([^"]+?)"[^>]*class="[^"]*jcs-JobTitle'
+    r'|<(?:h2|h3)[^>]*(?:class="jobTitle[^"]*"|data-testid="jobtitle")[^>]*>(.*?)</(?:h2|h3)>',
     re.IGNORECASE | re.DOTALL,
 )
 _LOCATION_RE: Final = re.compile(
@@ -62,7 +66,7 @@ _COMPANY_RE: Final = re.compile(
 
 _HTML_TAG_RE: Final = re.compile(r"<[^>]+>")
 
-MAX_PAGES_PER_RUN: Final = 10        # hard cap on pagination
+MAX_PAGES_PER_RUN: Final = 2         # hard cap on pagination — keeps us low
 RESULTS_PER_PAGE: Final = 10         # Indeed default
 
 
@@ -250,7 +254,10 @@ def parse_search_results(body: str) -> list[IndeedJobPosting]:
         title_match = _TITLE_RE.search(window)
         loc_match = _LOCATION_RE.search(window)
         company_match = _COMPANY_RE.search(window)
-        title = _strip_tags(title_match.group(1)) if title_match else ""
+        title = ""
+        if title_match:
+            title_raw = next((g for g in title_match.groups() if g), "")
+            title = _strip_tags(title_raw)
         location = _strip_tags(loc_match.group(1)) if loc_match else ""
         company = _strip_tags(company_match.group(1)) if company_match else ""
         if not title:
@@ -289,7 +296,7 @@ def discover_indeed_search(
     search_url: str,
     rate_limiter: DomainRateLimiter,
     *,
-    result_cap: int = 50,
+    result_cap: int = 20,
     max_pages: int = MAX_PAGES_PER_RUN,
 ) -> tuple[list, bool]:
     """Paginate an Indeed search URL; return (entries, truncated).
@@ -344,5 +351,6 @@ def discover_indeed_search(
                 updated_at=now_iso(),
                 signals=(f"indeed_{posting.source_signal}",),
                 confidence="high" if posting.source_signal == "json_ld" else "weak_inference",
+                employer_name=posting.company,
             ))
     return entries, truncated

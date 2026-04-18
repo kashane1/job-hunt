@@ -125,6 +125,26 @@ class ParseSearchResultsTest(unittest.TestCase):
     def test_empty_body_returns_empty(self) -> None:
         self.assertEqual(parse_search_results("<html><body></body></html>"), [])
 
+    def test_parses_2026_card_shape_jobtitle_span(self) -> None:
+        # Indeed 2026 card markup: <span id="jobTitle-{jk}"> replaces the
+        # legacy <h2 class="jobTitle">. Regex alternation must tolerate it.
+        html = (
+            '<html><body>'
+            '<div data-jk="facefacefacefacf">'
+            '<a class="jcs-JobTitle css-abc" aria-label="full details of Senior Data Engineer">'
+            '<span id="jobTitle-facefacefacefacf">Senior Data Engineer</span></a>'
+            '<span data-testid="company-name">NewCo</span>'
+            '<div data-testid="text-location">Brooklyn, NY</div>'
+            '</div></body></html>'
+        )
+        postings = parse_search_results(html)
+        self.assertEqual(len(postings), 1)
+        p = postings[0]
+        self.assertEqual(p.jk, "facefacefacefacf")
+        self.assertEqual(p.title, "Senior Data Engineer")
+        self.assertEqual(p.company, "NewCo")
+        self.assertIn("Brooklyn", p.location)
+
 
 class DiscoverIndeedSearchTest(unittest.TestCase):
     def test_cap_stops_pagination(self) -> None:
