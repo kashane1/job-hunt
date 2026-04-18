@@ -49,8 +49,11 @@ KEYWORD_COVERAGE_WARN_THRESHOLD: Final = 0.60
 KEYWORD_COVERAGE_ERROR_THRESHOLD: Final = 0.30
 
 # Keyword DENSITY: fraction of content tokens that are lead keywords.
-# >5% reads as stuffing to several ATS systems.
-KEYWORD_DENSITY_STUFFING_THRESHOLD: Final = 0.05
+# Any realistic tailored resume naturally lands in the 5-9% range because
+# tech terms repeat across skills/experience/summary. The true stuffing
+# signal is 10%+ — that's where the text stops reading like prose and
+# starts reading like a keyword list.
+KEYWORD_DENSITY_STUFFING_THRESHOLD: Final = 0.10
 
 
 def _jaccard_coverage(lead_keywords: set[str], content_token_set: set[str]) -> float:

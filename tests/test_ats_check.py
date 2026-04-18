@@ -249,6 +249,72 @@ class CheckCoverLetterHardErrorsTest(unittest.TestCase):
         self.assertIn("weak_evidence_density", codes)
 
 
+class KeywordStopwordsTest(unittest.TestCase):
+    """Phase 5 — extract_lead must filter stopwords/HR-filler from keywords."""
+
+    def test_stopwords_excluded_from_extracted_keywords(self) -> None:
+        import tempfile as _tempfile
+        from job_hunt.core import extract_lead, KEYWORD_STOPWORDS
+
+        self.assertIn("the", KEYWORD_STOPWORDS)
+        self.assertIn("role", KEYWORD_STOPWORDS)
+        self.assertIn("experience", KEYWORD_STOPWORDS)
+
+        with _tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source = root / "lead.md"
+            source.write_text(
+                "---\nsource: manual\ncompany: Acme\nlead_id: x\n"
+                "fingerprint: y\napplication_url: https://example.com/\n"
+                "canonical_url: https://example.com/\n"
+                "ingestion_method: manual\n"
+                "ingested_at: 2026-01-01T00:00:00+00:00\n---\n"
+                "# Senior Python Engineer\n\n"
+                "We are looking for an engineer with strong experience "
+                "building Python, PostgreSQL, Kubernetes, and AWS systems "
+                "for our company. The role requires working across teams "
+                "and the ability to deliver. Experience with Docker is preferred.\n",
+                encoding="utf-8",
+            )
+            lead = extract_lead(source, root)
+            keywords = lead.get("normalized_requirements", {}).get("keywords", [])
+            # Tech terms should be in the keyword bag
+            self.assertTrue(any(k in ("python", "postgresql", "kubernetes", "aws", "docker")
+                                 for k in keywords))
+            # Stopwords and HR filler should NOT be
+            for stop in ("the", "and", "for", "with", "role", "company", "experience",
+                         "working", "across", "teams"):
+                self.assertNotIn(stop, keywords, f"stopword {stop!r} leaked into keywords")
+
+
+class DensityThresholdTest(unittest.TestCase):
+    """Phase 5 — KEYWORD_DENSITY threshold realigned from 0.05 to 0.10."""
+
+    def test_threshold_is_ten_percent(self) -> None:
+        from job_hunt.ats_check import KEYWORD_DENSITY_STUFFING_THRESHOLD
+        self.assertAlmostEqual(KEYWORD_DENSITY_STUFFING_THRESHOLD, 0.10)
+
+    def test_seven_percent_density_not_flagged_as_stuffing(self) -> None:
+        # 7% density is the realistic sweet spot for a tailored resume; the
+        # old 0.05 threshold was flagging normal copy. 0.10 is the real signal.
+        from job_hunt.ats_check import check_resume
+        # 100 tokens total, 7 of them are lead keywords — 7% density.
+        filler_body = (
+            "# Jane Engineer\n\n## Technical Skills\n\n"
+            + " ".join(["python"] * 7 + ["alpha", "beta", "gamma", "delta"] * 23)
+            + "\n\n## Professional Experience\n\n" + " ".join(["builder"] * 200)
+            + "\n\n## Education\n\nBS CS 2020.\n"
+        )
+        lead = {
+            "lead_id": "x",
+            "normalized_requirements": {"keywords": ["python"]},
+        }
+        result = check_resume(filler_body, lead, max_pages=3)
+        codes = [e["code"] for e in result["errors"]]
+        self.assertNotIn("keyword_stuffing", codes,
+                         f"7% density flagged as stuffing: density={result['metrics']['keyword_density']}")
+
+
 class RunAtsCheckTest(unittest.TestCase):
     def test_writes_report_file_and_returns_dict(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

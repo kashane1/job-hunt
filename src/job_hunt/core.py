@@ -16,6 +16,36 @@ from typing import Iterable
 from .schema_checks import validate
 from .simple_yaml import loads as load_yaml
 
+# Policy constant — lifted to module scope per the discovery-hardening plan.
+# Without this filter, `extract_lead.keywords` is just the top-N most frequent
+# tokens (dominated by "the", "and", "with", "you"), which inflates the
+# keyword-density stuffing check in ats_check.check_resume because every
+# normal resume naturally contains these. Skills/tech terms are what we
+# actually want to score fit and ATS alignment against.
+KEYWORD_STOPWORDS: frozenset[str] = frozenset({
+    "and", "the", "with", "for", "you", "our", "your", "are", "will",
+    "not", "but", "can", "has", "have", "had", "was", "were", "been",
+    "this", "that", "these", "those", "from", "into", "onto", "over",
+    "than", "then", "there", "their", "them", "they", "what", "when",
+    "which", "while", "who", "whom", "whose", "why", "how", "all",
+    "any", "each", "every", "some", "such", "other", "others",
+    "per", "via", "also", "just", "like", "out", "off", "up", "down",
+    "its", "it.s", "i.e", "e.g", "etc", "etc.",
+    "role", "team", "teams", "work", "working", "works", "worked",
+    "company", "companies", "job", "jobs", "position", "positions",
+    "candidate", "candidates", "applicant", "applicants",
+    "we", "us", "we.re", "we.ve", "i.m", "you.re", "you.ll",
+    "new", "strong", "able", "experience", "experienced",
+    "including", "include", "includes", "included",
+    "using", "use", "used", "uses",
+    "building", "build", "built", "builds",
+    "ability", "years", "year", "opportunity", "opportunities",
+    "skills", "skilled", "knowledge", "understanding",
+    "across", "within", "through", "during", "because", "should",
+    "would", "could", "may", "might", "must", "need", "needs", "needed",
+    "one", "two", "three", "first", "second", "third", "last",
+})
+
 # Re-export shared utilities for backward compatibility.
 # New modules should import directly from job_hunt.utils.
 from .utils import (  # noqa: F401
@@ -1034,7 +1064,11 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
     )
     preferred = extract_requirement_lines(sections, ("preferred", "nice to have", "bonus"))
     keyword_counts = Counter(tokens(f"{title}\n{body}"))
-    keywords = [word for word, _ in keyword_counts.most_common(20)]
+    keywords = [
+        word
+        for word, _ in keyword_counts.most_common(100)
+        if word not in KEYWORD_STOPWORDS and len(word) >= 3
+    ][:20]
 
     lead = {
         "lead_id": lead_id,

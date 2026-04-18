@@ -248,7 +248,7 @@ Merged from a prior 2-phase split — the primitive is useless without callers, 
   - `test_ingest_url_dispatches_viewjob_path` (stubbed HTTP; assert `_fetch_indeed_viewjob` invoked)
 - [ ] Commit: `feat(discovery-hardening): Phase 4 — Indeed viewjob JSON-LD ingestion`
 
-### Phase 5: Keyword hygiene
+### Phase 5: Keyword hygiene ✅
 
 Coupled phase: the ATS density threshold only makes sense once stopwords are gone from `keywords`.
 
