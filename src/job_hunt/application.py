@@ -638,13 +638,55 @@ def _compute_tier(
             "tier_2",
             "unresolved_field:" + ",".join(unresolved_fields),
         )
-    if ats_status == "warnings":
-        return "tier_2", "ats_status:warnings"
     if ats_status in ("errors", "check_failed"):
         return "tier_2", f"ats_status:{ats_status}"
     if ats_status in ("not_checked",):
         return "tier_2", "ats_status:not_checked"
+    # "warnings" are advisory (e.g. keyword_coverage_below_target). A
+    # curated resume that exceeds word-count, structure, and density gates
+    # but misses a few lead-specific terms should not block streamlined
+    # review — the user still sees each field and the warning list in the
+    # handoff summary.
     return "tier_1", ""
+
+
+def recompute_tiers(applications_dir: Path) -> dict:
+    """One-shot back-fill for records demoted solely by the old
+    "warnings → tier_2" rule. Idempotent: records whose demotion has any
+    other reason are left unchanged. Returns a summary dict with
+    {scanned, updated, skipped} counts for CLI reporting.
+
+    Called by `recompute-tiers` CLI subcommand after the Phase 6 policy
+    flip so existing status records catch up with the new semantics.
+    """
+    scanned = 0
+    updated = 0
+    skipped = 0
+    updated_paths: list[str] = []
+    for status_path in applications_dir.glob("*-status.json"):
+        scanned += 1
+        try:
+            record = read_json(status_path)
+        except Exception:
+            skipped += 1
+            continue
+        tier = record.get("tier")
+        rationale = record.get("tier_rationale") or ""
+        if tier != "tier_2" or rationale != "ats_status:warnings":
+            skipped += 1
+            continue
+        record["tier"] = "tier_1"
+        record["tier_rationale"] = ""
+        record["tier_recomputed_at"] = now_iso()
+        write_json(status_path, record)
+        updated += 1
+        updated_paths.append(str(status_path.name))
+    return {
+        "scanned": scanned,
+        "updated": updated,
+        "skipped": skipped,
+        "updated_paths": updated_paths,
+    }
 
 
 def _years_from_profile(profile: dict) -> float:
@@ -677,10 +719,26 @@ def _run_ats_check(lead: dict, profile: dict, data_root: Path) -> tuple[str, lis
     if not results:
         return "check_failed", ["no variants generated"], []
     record_path = resume_dir / f"{results[0]['content_id']}.json"
-    ats_report = run_ats_check_with_recovery(record_path, lead, ats_dir)
-    status = ats_report.get("status", "not_checked")
-    errors = [str(e) for e in ats_report.get("errors", [])]
-    warnings = [str(w) for w in ats_report.get("warnings", [])]
+    # run_ats_check_with_recovery returns the content record (post-patch),
+    # not the report — the report lives on disk at ats_check.report_path and
+    # the status hangs off record["ats_check"]["status"]. Loading the report
+    # gives us errors/warnings; if report_path is missing (check_failed
+    # branch) fall back to the record's inline error string.
+    record = run_ats_check_with_recovery(record_path, lead, ats_dir)
+    ats_meta = record.get("ats_check") or {}
+    status = str(ats_meta.get("status") or "not_checked")
+    errors: list[str] = []
+    warnings: list[str] = []
+    report_path = ats_meta.get("report_path")
+    if report_path:
+        try:
+            report = read_json(Path(report_path))
+            errors = [str(e) for e in report.get("errors", [])]
+            warnings = [str(w) for w in report.get("warnings", [])]
+        except Exception:
+            pass
+    if status == "check_failed" and ats_meta.get("error"):
+        errors.append(str(ats_meta["error"]))
     return status, errors, warnings
 
 

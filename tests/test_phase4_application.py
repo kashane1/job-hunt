@@ -552,5 +552,75 @@ class CheckpointUpdateTest(unittest.TestCase):
             self.assertEqual(status["attempts"][-1]["checkpoint"], "form_opened")
 
 
+class RecomputeTiersBackfillTest(unittest.TestCase):
+    """Phase 6 — one-shot migration for records demoted solely by the old
+    warnings → tier_2 rule. Idempotent and surgical."""
+
+    def _write(self, dir_: Path, name: str, record: dict) -> Path:
+        from job_hunt.utils import write_json
+        path = dir_ / name
+        write_json(path, record)
+        return path
+
+    def test_migrates_warnings_only_demotion(self) -> None:
+        from job_hunt.application import recompute_tiers
+        from job_hunt.utils import read_json
+        with tempfile.TemporaryDirectory() as tmpdir:
+            apps = Path(tmpdir)
+            path = self._write(apps, "only-warnings-status.json", {
+                "draft_id": "a1",
+                "tier": "tier_2",
+                "tier_rationale": "ats_status:warnings",
+            })
+            result = recompute_tiers(apps)
+            self.assertEqual(result["updated"], 1)
+            record = read_json(path)
+            self.assertEqual(record["tier"], "tier_1")
+            self.assertEqual(record["tier_rationale"], "")
+            self.assertIn("tier_recomputed_at", record)
+
+    def test_leaves_unresolved_field_demotions_alone(self) -> None:
+        from job_hunt.application import recompute_tiers
+        from job_hunt.utils import read_json
+        with tempfile.TemporaryDirectory() as tmpdir:
+            apps = Path(tmpdir)
+            path = self._write(apps, "unresolved-status.json", {
+                "draft_id": "a2",
+                "tier": "tier_2",
+                "tier_rationale": "unresolved_field:expected_compensation",
+            })
+            result = recompute_tiers(apps)
+            self.assertEqual(result["updated"], 0)
+            record = read_json(path)
+            self.assertEqual(record["tier"], "tier_2")
+
+    def test_leaves_errors_and_tier1_alone(self) -> None:
+        from job_hunt.application import recompute_tiers
+        with tempfile.TemporaryDirectory() as tmpdir:
+            apps = Path(tmpdir)
+            self._write(apps, "e-status.json", {
+                "draft_id": "a3", "tier": "tier_2",
+                "tier_rationale": "ats_status:errors",
+            })
+            self._write(apps, "ok-status.json", {
+                "draft_id": "a4", "tier": "tier_1", "tier_rationale": "",
+            })
+            result = recompute_tiers(apps)
+            self.assertEqual(result["updated"], 0)
+
+    def test_idempotent_on_second_run(self) -> None:
+        from job_hunt.application import recompute_tiers
+        with tempfile.TemporaryDirectory() as tmpdir:
+            apps = Path(tmpdir)
+            self._write(apps, "m-status.json", {
+                "draft_id": "a5", "tier": "tier_2",
+                "tier_rationale": "ats_status:warnings",
+            })
+            first = recompute_tiers(apps)
+            second = recompute_tiers(apps)
+            self.assertEqual(first["updated"], 1)
+            self.assertEqual(second["updated"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

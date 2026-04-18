@@ -1620,6 +1620,15 @@ def build_parser() -> argparse.ArgumentParser:
     integrity = subparsers.add_parser("check-integrity", help="Detect orphaned content and dangling references")
     integrity.add_argument("--data-root", default="data", help="Root data directory")
 
+    retier = subparsers.add_parser(
+        "recompute-tiers",
+        help="Back-fill tier on status records previously demoted only for ATS warnings",
+    )
+    retier.add_argument(
+        "--applications-dir", default="data/applications",
+        help="Directory containing application status records",
+    )
+
     # --- Generation commands ---
     gen_resume = subparsers.add_parser("generate-resume", help="Generate tailored resume variants for a lead")
     gen_resume.add_argument("--lead", required=True, help="Path to lead JSON file")
@@ -2156,6 +2165,13 @@ def main(argv: list[str] | None = None) -> int:
         from .tracking import check_integrity
 
         result = check_integrity(Path(args.data_root))
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "recompute-tiers":
+        from .application import recompute_tiers
+
+        result = recompute_tiers(Path(args.applications_dir))
         print(json.dumps(result, indent=2))
         return 0
 

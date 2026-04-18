@@ -262,7 +262,7 @@ Coupled phase: the ATS density threshold only makes sense once stopwords are gon
   - `tests/test_ats_check.py`: `test_realistic_density_not_flagged_as_stuffing` (7% → no error) and `test_density_above_ten_percent_still_flagged` (12% → error)
 - [ ] Commit: `feat(discovery-hardening): Phase 5 — keyword stopword filter + density realignment`
 
-### Phase 6: Application tier + ATS recovery bug fix + back-fill
+### Phase 6: Application tier + ATS recovery bug fix + back-fill ✅
 
 - [ ] `src/job_hunt/application.py:_compute_tier`: delete the `if ats_status == "warnings": return "tier_2"` branch. Add a comment block explaining warnings are advisory per the original ATS design contract.
 - [ ] `src/job_hunt/application.py:_run_ats_check`: `run_ats_check_with_recovery` returns the content record, not the report. Rewrite to load the report from `ats_meta["report_path"]`, lift errors/warnings from it, and append `ats_meta["error"]` when status is `check_failed`. Also: if `report_path` is set but the file is missing, surface that as a synthetic `errors` entry so `_compute_tier` does not over-promote a broken report to tier_1.
