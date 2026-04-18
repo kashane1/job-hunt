@@ -146,9 +146,7 @@ Merged from a prior 2-phase split — the primitive is useless without callers, 
   - `test_discover_jobs_installs_human_jitter_for_known_hosts` — patch `DomainRateLimiter.set_human_jitter`; assert called twice with the exact `(host, min, max)` triples
 - [ ] Commit: `feat(discovery-hardening): Phase 1 — human-jitter rate limiting for indeed + linkedin`
 
-### Phase 2: Anti-bot HTTP surface
-
-Ships the Chrome UA for both `discovery.py` (listing fetch, robots fetch) and `ingestion.py` (lead fetch). Tightens the 429 path.
+### Phase 2: Anti-bot HTTP surface ✅
 
 - [ ] Define `DISCOVERY_USER_AGENT: Final` in `src/job_hunt/net_policy.py` at module scope, clearly annotated "default HTTP identity; `RobotsCache` and other UA-agnostic helpers still accept a UA arg." Ingestion + discovery both import from there.
 - [ ] `src/job_hunt/ingestion.py:fetch`: use the shared `DISCOVERY_USER_AGENT`; add browser-shape `Accept` (`text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8`) and `Accept-Language: en-US,en;q=0.9`.

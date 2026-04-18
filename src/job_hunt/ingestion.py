@@ -52,6 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from .net_policy import DISCOVERY_USER_AGENT, parse_retry_after
 from .utils import StructuredError, now_iso, short_hash, slugify, write_json
 
 logger = logging.getLogger(__name__)
@@ -517,11 +518,18 @@ def fetch(
     _hostname, ip_strs = _validate_url_for_fetch(url)
     pinned_ip = ip_strs[0]
     opener = _build_pinned_opener(pinned_ip, float(timeout))
+    # Shared Chrome UA from net_policy — the previous "job-hunt-cli/0.2"
+    # identifier was an obvious bot signal. Browser-shaped Accept headers
+    # keep the request looking like an ordinary page load.
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "job-hunt-cli/0.2",
-            "Accept": "application/json, text/html;q=0.9",
+            "User-Agent": DISCOVERY_USER_AGENT,
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
             "Accept-Encoding": "gzip, deflate, identity",
             "Connection": "close",
         },
@@ -547,6 +555,25 @@ def fetch(
     except urllib.error.HTTPError as exc:
         if exc.code == 429:
             code = "rate_limited"
+            # Surface Retry-After per RFC 9110 §10.2.3 — accepts both
+            # delta-seconds and HTTP-date. Callers receive the structured
+            # error with the cool-down window parsed out for logging/backoff.
+            raw_retry = ""
+            try:
+                raw_retry = exc.headers.get("Retry-After", "") if exc.headers else ""
+            except Exception:
+                raw_retry = ""
+            retry_seconds = parse_retry_after(raw_retry) if raw_retry else None
+            parts: list[str] = [f"HTTP {exc.code} from {url}"]
+            if retry_seconds is not None:
+                parts.append(f"(Retry-After: {int(retry_seconds)}s)")
+            elif raw_retry:
+                parts.append(f"(Retry-After: {raw_retry})")
+            raise IngestionError(
+                " ".join(parts),
+                error_code=code,
+                url=url,
+            ) from exc
         elif exc.code == 404:
             code = "not_found"
         else:
@@ -651,6 +678,90 @@ def _fetch_lever(company: str, job_id: str) -> dict:
         "raw_description_html": str(payload.get("descriptionPlain") or payload.get("description", "")),
         "source": "lever",
         "ingestion_method": "url_fetch_json",
+    }
+
+
+_INDEED_VIEWJOB_URL_RE = re.compile(r"https?://(?:www\.)?indeed\.com/viewjob")
+
+
+def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
+    """Indeed viewjob pages — extract from the embedded JobPosting JSON-LD.
+
+    The rendered page is ~750KB of React chrome; the ``<main>`` tag wraps
+    the entire app, so ``_fetch_generic_html`` pulls the whole page as the
+    description and poisons skills/keyword extraction. JSON-LD is stable
+    across Indeed's DOM reshuffles and carries the full posting schema.
+    """
+    if html_text is None:
+        html_text = fetch(url).body
+    title = ""
+    company = ""
+    location = ""
+    description_html = ""
+    compensation = ""
+    employment_type = ""
+    for match in re.finditer(
+        r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>',
+        html_text,
+        re.I | re.S,
+    ):
+        try:
+            node = json.loads(match.group(1).strip())
+        except ValueError:
+            continue
+        if not isinstance(node, dict) or node.get("@type") != "JobPosting":
+            continue
+        title = str(node.get("title") or "").strip()
+        org = node.get("hiringOrganization")
+        if isinstance(org, dict):
+            company = str(org.get("name") or "").strip()
+        loc_node = node.get("jobLocation")
+        if isinstance(loc_node, list):
+            loc_node = loc_node[0] if loc_node else None
+        if isinstance(loc_node, dict):
+            addr = loc_node.get("address")
+            if isinstance(addr, dict):
+                parts = [
+                    str(addr.get(k) or "").strip()
+                    for k in ("addressLocality", "addressRegion", "addressCountry")
+                ]
+                location = ", ".join(p for p in parts if p)
+        if not location and node.get("jobLocationType") == "TELECOMMUTE":
+            location = "Remote"
+        description_html = str(node.get("description") or "")
+        base_salary = node.get("baseSalary")
+        if isinstance(base_salary, dict):
+            value = base_salary.get("value") or {}
+            if isinstance(value, dict):
+                lo = value.get("minValue")
+                hi = value.get("maxValue")
+                unit = value.get("unitText") or ""
+                currency = base_salary.get("currency") or ""
+                if lo and hi:
+                    compensation = f"{currency} {lo}–{hi} {unit}".strip()
+                elif lo:
+                    compensation = f"{currency} {lo} {unit}".strip()
+        employment_type = str(node.get("employmentType") or "")
+        break
+    if not description_html:
+        # JSON-LD missing: prefer the #jobDescriptionText container over the
+        # full page. This keeps the page chrome out of raw_description.
+        m = re.search(
+            r'<div[^>]*id="jobDescriptionText"[^>]*>(.*?)</div>\s*</div>\s*</div>',
+            html_text,
+            re.I | re.S,
+        )
+        if m:
+            description_html = m.group(1)
+    return {
+        "title": title,
+        "company": company,
+        "location": location,
+        "compensation": compensation,
+        "employment_type": employment_type,
+        "raw_description_html": description_html,
+        "source": "indeed",
+        "ingestion_method": "url_fetch_jsonld",
     }
 
 
@@ -767,10 +878,15 @@ def ingest_url(
                 fetched = _fetch_greenhouse(m["company"], m["job_id"])
             elif m := LEVER_URL_RE.match(url):
                 fetched = _fetch_lever(m["company"], m["job_id"])
+            elif _INDEED_VIEWJOB_URL_RE.match(url):
+                fetched = _fetch_indeed_viewjob(url)
             else:
                 fetched = _fetch_generic_html(url)
         else:
-            fetched = _fetch_generic_html(url, html_text=html_override)
+            if _INDEED_VIEWJOB_URL_RE.match(url):
+                fetched = _fetch_indeed_viewjob(url, html_text=html_override)
+            else:
+                fetched = _fetch_generic_html(url, html_text=html_override)
         fetched["application_url"] = url
         fetched["canonical_url"] = canonical
         fetched["ingested_at"] = now_iso()

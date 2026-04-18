@@ -40,7 +40,11 @@ from .ingestion import (
     fetch,
     is_hard_fail_url,
 )
-from .net_policy import DomainRateLimiter, RobotsCache
+from .net_policy import (
+    DISCOVERY_USER_AGENT as _NET_DISCOVERY_USER_AGENT,
+    DomainRateLimiter,
+    RobotsCache,
+)
 from .utils import StructuredError, ensure_dir, now_iso, read_json, write_json
 
 logger = logging.getLogger(__name__)
@@ -50,10 +54,9 @@ logger = logging.getLogger(__name__)
 # Constants
 # =============================================================================
 
-DISCOVERY_USER_AGENT: Final = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-)
+# Re-exported from net_policy so existing callers keep importing from
+# job_hunt.discovery. See net_policy.DISCOVERY_USER_AGENT for the definition.
+DISCOVERY_USER_AGENT = _NET_DISCOVERY_USER_AGENT
 
 MAX_LISTING_BYTES: Final = 8_000_000
 MAX_LISTING_DECOMPRESSED_BYTES: Final = 20_000_000

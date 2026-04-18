@@ -24,10 +24,46 @@ import time
 import urllib.parse
 import urllib.robotparser
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Final
 
 from .utils import now_iso, read_json, write_json
+
+# Default HTTP identity for this repo. RobotsCache and other UA-agnostic
+# helpers still accept a UA arg — this is the value everything uses in
+# practice. Kept here (not in discovery.py) so both discovery.py and
+# ingestion.py can import a single source of truth without inverting the
+# existing dependency direction (discovery → net_policy, ingestion → net_policy).
+DISCOVERY_USER_AGENT: Final = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def parse_retry_after(value: str) -> float | None:
+    """Parse an HTTP Retry-After header value per RFC 9110 §10.2.3.
+
+    Accepts both delta-seconds (e.g. "120") and HTTP-date (e.g.
+    "Fri, 31 Dec 2026 23:59:59 GMT"). Returns seconds from now, or None
+    on unparseable input. Negative (past) dates are clamped to 0.
+
+    Uses email.utils.parsedate_to_datetime — the canonical stdlib HTTP-date
+    parser (urllib3 uses the same approach internally).
+    """
+    value = (value or "").strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return float(value)
+    try:
+        dt = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return max(0.0, (dt - datetime.now(timezone.utc)).total_seconds())
 
 logger = logging.getLogger(__name__)
 

@@ -396,5 +396,46 @@ class FrontmatterSynthesisTest(unittest.TestCase):
         self.assertIn("# Senior Engineer", md)
 
 
+class RetryAfterParsingTest(unittest.TestCase):
+    """Phase 2 — RFC 9110 §10.2.3 Retry-After parsing (delta-seconds or HTTP-date)."""
+
+    def test_parses_delta_seconds(self) -> None:
+        from job_hunt.net_policy import parse_retry_after
+        self.assertEqual(parse_retry_after("120"), 120.0)
+        self.assertEqual(parse_retry_after("0"), 0.0)
+
+    def test_parses_http_date(self) -> None:
+        from job_hunt.net_policy import parse_retry_after
+        # Choose a date well in the future so the parser returns a positive value.
+        parsed = parse_retry_after("Fri, 31 Dec 2099 23:59:59 GMT")
+        assert parsed is not None
+        self.assertGreater(parsed, 0.0)
+
+    def test_past_http_date_clamped_to_zero(self) -> None:
+        from job_hunt.net_policy import parse_retry_after
+        self.assertEqual(parse_retry_after("Mon, 01 Jan 2001 00:00:00 GMT"), 0.0)
+
+    def test_unparseable_returns_none(self) -> None:
+        from job_hunt.net_policy import parse_retry_after
+        self.assertIsNone(parse_retry_after("not a date"))
+        self.assertIsNone(parse_retry_after(""))
+        self.assertIsNone(parse_retry_after("   "))
+
+
+class FetchChromeUserAgentTest(unittest.TestCase):
+    """Phase 2 — fetch must identify as Chrome, not the legacy bot agent."""
+
+    def test_shared_ua_is_chrome(self) -> None:
+        from job_hunt.net_policy import DISCOVERY_USER_AGENT
+        self.assertIn("Chrome/131", DISCOVERY_USER_AGENT)
+
+    def test_fetch_wires_shared_ua_and_accept_language(self) -> None:
+        # Structural assertion against the source: fetch builds its
+        # urllib Request with the shared constant + Accept-Language.
+        src = (ROOT / "src" / "job_hunt" / "ingestion.py").read_text(encoding="utf-8")
+        self.assertIn('"User-Agent": DISCOVERY_USER_AGENT', src)
+        self.assertIn("Accept-Language", src)
+
+
 if __name__ == "__main__":
     unittest.main()
