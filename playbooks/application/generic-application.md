@@ -17,6 +17,7 @@ This file is the dispatch map used by `apply-posting`. Open the per-surface play
 | `lever_redirect` | `playbooks/application/lever-redirect.md` |
 | `workday_redirect` | `playbooks/application/workday-redirect.md` |
 | `ashby_redirect` | `playbooks/application/ashby-redirect.md` |
+| `linkedin_easy_apply_assisted` | `playbooks/application/linkedin-easy-apply-assisted.md` |
 | any other | this file (pause at every field) |
 
 ## URL routing
@@ -26,6 +27,7 @@ This file is the dispatch map used by `apply-posting`. Open the per-surface play
 - Redirects to `jobs.lever.co` or `hire.lever.co` → `lever_redirect`
 - Redirects to `*.myworkdayjobs.com` → `workday_redirect`
 - Redirects to `jobs.ashbyhq.com` → `ashby_redirect`
+- LinkedIn-hosted Easy Apply / inline apply → `linkedin_easy_apply_assisted`
 - Any other redirect host → `ApplicationError(suspicious_redirect_host)` (stop)
 
 `src/job_hunt/application.py:detect_surface` is the Python counterpart — keep the two in sync.

@@ -41,6 +41,7 @@ PLAYBOOK_FILES = (
     "playbooks/application/lever-redirect.md",
     "playbooks/application/workday-redirect.md",
     "playbooks/application/ashby-redirect.md",
+    "playbooks/application/linkedin-easy-apply-assisted.md",
 )
 
 
@@ -50,7 +51,10 @@ class FrontmatterShipTest(unittest.TestCase):
             seq = load_checkpoint_dag(pb)
             self.assertGreaterEqual(len(seq), 4, f"{pb} missing checkpoint_sequence")
             self.assertIn("preflight_done", seq)
-            self.assertIn("ready_to_submit", seq)
+            if pb.endswith("linkedin-easy-apply-assisted.md"):
+                self.assertIn("human_ready_to_submit", seq)
+            else:
+                self.assertIn("ready_to_submit", seq)
 
     def test_every_playbook_has_origin_allowlist(self) -> None:
         for pb in PLAYBOOK_FILES:
@@ -70,14 +74,14 @@ class FrontmatterShipTest(unittest.TestCase):
         text = (repo_root() / "playbooks/application/generic-application.md").read_text(encoding="utf-8")
         for surface in (
             "indeed_easy_apply", "greenhouse_redirect", "lever_redirect",
-            "workday_redirect", "ashby_redirect",
+            "workday_redirect", "ashby_redirect", "linkedin_easy_apply_assisted",
         ):
             self.assertIn(surface, text, f"generic router missing reference to {surface}")
 
     def test_every_surface_playbook_path_resolves(self) -> None:
         for surface in (
             "indeed_easy_apply", "greenhouse_redirect", "lever_redirect",
-            "workday_redirect", "ashby_redirect",
+            "workday_redirect", "ashby_redirect", "linkedin_easy_apply_assisted",
         ):
             path = repo_root() / playbook_for_surface(surface)
             self.assertTrue(path.is_file(), f"{surface} → {path} does not exist")

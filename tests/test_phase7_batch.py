@@ -106,6 +106,38 @@ def _seed_leads(leads_dir: Path, count: int, *, source: str = "indeed") -> None:
         write_json(leads_dir / f"{lead['lead_id']}.json", lead)
 
 
+def _seed_linkedin_leads(leads_dir: Path) -> None:
+    leads_dir.mkdir(parents=True, exist_ok=True)
+    manual = {
+        "lead_id": "linkedin-lead-manual",
+        "company": "LinkedInCo",
+        "title": "Senior Platform Engineer",
+        "location": "Remote",
+        "raw_description": "Python + AWS role.",
+        "canonical_url": "https://www.linkedin.com/jobs/view/1/",
+        "application_url": "https://www.linkedin.com/jobs/view/1/",
+        "normalized_requirements": {"keywords": ["python"], "required": []},
+        "fit_assessment": {"matched_skills": ["python"], "fit_score": 90},
+        "status": "scored",
+        "source": "linkedin_manual",
+        "origin_board": "linkedin",
+    }
+    redirect = {
+        **manual,
+        "lead_id": "linkedin-lead-redirect",
+        "canonical_url": "https://boards.greenhouse.io/co/jobs/1",
+        "application_url": "https://boards.greenhouse.io/co/jobs/1",
+        "posting_url": "https://www.linkedin.com/jobs/view/2/",
+        "redirect_chain": [
+            "https://www.linkedin.com/jobs/view/2/",
+            "https://boards.greenhouse.io/co/jobs/1",
+        ],
+        "fit_assessment": {"matched_skills": ["python"], "fit_score": 95},
+    }
+    write_json(leads_dir / "linkedin-lead-manual.json", manual)
+    write_json(leads_dir / "linkedin-lead-redirect.json", redirect)
+
+
 class BatchHappyPathTest(unittest.TestCase):
     def test_happy_path_top_3(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -232,6 +264,22 @@ class EmptySelectionTest(unittest.TestCase):
                     enable_heartbeat_thread=False,
                 )
             self.assertEqual(ctx.exception.error_code, "no_scored_leads")
+
+
+class LinkedInBatchSelectionTest(unittest.TestCase):
+    def test_source_linkedin_selects_only_ats_eligible_redirects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            _seed_linkedin_leads(data_root / "leads")
+            leads = _select_leads(
+                data_root / "leads",
+                top=10,
+                source="linkedin",
+                score_floor=None,
+                data_root=data_root,
+            )
+            self.assertEqual([lead["lead_id"] for lead in leads], ["linkedin-lead-redirect"])
 
 
 class PipeliningTest(unittest.TestCase):

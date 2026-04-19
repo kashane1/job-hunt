@@ -18,6 +18,7 @@
         "drafted",
         "queued",
         "applying",
+        "awaiting_human_action",
         "submitted",
         "confirmed",
         "interview",
@@ -82,6 +83,8 @@
             "enum": [
               "submitted",
               "confirmed",
+              "manual_assist_deferred",
+              "human_aborted",
               "rejected",
               "interview",
               "offer",
@@ -108,6 +111,11 @@
         "matched_via": { "type": "string" }
       }
     },
+    "origin_board": { "type": "string" },
+    "surface": { "type": "string" },
+    "surface_policy": { "type": "string" },
+    "handoff_kind": { "type": "string" },
+    "executor_backend": { "type": "string" },
     "generated_content_ids": {
       "type": "array",
       "items": { "type": "string" }

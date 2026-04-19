@@ -44,6 +44,8 @@ from .utils import (
     short_hash,
     write_json,
 )
+from .boards.registry import playbook_for_surface as resolve_playbook_for_surface
+from .boards.registry import resolve_application_target
 
 
 # =============================================================================
@@ -77,6 +79,14 @@ APPLICATION_ERROR_CODES: Final = frozenset({
     # Routing
     "ats_redirect_unsupported",
     "ats_redirect_out_of_scope",
+    "manual_only_surface",
+    "linkedin_apply_limit_reached",
+    "platform_account_restricted",
+    "redirect_chain_unresolved",
+    "redirect_loop_detected",
+    "supported_host_wrong_surface",
+    "human_outcome_not_recorded",
+    "login_wall_detected",
     # Escalation
     "unknown_question",
     "tier_downgraded",
@@ -319,23 +329,6 @@ def run_preflight(policy: dict) -> dict:
 # Phase 4: surface detection + default field set
 # =============================================================================
 
-_SURFACE_URL_MATCHERS: Final = (
-    (re.compile(r"^https?://(?:www\.|secure\.)?indeed\.com/", re.IGNORECASE), "indeed_easy_apply"),
-    (re.compile(r"^https?://(?:boards|job-boards)\.greenhouse\.io/", re.IGNORECASE), "greenhouse_redirect"),
-    (re.compile(r"^https?://jobs\.lever\.co/", re.IGNORECASE), "lever_redirect"),
-    (re.compile(r"^https?://[^/]+\.myworkdayjobs\.com/", re.IGNORECASE), "workday_redirect"),
-    (re.compile(r"^https?://jobs\.ashbyhq\.com/", re.IGNORECASE), "ashby_redirect"),
-)
-
-_SURFACE_PLAYBOOKS: Final = {
-    "indeed_easy_apply": "playbooks/application/indeed-easy-apply.md",
-    "indeed_external_redirect": "playbooks/application/indeed-easy-apply.md",
-    "greenhouse_redirect": "playbooks/application/greenhouse-redirect.md",
-    "lever_redirect": "playbooks/application/lever-redirect.md",
-    "workday_redirect": "playbooks/application/workday-redirect.md",
-    "ashby_redirect": "playbooks/application/ashby-redirect.md",
-}
-
 # Phase 5 playbooks declare richer field sets via YAML frontmatter; Phase 4
 # ships this default so prepare_application produces a schema-valid plan.json
 # even before Phase 5 lands. Questions are canonical-form — they normalize to
@@ -352,32 +345,12 @@ DEFAULT_FIELD_SET: Final = (
 
 
 def detect_surface(posting_url: str, apply_type: str | None = None) -> str:
-    """Classify a posting URL into the v1 surface enum.
-
-    When the caller provides ``apply_type`` (from the lead record's
-    ``apply_type`` field, populated during Indeed viewjob ingestion via
-    schema.org JobPosting.directApply), we can distinguish Indeed-hosted
-    postings that redirect to an external ATS ("external") from the ones
-    that use Indeed Easy Apply ("direct"). The old URL-only heuristic
-    labeled every indeed.com posting ``indeed_easy_apply`` — which broke
-    apply-batch the first time it hit an "Apply on company site" posting
-    because our playbook drives Easy Apply forms, not external redirects.
-
-    Mapping:
-    - indeed.com + apply_type="direct" or unknown → ``indeed_easy_apply``
-    - indeed.com + apply_type="external" → ``indeed_external_redirect``
-    - everything else → existing URL-pattern surfaces
-    """
-    for pattern, surface in _SURFACE_URL_MATCHERS:
-        if pattern.search(posting_url):
-            if surface == "indeed_easy_apply" and apply_type == "external":
-                return "indeed_external_redirect"
-            return surface
-    return "indeed_easy_apply"
+    """Compatibility wrapper around the board registry during migration."""
+    return resolve_application_target(None, posting_url, apply_type=apply_type).surface
 
 
 def playbook_for_surface(surface: str) -> str:
-    return _SURFACE_PLAYBOOKS.get(surface, _SURFACE_PLAYBOOKS["indeed_easy_apply"])
+    return resolve_playbook_for_surface(surface)
 
 
 # =============================================================================
@@ -476,6 +449,11 @@ class PrepareResult:
     tier: str
     tier_rationale: str
     surface: str
+    origin_board: str
+    surface_policy: str
+    handoff_kind: str
+    executor_backend: str
+    batch_eligible: bool
 
 
 def prepare_application(
@@ -529,17 +507,21 @@ def prepare_application(
 
     # Surface + playbook
     posting_url = lead.get("canonical_url") or lead.get("application_url") or lead.get("posting_url") or ""
-    surface = detect_surface(posting_url, lead.get("apply_type"))
-    playbook_path = playbook_for_surface(surface)
+    target = resolve_application_target(lead, posting_url, apply_type=lead.get("apply_type"))
+    surface = target.surface
+    playbook_path = target.playbook_path
 
     # Correlation keys for later confirmation matching
     correlation_keys = {
         "indeed_jk": _indeed_jk_from_url(posting_url),
+        "origin_board": target.origin_board,
+        "origin_posting_url": posting_url,
         "posting_url": posting_url,
         "company": lead.get("company", ""),
         "title": lead.get("title", ""),
         "submitted_at": None,
     }
+    correlation_keys.update(target.correlation_keys_patch)
 
     # JD wrap — nonce-fenced delimiters are applied at apply-posting handoff,
     # not here. Phase 4 just stores the raw JD + nonce.
@@ -599,7 +581,15 @@ def prepare_application(
         "schema_version": 1,
         "draft_id": draft_id,
         "lead_id": lead_id,
+        "board": target.origin_board,
+        "origin_board": target.origin_board,
         "surface": surface,
+        "surface_policy": target.surface_policy,
+        "apply_host": target.apply_host,
+        "redirect_chain": target.redirect_chain,
+        "handoff_kind": target.handoff_kind,
+        "executor_backend": target.executor_backend,
+        "batch_eligible": target.batch_eligible,
         "playbook_path": playbook_path,
         "correlation_keys": correlation_keys,
         "profile_snapshot": snapshot,
@@ -622,6 +612,11 @@ def prepare_application(
         "draft_id": draft_id,
         "current_stage": "not_applied",
         "lifecycle_state": "drafted",
+        "origin_board": target.origin_board,
+        "surface": surface,
+        "surface_policy": target.surface_policy,
+        "handoff_kind": target.handoff_kind,
+        "executor_backend": target.executor_backend,
         "tier": tier,
         "tier_rationale": rationale,
         "transitions": [],
@@ -638,6 +633,11 @@ def prepare_application(
         tier=tier,
         tier_rationale=rationale,
         surface=surface,
+        origin_board=target.origin_board,
+        surface_policy=target.surface_policy,
+        handoff_kind=target.handoff_kind,
+        executor_backend=target.executor_backend,
+        batch_eligible=target.batch_eligible,
     )
 
 
@@ -776,6 +776,7 @@ _PRIORITY_LADDER: Final = {
     "drafted": 0,
     "queued": 1,
     "applying": 2,
+    "awaiting_human_action": 2,
     "submitted": 3,
     "confirmed": 4,
     "interview": 5,
@@ -795,6 +796,8 @@ def lead_state_from_attempt(attempt: dict) -> str:
     status = attempt.get("status")
     if status in ("in_progress", "paused_tier2", "paused_unknown_question"):
         return "applying"
+    if status == "paused_manual_assist":
+        return "awaiting_human_action"
     if status == "submitted_provisional":
         return "submitted"
     if status == "submitted_confirmed":
@@ -806,7 +809,7 @@ def lead_state_from_attempt(attempt: dict) -> str:
     if status == "unknown_outcome":
         return "unknown_outcome"
     if status == "paused_human_abort":
-        return "drafted"
+        return "awaiting_human_action"
     return "applying"
 
 
@@ -854,6 +857,22 @@ def record_attempt(
             error_code="plan_schema_invalid",
             remediation="Align the playbook's checkpoint_sequence with the attempt checkpoint.",
         )
+    if checkpoint_sequence:
+        status_path = draft_dir / "status.json"
+        if status_path.exists():
+            status = read_json(status_path)
+            prior_attempts = status.get("attempts", []) or []
+            if prior_attempts:
+                previous_checkpoint = prior_attempts[-1].get("checkpoint")
+                if previous_checkpoint in checkpoint_sequence:
+                    prev_index = checkpoint_sequence.index(previous_checkpoint)
+                    new_index = checkpoint_sequence.index(checkpoint)
+                    if new_index < prev_index:
+                        raise ApplicationError(
+                            f"Checkpoint {checkpoint!r} regresses from {previous_checkpoint!r}",
+                            error_code="plan_schema_invalid",
+                            remediation="Advance checkpoints monotonically through the playbook sequence.",
+                        )
 
     # Redaction
     filename = attempt_payload.get("attempt_filename") or _attempt_filename()
@@ -894,7 +913,7 @@ def _validate_attempt_shape(payload: dict) -> None:
     allowed_statuses = {
         "in_progress", "submitted_provisional", "submitted_confirmed",
         "paused_tier2", "paused_unknown_question", "paused_human_abort",
-        "failed", "dry_run_only", "unknown_outcome",
+        "paused_manual_assist", "failed", "dry_run_only", "unknown_outcome",
     }
     status = payload.get("status")
     if status not in allowed_statuses:
@@ -978,6 +997,8 @@ def _event_type_for_attempt(status: str) -> str | None:
     mapping = {
         "submitted_provisional": "submitted",
         "submitted_confirmed": "confirmed",
+        "paused_manual_assist": "manual_assist_deferred",
+        "paused_human_abort": "human_aborted",
         "failed": None,  # failure is not a lifecycle event — captured in attempt payload
     }
     return mapping.get(status)
@@ -1044,16 +1065,41 @@ def apply_posting(
             error_code="profile_field_missing",
             remediation="Run prepare-application first.",
         )
+    from .playbooks import load_checkpoint_dag
+
     plan = read_json(plan_path)
     nonce = plan.get("untrusted_fetched_content", {}).get("nonce", "")
     jd = plan.get("untrusted_fetched_content", {}).get("job_description", "")
     wrapped_jd = f"<untrusted_jd_{nonce}>\n{jd}\n</untrusted_jd_{nonce}>"
-    return {
+    handoff_kind = plan.get("handoff_kind", "automation_playbook")
+    field_summary = [
+        {
+            "field_id": field.get("field_id"),
+            "question_text": field.get("question_text"),
+            "answer": field.get("answer"),
+            "provenance": field.get("provenance"),
+        }
+        for field in plan.get("fields", [])
+    ]
+    review_items = [
+        {
+            "field_id": field.get("field_id"),
+            "question_text": field.get("question_text"),
+            "provenance": field.get("provenance"),
+        }
+        for field in plan.get("fields", [])
+        if field.get("provenance") in {"inferred", "none", "curated_template"}
+    ]
+    bundle = {
         "status": "ok",
         "draft_id": draft_id,
         "draft_dir": str(draft_dir),
         "plan_path": str(plan_path),
         "surface": plan.get("surface"),
+        "origin_board": plan.get("origin_board") or plan.get("board"),
+        "surface_policy": plan.get("surface_policy"),
+        "handoff_kind": handoff_kind,
+        "executor_backend": plan.get("executor_backend"),
         "playbook_path": plan.get("playbook_path"),
         "tier": plan.get("tier"),
         "tier_rationale": plan.get("tier_rationale"),
@@ -1061,8 +1107,31 @@ def apply_posting(
         "field_count": len(plan.get("fields", [])),
         "wrapped_jd": wrapped_jd,
         "dry_run": dry_run,
-        "expected_checkpoints": plan.get("expected_checkpoints", []),
+        "expected_checkpoints": load_checkpoint_dag(plan.get("playbook_path", "")),
     }
+    if handoff_kind == "manual_assist":
+        bundle.update({
+            "operator_checklist": [
+                "Open the LinkedIn job page manually in your own browser session.",
+                "Review every flagged field and provenance before typing anything.",
+                "Complete any login, MFA, CAPTCHA, or profile prompts manually.",
+                "Do not let the agent automate LinkedIn-hosted form actions.",
+                "Record the outcome after you submit, abort, or stop.",
+            ],
+            "field_summary": field_summary,
+            "review_items": review_items,
+            "resume_path": "",
+            "cover_letter_path": "",
+            "outcome_recording_instructions": (
+                "Record a follow-up attempt with status submitted_provisional, "
+                "paused_human_abort, or unknown_outcome after the human completes the LinkedIn flow."
+            ),
+        })
+    else:
+        bundle.update({
+            "playbook_path": plan.get("playbook_path"),
+        })
+    return bundle
 
 
 # =============================================================================
@@ -1463,6 +1532,15 @@ def _select_leads(
             # draft still gets prepped and the agent can decide.
             if source.startswith("indeed") and lead.get("apply_type") == "external":
                 continue
+            if source.startswith("linkedin"):
+                posting_url = (
+                    str(lead.get("canonical_url") or "")
+                    or str(lead.get("application_url") or "")
+                    or str(lead.get("posting_url") or "")
+                )
+                target = resolve_application_target(lead, posting_url, apply_type=lead.get("apply_type"))
+                if not target.batch_eligible:
+                    continue
         if submitted_urls:
             lead_urls = {
                 str(lead.get("canonical_url") or ""),

@@ -26,19 +26,47 @@
         "greenhouse_redirect",
         "lever_redirect",
         "workday_redirect",
-        "ashby_redirect"
+        "ashby_redirect",
+        "linkedin_easy_apply_assisted"
       ]
     },
+    "board": { "type": "string" },
+    "origin_board": { "type": "string" },
+    "surface_policy": {
+      "enum": [
+        "browser_automated_human_submit",
+        "manual_assist",
+        "automation_forbidden_on_origin"
+      ]
+    },
+    "apply_host": { "type": "string" },
+    "redirect_chain": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "handoff_kind": {
+      "enum": ["automation_playbook", "manual_assist"]
+    },
+    "executor_backend": {
+      "enum": ["claude_chrome", "codex_browser", "none"]
+    },
+    "batch_eligible": { "type": "boolean" },
     "playbook_path": { "type": "string" },
     "correlation_keys": {
       "type": "object",
       "required": ["posting_url", "company", "title"],
       "properties": {
+        "origin_board": { "type": "string" },
+        "origin_posting_url": { "type": "string" },
         "indeed_jk": {
           "type": ["string", "null"],
           "pattern": "^[a-f0-9]{16}$"
         },
         "posting_url": { "type": "string", "format": "uri" },
+        "redirect_chain": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "company": { "type": "string" },
         "title": { "type": "string" },
         "submitted_at": { "type": ["string", "null"], "format": "date-time" }

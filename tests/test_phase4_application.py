@@ -59,6 +59,32 @@ MINIMAL_LEAD = {
     "fit_assessment": {"matched_skills": ["python", "aws"]},
 }
 
+LINKEDIN_ASSIST_LEAD = {
+    "lead_id": "linkedin-abc-senior-engineer-linkedin_manual",
+    "company": "ExampleCo",
+    "title": "Senior Software Engineer",
+    "location": "Remote",
+    "raw_description": "Apply on LinkedIn.\nRequirements: Python, AWS.",
+    "canonical_url": "https://www.linkedin.com/jobs/view/1234567890/",
+    "application_url": "https://www.linkedin.com/jobs/view/1234567890/",
+    "origin_board": "linkedin",
+    "source": "linkedin_manual",
+    "normalized_requirements": {"keywords": ["python", "aws"], "required": []},
+    "fit_assessment": {"matched_skills": ["python", "aws"]},
+}
+
+LINKEDIN_REDIRECT_LEAD = {
+    **LINKEDIN_ASSIST_LEAD,
+    "lead_id": "linkedin-redirect-senior-engineer-linkedin_manual",
+    "canonical_url": "https://boards.greenhouse.io/co/jobs/1",
+    "application_url": "https://boards.greenhouse.io/co/jobs/1",
+    "posting_url": "https://www.linkedin.com/jobs/view/1234567890/",
+    "redirect_chain": [
+        "https://www.linkedin.com/jobs/view/1234567890/",
+        "https://boards.greenhouse.io/co/jobs/1",
+    ],
+}
+
 MINIMAL_PROFILE = {
     "contact": {
         "emails": ["x@example.com"],
@@ -199,9 +225,15 @@ class SurfaceDetectionTest(unittest.TestCase):
     def test_every_surface_has_a_playbook(self) -> None:
         for surface in (
             "indeed_easy_apply", "greenhouse_redirect", "lever_redirect",
-            "workday_redirect", "ashby_redirect",
+            "workday_redirect", "ashby_redirect", "linkedin_easy_apply_assisted",
         ):
             self.assertTrue(playbook_for_surface(surface))
+
+    def test_linkedin_hosted_routes_to_manual_assist_surface(self) -> None:
+        self.assertEqual(
+            detect_surface("https://www.linkedin.com/jobs/view/1234567890/"),
+            "linkedin_easy_apply_assisted",
+        )
 
 
 class RedactionTest(unittest.TestCase):
@@ -299,6 +331,39 @@ class PreparePipelineTest(unittest.TestCase):
                 )
             self.assertEqual(ctx.exception.error_code, "policy_loosen_attempt")
 
+    def test_prepare_linkedin_manual_assist_writes_manual_handoff_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
+                result = prepare_application(
+                    LINKEDIN_ASSIST_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            plan = read_json(result.draft_dir / "plan.json")
+            self.assertEqual(plan["origin_board"], "linkedin")
+            self.assertEqual(plan["surface"], "linkedin_easy_apply_assisted")
+            self.assertEqual(plan["handoff_kind"], "manual_assist")
+            self.assertFalse(plan["batch_eligible"])
+            self.assertEqual(plan["surface_policy"], "automation_forbidden_on_origin")
+
+    def test_prepare_linkedin_redirect_reuses_ats_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
+                result = prepare_application(
+                    LINKEDIN_REDIRECT_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            plan = read_json(result.draft_dir / "plan.json")
+            self.assertEqual(plan["origin_board"], "linkedin")
+            self.assertEqual(plan["surface"], "greenhouse_redirect")
+            self.assertEqual(plan["handoff_kind"], "automation_playbook")
+            self.assertEqual(plan["redirect_chain"][-1], "https://boards.greenhouse.io/co/jobs/1")
+
 
 class RecordAttemptTest(unittest.TestCase):
     def test_full_record_flow(self) -> None:
@@ -373,6 +438,45 @@ class RecordAttemptTest(unittest.TestCase):
                 record_attempt(result.draft_id, {
                     "status": "failed", "checkpoint": "x",
                     "error_code": "not_a_real_code",
+                }, data_root=data_root)
+            self.assertEqual(ctx.exception.error_code, "plan_schema_invalid")
+
+    def test_manual_assist_attempt_promotes_to_awaiting_human_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
+                result = prepare_application(
+                    LINKEDIN_ASSIST_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            record_attempt(result.draft_id, {
+                "status": "paused_manual_assist",
+                "checkpoint": "assist_bundle_ready",
+            }, data_root=data_root)
+            status = apply_status(result.draft_id, data_root=data_root)
+            self.assertEqual(status["lifecycle_state"], "awaiting_human_action")
+            self.assertIn("manual_assist_deferred", [e["type"] for e in status["events"]])
+
+    def test_checkpoint_progression_is_monotonic(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
+                result = prepare_application(
+                    LINKEDIN_ASSIST_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            record_attempt(result.draft_id, {
+                "status": "paused_manual_assist",
+                "checkpoint": "human_form_in_progress",
+            }, data_root=data_root)
+            with self.assertRaises(ApplicationError) as ctx:
+                record_attempt(result.draft_id, {
+                    "status": "paused_manual_assist",
+                    "checkpoint": "assist_bundle_ready",
                 }, data_root=data_root)
             self.assertEqual(ctx.exception.error_code, "plan_schema_invalid")
 
@@ -522,7 +626,8 @@ class LeadStateMappingTest(unittest.TestCase):
             "dry_run_only": "drafted",
             "failed": "failed",
             "unknown_outcome": "unknown_outcome",
-            "paused_human_abort": "drafted",
+            "paused_manual_assist": "awaiting_human_action",
+            "paused_human_abort": "awaiting_human_action",
         }
         for status, expected in cases.items():
             self.assertEqual(

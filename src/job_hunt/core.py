@@ -1044,6 +1044,16 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
         raw_text = read_text_with_fallback(input_path)
         metadata, body = parse_frontmatter(raw_text)
 
+    origin_board = str(metadata.get("origin_board") or "")
+    if origin_board == "linkedin":
+        from .boards.linkedin import LinkedInBoardAdapter
+
+        metadata = LinkedInBoardAdapter().normalize_manual_intake(metadata)
+    elif origin_board == "indeed":
+        from .boards.indeed import IndeedBoardAdapter
+
+        metadata = IndeedBoardAdapter().normalize_manual_intake(metadata)
+
     # Leads are stored in one normalized shape regardless of which board or
     # company site they came from, which keeps scoring/reporting generic.
     sections = lead_sections(body)
@@ -1074,7 +1084,9 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
         "lead_id": lead_id,
         "fingerprint": fingerprint,
         "source": source,
+        "origin_board": str(metadata.get("origin_board") or ""),
         "application_url": application_url,
+        "posting_url": str(metadata.get("posting_url") or application_url),
         "company": company,
         "title": title,
         "location": location,
@@ -1094,6 +1106,18 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
         value = metadata.get(optional_field)
         if value:
             lead[optional_field] = str(value)
+    # apply_type is derived during Indeed viewjob ingestion from the
+    # schema.org JobPosting.directApply boolean (or a DOM button-label
+    # fallback). Values: "direct" = Indeed Easy Apply, "external" =
+    # redirects to a company-site ATS, "" = unknown. prepare_application
+    # uses this to pick a surface; apply_batch filters top-N to direct
+    # postings only when --source indeed.
+    apply_type_val = metadata.get("apply_type")
+    if apply_type_val:
+        lead["apply_type"] = str(apply_type_val)
+    redirect_chain = metadata.get("redirect_chain")
+    if isinstance(redirect_chain, list) and redirect_chain:
+        lead["redirect_chain"] = [str(item) for item in redirect_chain if str(item).strip()]
     write_json(output_dir / f"{lead_id}.json", lead)
     return lead
 

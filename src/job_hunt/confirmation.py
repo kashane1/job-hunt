@@ -309,7 +309,7 @@ def verify_sender(parsed: ParsedEmail) -> str | None:
 # =============================================================================
 
 _PRIORITY: Final = {
-    "drafted": 0, "queued": 1, "applying": 2, "submitted": 3,
+    "drafted": 0, "queued": 1, "applying": 2, "awaiting_human_action": 2, "submitted": 3,
     "confirmed": 4, "rejected": 4, "ghosted": 4, "withdrawn": 4,
     "applied_externally": 4, "interview": 5, "offer": 6,
     "unknown_outcome": 2, "failed": 2, "posting_closed": 4,

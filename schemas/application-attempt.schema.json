@@ -31,6 +31,7 @@
         "submitted_confirmed",
         "paused_tier2",
         "paused_unknown_question",
+        "paused_manual_assist",
         "paused_human_abort",
         "failed",
         "dry_run_only",

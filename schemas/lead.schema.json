@@ -42,6 +42,12 @@
     "ingested_at": { "type": "string" },
     "canonical_url": { "type": "string" },
     "ingestion_notes": { "type": "string" },
+    "origin_board": { "type": "string" },
+    "posting_url": { "type": "string" },
+    "redirect_chain": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "discovered_via": {
       "type": "array",
       "items": {
