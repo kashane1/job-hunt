@@ -329,6 +329,7 @@ _SURFACE_URL_MATCHERS: Final = (
 
 _SURFACE_PLAYBOOKS: Final = {
     "indeed_easy_apply": "playbooks/application/indeed-easy-apply.md",
+    "indeed_external_redirect": "playbooks/application/indeed-easy-apply.md",
     "greenhouse_redirect": "playbooks/application/greenhouse-redirect.md",
     "lever_redirect": "playbooks/application/lever-redirect.md",
     "workday_redirect": "playbooks/application/workday-redirect.md",
@@ -350,13 +351,27 @@ DEFAULT_FIELD_SET: Final = (
 )
 
 
-def detect_surface(posting_url: str) -> str:
-    """Classify a posting URL into the v1 surface enum. Defaults to
-    ``indeed_easy_apply`` — the agent playbook re-routes if the real page
-    redirects to a different ATS.
+def detect_surface(posting_url: str, apply_type: str | None = None) -> str:
+    """Classify a posting URL into the v1 surface enum.
+
+    When the caller provides ``apply_type`` (from the lead record's
+    ``apply_type`` field, populated during Indeed viewjob ingestion via
+    schema.org JobPosting.directApply), we can distinguish Indeed-hosted
+    postings that redirect to an external ATS ("external") from the ones
+    that use Indeed Easy Apply ("direct"). The old URL-only heuristic
+    labeled every indeed.com posting ``indeed_easy_apply`` — which broke
+    apply-batch the first time it hit an "Apply on company site" posting
+    because our playbook drives Easy Apply forms, not external redirects.
+
+    Mapping:
+    - indeed.com + apply_type="direct" or unknown → ``indeed_easy_apply``
+    - indeed.com + apply_type="external" → ``indeed_external_redirect``
+    - everything else → existing URL-pattern surfaces
     """
     for pattern, surface in _SURFACE_URL_MATCHERS:
         if pattern.search(posting_url):
+            if surface == "indeed_easy_apply" and apply_type == "external":
+                return "indeed_external_redirect"
             return surface
     return "indeed_easy_apply"
 
@@ -514,7 +529,7 @@ def prepare_application(
 
     # Surface + playbook
     posting_url = lead.get("canonical_url") or lead.get("application_url") or lead.get("posting_url") or ""
-    surface = detect_surface(posting_url)
+    surface = detect_surface(posting_url, lead.get("apply_type"))
     playbook_path = playbook_for_surface(surface)
 
     # Correlation keys for later confirmation matching
@@ -1356,22 +1371,73 @@ def _daily_submission_count(data_root: Path) -> int:
     return count
 
 
+def _already_submitted_posting_urls(data_root: Path) -> set[str]:
+    """Return the set of ``correlation_keys.posting_url`` values belonging
+    to drafts that have a ``submitted_provisional`` or ``submitted_confirmed``
+    attempt recorded in their ``status.json``.
+
+    Used by ``_select_leads`` to filter re-discovered leads that already
+    have a submission, so ``apply_batch`` never tries to re-prepare them
+    and crash on ``draft_already_exists``.
+    """
+    urls: set[str] = set()
+    apps_dir = data_root / "applications"
+    if not apps_dir.is_dir():
+        return urls
+    for draft_dir in apps_dir.iterdir():
+        if not draft_dir.is_dir() or draft_dir.name == "batches":
+            continue
+        plan_path = draft_dir / "plan.json"
+        status_path = draft_dir / "status.json"
+        if not plan_path.is_file() or not status_path.is_file():
+            continue
+        try:
+            status = read_json(status_path)
+        except Exception:
+            continue
+        attempts = status.get("attempts", []) or []
+        submitted = any(
+            str(a.get("status", "")) in ("submitted_provisional", "submitted_confirmed")
+            for a in attempts
+        )
+        if not submitted:
+            continue
+        try:
+            plan = read_json(plan_path)
+        except Exception:
+            continue
+        url = (plan.get("correlation_keys") or {}).get("posting_url") or ""
+        if url:
+            urls.add(url)
+    return urls
+
+
 def _select_leads(
     leads_dir: Path,
     *,
     top: int,
     source: str | None,
     score_floor: float | None,
+    data_root: Path | None = None,
 ) -> list[dict]:
     """Return up to ``top`` scored leads matching the filters.
 
     Source filter matches ``lead['source']`` prefix (e.g. source='indeed'
     matches 'indeed_search' + 'indeed_viewjob'). Leads with an existing
     terminal status (submitted, confirmed, withdrawn, etc.) are excluded.
+
+    When ``data_root`` is provided, leads whose ``application_url`` or
+    ``canonical_url`` matches a posting URL of an already-submitted draft
+    are also filtered out — this prevents ``apply_batch`` from crashing on
+    ``draft_already_exists`` when a re-discovery surfaces a lead whose
+    prior draft has already been submitted.
     """
     if not leads_dir.is_dir():
         return []
     excluded_statuses = {"applied", "submitted", "confirmed", "withdrawn", "applied_externally"}
+    submitted_urls: set[str] = (
+        _already_submitted_posting_urls(data_root) if data_root is not None else set()
+    )
     candidates: list[tuple[float, dict]] = []
     for path in leads_dir.glob("*.json"):
         try:
@@ -1386,6 +1452,29 @@ def _select_leads(
         if source:
             lead_source = str(lead.get("source", ""))
             if not (lead_source == source or lead_source.startswith(source + "_")):
+                continue
+            # When source is indeed-family, skip postings that redirect to
+            # an external ATS — the Easy Apply playbook can't drive them
+            # and apply-batch shouldn't burn a draft-slot preparing plans
+            # the agent will skip at apply time. apply_type is populated
+            # during _fetch_indeed_viewjob from JobPosting.directApply.
+            # Legacy leads without apply_type ("") fall through here so
+            # we don't silently drop an unknown-status posting — the
+            # draft still gets prepped and the agent can decide.
+            if source.startswith("indeed") and lead.get("apply_type") == "external":
+                continue
+        if submitted_urls:
+            lead_urls = {
+                str(lead.get("canonical_url") or ""),
+                str(lead.get("application_url") or ""),
+                str(lead.get("posting_url") or ""),
+            }
+            lead_urls.discard("")
+            if lead_urls & submitted_urls:
+                logger.warning(
+                    "skipping lead %s — posting already submitted",
+                    lead.get("lead_id"),
+                )
                 continue
         score = float(lead.get("fit_assessment", {}).get("fit_score", 0))
         if score_floor is not None and score < score_floor:
@@ -1515,6 +1604,7 @@ def apply_batch(
         # Lead selection
         leads = _select_leads(
             leads_dir, top=top, source=source, score_floor=score_floor,
+            data_root=data_root,
         )
         if not leads:
             raise PlanError(
@@ -1564,7 +1654,30 @@ def apply_batch(
             if prepared_cached is not None:
                 prepared = prepared_cached
             else:
-                prepared = _prep(lead)
+                try:
+                    prepared = _prep(lead)
+                except PlanError as exc:
+                    # A re-discovered lead whose prior draft was already
+                    # submitted will collide on ``draft_already_exists``.
+                    # Skip it and keep the batch going — the preventive
+                    # filter in ``_select_leads`` should catch this in
+                    # most cases, but a lead's URL may not match exactly
+                    # or the lead may have been re-scored after submit.
+                    if exc.error_code == "draft_already_exists":
+                        logger.warning(
+                            "skipping lead %s — draft already exists (%s)",
+                            lead.get("lead_id"), exc,
+                        )
+                        results.append(BatchLeadResult(
+                            draft_id=_draft_id_for_lead(lead.get("lead_id", "")),
+                            lead_id=str(lead.get("lead_id", "")),
+                            final_status="skipped_already_prepared",
+                            tier="unknown",
+                            duration_seconds=time.monotonic() - lead_start,
+                            error_code="draft_already_exists",
+                        ))
+                        continue
+                    raise
 
             # Emit an apply-posting handoff bundle to the progress channel
             # so an external agent can pick it up.

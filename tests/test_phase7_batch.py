@@ -27,6 +27,7 @@ if str(SRC) not in sys.path:
 
 from job_hunt.application import (
     PlanError,
+    _select_leads,
     apply_batch,
     batch_cancel,
     batch_status,
@@ -382,6 +383,117 @@ class AutoSubmitOverrideRejectedTest(unittest.TestCase):
                     enable_heartbeat_thread=False,
                 )
             self.assertEqual(ctx.exception.error_code, "policy_loosen_attempt")
+
+
+class DraftAlreadyExistsSkipTest(unittest.TestCase):
+    """When a re-discovered lead's draft already exists (because it was
+    previously submitted), ``apply_batch`` must skip it and keep processing
+    the rest of the batch instead of aborting.
+    """
+
+    def test_batch_continues_past_draft_already_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            _seed_leads(data_root / "leads", 3)
+
+            # Pre-create the draft dir for lead 0 so prepare_application
+            # raises PlanError(draft_already_exists). We do NOT create a
+            # plan.json so the preventive _select_leads filter doesn't
+            # catch it — this exercises the in-loop safety net.
+            from job_hunt.application import _draft_id_for_lead
+            draft_id = _draft_id_for_lead("indeed-lead-002")  # top-scored
+            stale_dir = data_root / "applications" / draft_id
+            stale_dir.mkdir(parents=True)
+
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
+                result = apply_batch(
+                    top=3, runtime_policy=POLICY_NO_SLEEP,
+                    candidate_profile=PROFILE,
+                    data_root=data_root,
+                    leads_dir=data_root / "leads",
+                    sleep_fn=lambda _: None,
+                    rng=random.Random(42),
+                    enable_heartbeat_thread=False,
+                )
+
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(len(result["results"]), 3)
+            statuses = [r["final_status"] for r in result["results"]]
+            self.assertIn("skipped_already_prepared", statuses)
+            # The remaining two leads still got prepared.
+            self.assertEqual(
+                sum(1 for s in statuses if s == "prepared"), 2,
+                f"expected 2 prepared leads after skip, got {statuses}",
+            )
+            # Skipped entry carries the diagnostic error code.
+            skipped = [r for r in result["results"] if r["final_status"] == "skipped_already_prepared"]
+            self.assertEqual(skipped[0]["error_code"], "draft_already_exists")
+
+
+class SelectLeadsSkipsSubmittedUrlsTest(unittest.TestCase):
+    """``_select_leads`` must filter out leads whose canonical/application
+    URL matches an already-submitted draft's ``correlation_keys.posting_url``.
+    """
+
+    def test_skips_lead_whose_url_matches_submitted_draft(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            leads_dir = data_root / "leads"
+            _seed_leads(leads_dir, 2)
+
+            # lead-000 URL matches a submitted draft on disk.
+            lead0 = read_json(leads_dir / "indeed-lead-000.json")
+            submitted_url = lead0["canonical_url"]
+
+            submitted_draft = data_root / "applications" / "submitted-draft"
+            (submitted_draft / "attempts").mkdir(parents=True)
+            write_json(submitted_draft / "plan.json", {
+                "schema_version": 1,
+                "correlation_keys": {"posting_url": submitted_url},
+            })
+            write_json(submitted_draft / "status.json", {
+                "schema_version": 1,
+                "lifecycle_state": "submitted",
+                "attempts": [{"status": "submitted_provisional"}],
+            })
+
+            selected = _select_leads(
+                leads_dir, top=10, source="indeed", score_floor=None,
+                data_root=data_root,
+            )
+            selected_ids = {l["lead_id"] for l in selected}
+            self.assertNotIn("indeed-lead-000", selected_ids)
+            self.assertIn("indeed-lead-001", selected_ids)
+
+    def test_does_not_skip_when_only_drafted_no_submission(self) -> None:
+        # A draft that exists but has no submitted attempt should NOT
+        # filter the lead — the batch can legitimately re-prepare it
+        # with --force or after a reconcile. (This test documents the
+        # boundary of the filter's scope.)
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            leads_dir = data_root / "leads"
+            _seed_leads(leads_dir, 1)
+            lead0 = read_json(leads_dir / "indeed-lead-000.json")
+
+            draft = data_root / "applications" / "drafted-only"
+            (draft / "attempts").mkdir(parents=True)
+            write_json(draft / "plan.json", {
+                "schema_version": 1,
+                "correlation_keys": {"posting_url": lead0["canonical_url"]},
+            })
+            write_json(draft / "status.json", {
+                "schema_version": 1,
+                "lifecycle_state": "drafted",
+                "attempts": [],
+            })
+
+            selected = _select_leads(
+                leads_dir, top=10, source="indeed", score_floor=None,
+                data_root=data_root,
+            )
+            self.assertEqual({l["lead_id"] for l in selected}, {"indeed-lead-000"})
 
 
 if __name__ == "__main__":
