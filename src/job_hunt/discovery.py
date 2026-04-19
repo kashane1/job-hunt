@@ -1260,12 +1260,16 @@ def discover_jobs(
         )
 
     rate_limiter = DomainRateLimiter(default_interval_s=0.5)
-    # Anti-bot-prone hosts get human-like pacing: 3-7s randomized between
-    # requests. Clockwork cadence is itself a bot fingerprint; uniform jitter
-    # breaks the pattern and keeps us inside the ToS-defense pacing envelope.
-    # Greenhouse/Lever/etc. are public JSON APIs and stay on the fast default.
-    rate_limiter.set_human_jitter("indeed.com", 3.0, 7.0)
-    rate_limiter.set_human_jitter("linkedin.com", 3.0, 7.0)
+    # Anti-bot-prone hosts get human-like pacing: 20-30s randomized between
+    # requests. Was 3-7s, raised after Kashane's 2026-04-18 session hit 403s
+    # late in the day even though the chrome-UA fix unblocked earlier runs —
+    # Indeed's edge accumulates session-level signals and escalates once the
+    # per-hour request count crosses an internal threshold. 20-30s matches a
+    # human reviewing each posting before clicking; much weaker signal for
+    # bot-detection heuristics. Greenhouse/Lever/etc. are public JSON APIs
+    # and stay on the fast default.
+    rate_limiter.set_human_jitter("indeed.com", 20.0, 30.0)
+    rate_limiter.set_human_jitter("linkedin.com", 20.0, 30.0)
     robots = RobotsCache(
         robots_cache_path, rate_limiter, DISCOVERY_USER_AGENT,
     )

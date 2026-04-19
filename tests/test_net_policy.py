@@ -142,12 +142,12 @@ class DiscoverJobsJitterWiringTest(unittest.TestCase):
     def test_discover_jobs_source_installs_jitter_for_indeed_and_linkedin(self) -> None:
         src = (ROOT / "src" / "job_hunt" / "discovery.py").read_text(encoding="utf-8")
         self.assertIn(
-            'set_human_jitter("indeed.com", 3.0, 7.0)', src,
-            "discover_jobs must install 3-7s jitter on indeed.com",
+            'set_human_jitter("indeed.com", 20.0, 30.0)', src,
+            "discover_jobs must install 20-30s jitter on indeed.com",
         )
         self.assertIn(
-            'set_human_jitter("linkedin.com", 3.0, 7.0)', src,
-            "discover_jobs must install 3-7s jitter on linkedin.com",
+            'set_human_jitter("linkedin.com", 20.0, 30.0)', src,
+            "discover_jobs must install 20-30s jitter on linkedin.com",
         )
 
 
