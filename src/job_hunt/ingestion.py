@@ -737,6 +737,14 @@ def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
     description_html = ""
     compensation = ""
     employment_type = ""
+    # `apply_type` captures whether this posting supports Indeed Easy Apply
+    # (direct) or redirects to an external ATS (external). The schema.org
+    # JobPosting.directApply boolean is the authoritative signal; falling
+    # back to the DOM button label when the field is missing. Downstream:
+    # prepare_application uses this to pick a surface + apply-batch skips
+    # non-direct postings so the top-10 sweep doesn't waste drafts on
+    # company-site redirects that need a different playbook.
+    apply_type: str | None = None
     found = False
     for match in _LD_JSON_RE.finditer(html_text):
         if found:
@@ -792,6 +800,9 @@ def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
                     elif lo:
                         compensation = f"{currency} {lo} {unit}".strip()
             employment_type = str(node.get("employmentType") or "")
+            direct_apply = node.get("directApply")
+            if isinstance(direct_apply, bool):
+                apply_type = "direct" if direct_apply else "external"
             found = True
             break
     if not description_html:
@@ -804,6 +815,16 @@ def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
         )
         if m:
             description_html = m.group(1)
+    # DOM-button fallback when JSON-LD didn't carry directApply.
+    # "Apply with Indeed" button → direct; "Apply on company site" → external.
+    # Case-insensitive substring match — Indeed occasionally tweaks the
+    # button label, but both phrases have been stable for years.
+    if apply_type is None:
+        lower = html_text.lower()
+        if "apply on company site" in lower:
+            apply_type = "external"
+        elif "apply with indeed" in lower or "easy apply" in lower:
+            apply_type = "direct"
     return {
         "title": title,
         "company": company,
@@ -811,6 +832,7 @@ def _fetch_indeed_viewjob(url: str, html_text: str | None = None) -> dict:
         "compensation": compensation,
         "employment_type": employment_type,
         "raw_description_html": description_html,
+        "apply_type": apply_type or "",
         "source": "indeed",
         "ingestion_method": "url_fetch_jsonld",
     }
@@ -866,6 +888,7 @@ def _to_markdown_with_frontmatter(fetched: dict) -> str:
         "source", "company", "title", "location", "application_url",
         "canonical_url", "compensation", "employment_type",
         "ingestion_method", "ingested_at", "ingestion_notes",
+        "apply_type",
     ):
         val = fetched.get(key)
         if val:
