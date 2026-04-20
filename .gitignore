@@ -8,6 +8,8 @@ __pycache__/
 venv/
 .pytest_cache/
 .mypy_cache/
+.claude/settings.local.json
+.claude/*.lock
 dist/
 build/
 *.tmp
@@ -40,4 +42,3 @@ data/applications/_suspicious/
 data/applications/batches/.lock
 docs/reports/answer-bank-pending.md
 docs/reports/apply-batch-*.md
-

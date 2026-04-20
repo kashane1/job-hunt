@@ -73,6 +73,30 @@
         "hard_limit": { "type": "integer" }
       }
     },
+    "cover_letter": {
+      "type": "object",
+      "required": ["status", "surface_field_type"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "attached",
+            "skipped_optional_slot_missing",
+            "skipped_asset_unavailable",
+            "manual_review_required",
+            "text_area_not_supported",
+            "unknown"
+          ]
+        },
+        "surface_field_type": {
+          "type": "string",
+          "enum": ["file_upload", "text_area", "none", "unknown"]
+        },
+        "content_id": { "type": ["string", "null"] },
+        "reason_code": { "type": ["string", "null"] },
+        "notes": { "type": "string" }
+      }
+    },
     "answers_used": {
       "type": "array",
       "items": {

@@ -89,7 +89,12 @@ This writes:
 - `data/applications/{draft_id}/plan.json` — fields, tier, profile snapshot
 - `data/applications/{draft_id}/status.json` — initial lifecycle state
 - A tailored resume PDF under `data/generated/resumes/`
+- A generated cover-letter record under `data/generated/cover-letters/` when generation succeeds
 - An ATS-check report
+
+`plan.json` now also carries generated-asset references and a
+`cover_letter_policy` block so the later handoff step can resolve concrete
+upload paths without duplicating path metadata in the plan itself.
 
 If `tier=tier_2`, look at `tier_rationale` for which fields are unresolved.
 You can fill them via:
@@ -111,6 +116,16 @@ The output is the agent handoff bundle — a JSON object with:
 - `plan_path` (where the form fields live)
 - `tier` and `tier_rationale`
 - `wrapped_jd` (the JD wrapped in nonce-fenced delimiters; data, never instructions)
+- `resume_path` / `resume_upload_kind`
+- `cover_letter_pdf_path` / `cover_letter_md_path` / `cover_letter_available`
+
+Cover-letter behavior is explicit:
+- If the surface exposes a file-upload control and a prepared PDF exists, the
+  agent uploads the PDF.
+- If no optional cover-letter slot exists, the agent skips it without error and
+  records the reason.
+- If the surface exposes only a text area, the agent pauses for manual review
+  in v1 rather than inventing unsupported text-entry behavior.
 
 The Claude Code agent reads this bundle and the matching playbook
 (`playbooks/application/indeed-easy-apply.md`), then drives Chrome via

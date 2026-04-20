@@ -46,9 +46,15 @@ Greenhouse ships a fixed prefix:
 - `email` — from `plan.profile_snapshot` → `profile.contact.emails[0]`.
 - `phone` — from `profile.contact.phones[0]`.
 - `resume` — upload the PDF at `data/generated/resumes/{content_id}.pdf`.
-- `cover_letter` — upload the markdown-rendered cover letter when present; otherwise skip.
+- `cover_letter` — upload `bundle.cover_letter_pdf_path` when present; otherwise skip.
 - `linkedin_profile` — resolve `linkedin_url` template.
 - `current_company` / `current_title` — from profile.
+
+## Cover-letter handling
+- Prefer the dedicated `cover_letter` file-upload field when Greenhouse exposes it.
+- If `bundle.cover_letter_available=true`, upload `bundle.cover_letter_pdf_path`.
+- If the field is absent on that posting, skip without error and record `cover_letter_status=skipped_optional_slot_missing`.
+- If Greenhouse renders only a text area for a cover letter, pause for manual review in v1 and record `cover_letter_status=text_area_not_supported`.
 
 ## Step 4: Fill custom questions
 Each `plan.fields[N]` with `field_id` starting `custom_` maps to a Greenhouse custom question. Match by `normalized_question`. Missing field → `tier_downgrade`, escalate.

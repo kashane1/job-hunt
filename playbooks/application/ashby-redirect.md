@@ -43,6 +43,12 @@ Ashby's prefix:
 - `linkedin_url`
 - Optional: `phone`, `website`, `current_company`
 
+## Cover-letter handling
+- Check Ashby's standard document section for a cover-letter upload field.
+- If `bundle.cover_letter_available=true` and the field exists, upload `bundle.cover_letter_pdf_path`.
+- If the field is absent, skip without error and record `cover_letter_status=skipped_optional_slot_missing`.
+- If Ashby exposes only a text area, pause for manual review in v1 and record `cover_letter_status=text_area_not_supported`.
+
 ## Step 4: Custom questions
 Match `plan.fields` entries with `field_id` starting `custom_` by normalized question. Ashby's custom-question block is rendered below the standard prefix. Missing → `tier_downgrade`.
 

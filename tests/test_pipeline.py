@@ -149,6 +149,11 @@ application_url: https://example.com/jobs/123
                     "account_action": "reused",
                     "blocked_reason": "",
                     "final_url": "https://example.com/thanks",
+                    "cover_letter_status": "attached",
+                    "cover_letter_surface_field_type": "file_upload",
+                    "cover_letter_content_id": "cover-123",
+                    "cover_letter_reason_code": None,
+                    "cover_letter_notes": "Uploaded prepared PDF.",
                     "password": "super-secret",
                     "tab_metrics": {
                         "opened": 3,
@@ -180,6 +185,8 @@ application_url: https://example.com/jobs/123
             self.assertTrue(report["submission"]["final_submit_approval_obtained"])
             self.assertTrue(report["submission"]["account_creation_approval_required"])
             self.assertTrue(report["submission"]["account_creation_approval_obtained"])
+            self.assertEqual(report["cover_letter"]["status"], "attached")
+            self.assertEqual(report["cover_letter"]["surface_field_type"], "file_upload")
             self.assertEqual(report["attempt"]["password"], "[REDACTED]")
             self.assertIn("password", report["redaction"]["fields_redacted"])
             self.assertEqual(report["browser_metrics"]["peak_open_tabs"], 3)

@@ -206,6 +206,41 @@ def _seed_bank(data_root: Path) -> Path:
     return path
 
 
+def _seed_generated_asset(
+    data_root: Path,
+    *,
+    kind: str,
+    content_id: str,
+    lead_id: str,
+    md_name: str,
+    pdf: bool = True,
+) -> dict:
+    mapping = {
+        "resume": "resumes",
+        "cover_letter": "cover-letters",
+    }
+    out_dir = data_root / "generated" / mapping[kind]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    md_path = out_dir / md_name
+    md_path.write_text(f"# {content_id}\n", encoding="utf-8")
+    record = {
+        "content_id": content_id,
+        "content_type": kind,
+        "variant_style": "test",
+        "generated_at": "2026-04-19T00:00:00+00:00",
+        "lead_id": lead_id,
+        "source_document_ids": [],
+        "output_path": str(md_path),
+    }
+    if pdf:
+        pdf_path = md_path.with_suffix(".pdf")
+        pdf_path.write_bytes(b"%PDF-1.4\n")
+        record["pdf_path"] = str(pdf_path)
+        record["pdf_generated_at"] = "2026-04-19T00:00:01+00:00"
+    write_json(out_dir / f"{content_id}.json", record)
+    return record
+
+
 class SurfaceDetectionTest(unittest.TestCase):
     def test_indeed_url(self) -> None:
         self.assertEqual(
@@ -280,6 +315,63 @@ class PreparePipelineTest(unittest.TestCase):
             # Every field has an answer; tier should be tier_1.
             self.assertEqual(plan["tier"], "tier_1")
             self.assertTrue(all(f["provenance"] != "none" for f in plan["fields"]))
+
+    def test_prepare_writes_generated_asset_refs_and_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])), \
+                 patch("job_hunt.application._build_resume_asset_ref", return_value={
+                     "content_id": "resume-1",
+                     "available": True,
+                     "preferred_upload_kind": "pdf",
+                     "pdf_export_status": "ready",
+                 }), \
+                 patch("job_hunt.application._build_cover_letter_asset_ref", return_value={
+                     "content_id": "cover-1",
+                     "available": True,
+                     "generation_status": "generated",
+                     "preferred_upload_kind": "pdf",
+                     "pdf_export_status": "ready",
+                 }):
+                result = prepare_application(
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            plan = read_json(result.draft_dir / "plan.json")
+            self.assertEqual(plan["generated_asset_refs"]["resume"]["content_id"], "resume-1")
+            self.assertEqual(plan["generated_asset_refs"]["cover_letter"]["content_id"], "cover-1")
+            self.assertEqual(plan["cover_letter_policy"]["text_area_policy"], "manual_only")
+            status = read_json(result.draft_dir / "status.json")
+            self.assertEqual(status["generated_content_ids"], ["resume-1", "cover-1"])
+
+    def test_prepare_cover_letter_pdf_failure_is_nonfatal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])), \
+                 patch("job_hunt.application._build_resume_asset_ref", return_value={
+                     "content_id": "resume-1",
+                     "available": True,
+                     "preferred_upload_kind": "pdf",
+                     "pdf_export_status": "ready",
+                 }), \
+                 patch("job_hunt.application._build_cover_letter_asset_ref", return_value={
+                     "content_id": "cover-1",
+                     "available": True,
+                     "generation_status": "generated",
+                     "preferred_upload_kind": "pdf",
+                     "pdf_export_status": "failed",
+                 }):
+                result = prepare_application(
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            plan = read_json(result.draft_dir / "plan.json")
+            self.assertEqual(plan["generated_asset_refs"]["cover_letter"]["pdf_export_status"], "failed")
+            self.assertEqual(plan["tier"], "tier_1")
 
     def test_prepare_tier_2_when_field_unresolved(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -567,6 +659,79 @@ class ApplyPostingTest(unittest.TestCase):
             # Delimiters present and nonce-tagged.
             self.assertIn("<untrusted_jd_", bundle["wrapped_jd"])
             self.assertIn("</untrusted_jd_", bundle["wrapped_jd"])
+
+    def test_manual_assist_bundle_resolves_real_asset_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            _seed_generated_asset(
+                data_root,
+                kind="resume",
+                content_id="resume-1",
+                lead_id=LINKEDIN_ASSIST_LEAD["lead_id"],
+                md_name="resume-1.md",
+            )
+            cover = _seed_generated_asset(
+                data_root,
+                kind="cover_letter",
+                content_id="cover-1",
+                lead_id=LINKEDIN_ASSIST_LEAD["lead_id"],
+                md_name="cover-1.md",
+            )
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])), \
+                 patch("job_hunt.application._build_resume_asset_ref", return_value={
+                     "content_id": "resume-1",
+                     "available": True,
+                     "preferred_upload_kind": "pdf",
+                     "pdf_export_status": "ready",
+                 }), \
+                 patch("job_hunt.application._build_cover_letter_asset_ref", return_value={
+                     "content_id": "cover-1",
+                     "available": True,
+                     "generation_status": "generated",
+                     "preferred_upload_kind": "pdf",
+                     "pdf_export_status": "ready",
+                 }):
+                result = prepare_application(
+                    LINKEDIN_ASSIST_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            bundle = apply_posting(result.draft_id, data_root=data_root)
+            self.assertEqual(bundle["resume_upload_kind"], "pdf")
+            self.assertTrue(bundle["resume_path"].endswith(".pdf"))
+            self.assertEqual(bundle["cover_letter_pdf_path"], cover["pdf_path"])
+            self.assertEqual(bundle["cover_letter_md_path"], cover["output_path"])
+            self.assertTrue(bundle["cover_letter_available"])
+            self.assertIn("cover-letter PDF", bundle["cover_letter_review_note"])
+
+    def test_bundle_handles_unavailable_cover_letter_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])), \
+                 patch("job_hunt.application._build_resume_asset_ref", return_value={
+                     "content_id": None,
+                     "available": False,
+                     "preferred_upload_kind": "pdf",
+                     "pdf_export_status": "unavailable",
+                 }), \
+                 patch("job_hunt.application._build_cover_letter_asset_ref", return_value={
+                     "content_id": None,
+                     "available": False,
+                     "generation_status": "failed",
+                     "preferred_upload_kind": "pdf",
+                     "pdf_export_status": "not_attempted",
+                 }):
+                result = prepare_application(
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            bundle = apply_posting(result.draft_id, data_root=data_root)
+            self.assertIsNone(bundle["cover_letter_path"])
+            self.assertFalse(bundle["cover_letter_available"])
+            self.assertIn("No prepared cover-letter asset", bundle["cover_letter_review_note"])
 
 
 class MutationsTest(unittest.TestCase):

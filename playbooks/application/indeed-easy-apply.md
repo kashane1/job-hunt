@@ -69,6 +69,12 @@ Any hit → STOP → `ApplicationError(unknown_question)` with remediation `"AI 
 
 After all declared fields are filled: `checkpoint-update` to `fields_filled`.
 
+## Cover-letter handling
+- Check for a cover-letter file-upload control after the main form is open and before the final review state.
+- If `bundle.cover_letter_available=true` and a file-upload control exists, upload `bundle.cover_letter_pdf_path`.
+- If no cover-letter control exists, skip without error and record `cover_letter_status=skipped_optional_slot_missing` with `cover_letter_surface_field_type=none`.
+- If Indeed exposes only a text-area cover-letter prompt, pause for manual review in v1 and record `cover_letter_status=text_area_not_supported`.
+
 ## Step 5: Pre-submit screenshot
 - Screenshot the form area ONLY (exclude browser chrome, tabs, extension popups).
 - Run the post-capture PIL blur pass on regions matching address/phone/email regex.

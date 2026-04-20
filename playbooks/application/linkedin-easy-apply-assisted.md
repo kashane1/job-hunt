@@ -25,6 +25,8 @@ Rules:
 Checklist:
 1. Confirm the prepared bundle has `surface_policy=automation_forbidden_on_origin`.
 2. Show the human the prepared field summary and review items.
-3. Remind the human to complete login, MFA, CAPTCHA, and any profile gates manually.
-4. Stop before any LinkedIn-hosted form interaction would be automated.
-5. After the human acts, record `submitted_provisional`, `paused_human_abort`, or `unknown_outcome`.
+3. Show the human `resume_path`, `cover_letter_pdf_path`, and `cover_letter_md_path` when present.
+4. Ask the human to note whether LinkedIn exposed a file-upload field, a text-area field, or no cover-letter control.
+5. Remind the human to complete login, MFA, CAPTCHA, and any profile gates manually.
+6. Stop before any LinkedIn-hosted form interaction would be automated.
+7. After the human acts, record `submitted_provisional`, `paused_human_abort`, or `unknown_outcome`, plus the cover-letter outcome fields.

@@ -58,6 +58,12 @@ Workday's step names vary by tenant, but the sequence is stable:
 
 For each page, fill known fields from `plan.fields`. Click "Save and Continue". **If any required field is missing an answer → `tier_downgrade`, pause for the human to type it in.**
 
+## Cover-letter handling
+- Only attempt cover-letter upload when Workday exposes a clearly separate attachment control.
+- If `bundle.cover_letter_available=true` and that upload control exists, upload `bundle.cover_letter_pdf_path`.
+- If the only available cover-letter input is a text area or the document flow is ambiguous, surface the prepared asset to the human and record `cover_letter_status=manual_review_required`.
+- If no cover-letter control exists at all, skip without error and record `cover_letter_status=skipped_optional_slot_missing`.
+
 After all steps reach the "Review" page: `checkpoint-update` to `fields_filled`.
 
 ## Step 5: Pre-submit screenshot (Review page)

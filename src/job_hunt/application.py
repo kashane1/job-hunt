@@ -438,6 +438,188 @@ def _indeed_jk_from_url(url: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _generated_content_dir(data_root: Path, kind: str) -> Path:
+    mapping = {
+        "resume": "resumes",
+        "cover_letter": "cover-letters",
+        "answer_set": "answers",
+    }
+    return data_root / "generated" / mapping[kind]
+
+
+def _latest_generated_record(data_root: Path, kind: str, lead_id: str) -> tuple[Path, dict] | None:
+    generated_dir = _generated_content_dir(data_root, kind)
+    if not generated_dir.is_dir():
+        return None
+    best: tuple[str, Path, dict] | None = None
+    for path in generated_dir.glob("*.json"):
+        try:
+            record = read_json(path)
+        except (OSError, ValueError):
+            continue
+        if record.get("content_type") != kind or record.get("lead_id") != lead_id:
+            continue
+        generated_at = str(record.get("generated_at") or "")
+        if best is None or generated_at > best[0]:
+            best = (generated_at, path, record)
+    if best is None:
+        return None
+    return best[1], best[2]
+
+
+def _resolve_generated_content_record(data_root: Path, content_id: str) -> tuple[Path, dict] | None:
+    if not content_id:
+        return None
+    for kind in ("resume", "cover_letter", "answer_set"):
+        path = _generated_content_dir(data_root, kind) / f"{content_id}.json"
+        if path.is_file():
+            try:
+                return path, read_json(path)
+            except (OSError, ValueError):
+                return None
+    return None
+
+
+def _pdf_export_status(record: dict) -> str:
+    if record.get("pdf_path"):
+        return "ready"
+    if record.get("pdf_export_error_code"):
+        return "failed"
+    return "not_attempted"
+
+
+def _ensure_pdf_asset(record_path: Path, record: dict) -> dict:
+    if record.get("pdf_path"):
+        return record
+    from .pdf_export import PdfExportError, export_pdf
+
+    try:
+        return export_pdf(record_path)
+    except PdfExportError as exc:
+        refreshed = read_json(record_path)
+        refreshed["pdf_export_error_code"] = exc.error_code
+        refreshed["pdf_export_error"] = str(exc)
+        write_json(record_path, refreshed)
+        return refreshed
+
+
+def _build_resume_asset_ref(lead_id: str, data_root: Path) -> dict:
+    latest = _latest_generated_record(data_root, "resume", lead_id)
+    if latest is None:
+        return {
+            "content_id": None,
+            "available": False,
+            "preferred_upload_kind": "pdf",
+            "pdf_export_status": "unavailable",
+        }
+    record_path, record = latest
+    record = _ensure_pdf_asset(record_path, record)
+    return {
+        "content_id": record.get("content_id"),
+        "available": True,
+        "preferred_upload_kind": "pdf" if record.get("pdf_path") else "markdown",
+        "pdf_export_status": _pdf_export_status(record),
+    }
+
+
+def _build_cover_letter_asset_ref(lead: dict, candidate_profile: dict, data_root: Path) -> dict:
+    from .generation import generate_cover_letter
+
+    cover_dir = _generated_content_dir(data_root, "cover_letter")
+    ensure_dir(cover_dir)
+    try:
+        record = generate_cover_letter(
+            lead,
+            candidate_profile,
+            None,
+            cover_dir,
+        )
+    except ValueError as exc:
+        return {
+            "content_id": None,
+            "available": False,
+            "generation_status": "failed",
+            "generation_error_code": getattr(exc, "code", "generation_failed"),
+            "preferred_upload_kind": "pdf",
+            "pdf_export_status": "not_attempted",
+        }
+    record_path = cover_dir / f"{record['content_id']}.json"
+    record = _ensure_pdf_asset(record_path, record)
+    return {
+        "content_id": record.get("content_id"),
+        "available": True,
+        "generation_status": "generated",
+        "preferred_upload_kind": "pdf",
+        "pdf_export_status": _pdf_export_status(record),
+    }
+
+
+def _cover_letter_policy(surface: str) -> dict:
+    preferred_stage = "late_documents_step"
+    if surface == "workday_redirect":
+        preferred_stage = "explicit_documents_step"
+    elif surface == "linkedin_easy_apply_assisted":
+        preferred_stage = "human_review_step"
+    return {
+        "should_attempt_attachment": True,
+        "preferred_stage": preferred_stage,
+        "text_area_policy": "manual_only",
+        "required_slot_without_asset_policy": "pause_for_human_review",
+    }
+
+
+def _resolve_upload_asset(data_root: Path, content_id: str | None) -> dict:
+    resolved = _resolve_generated_content_record(data_root, content_id or "")
+    if resolved is None:
+        return {
+            "content_id": content_id,
+            "available": False,
+            "md_path": None,
+            "pdf_path": None,
+            "path": None,
+            "upload_kind": None,
+            "pdf_export_status": "unavailable",
+        }
+    _, record = resolved
+    pdf_path = record.get("pdf_path") or None
+    md_path = record.get("output_path") or None
+    if pdf_path:
+        path = pdf_path
+        upload_kind = "pdf"
+    elif md_path:
+        path = md_path
+        upload_kind = "markdown"
+    else:
+        path = None
+        upload_kind = None
+    return {
+        "content_id": record.get("content_id"),
+        "available": bool(path),
+        "md_path": md_path,
+        "pdf_path": pdf_path,
+        "path": path,
+        "upload_kind": upload_kind,
+        "pdf_export_status": _pdf_export_status(record),
+    }
+
+
+def _cover_letter_review_note(asset: dict, policy: dict) -> str:
+    if not asset.get("available"):
+        return (
+            "No prepared cover-letter asset is available. Skip optional slots and "
+            "pause for human review if the surface makes the field required."
+        )
+    if asset.get("pdf_path"):
+        return (
+            "Upload the prepared cover-letter PDF when a file-upload control is present. "
+            f"If only a text area exists, follow policy={policy.get('text_area_policy')}."
+        )
+    return (
+        "A markdown cover-letter artifact exists, but PDF export is unavailable. "
+        "Treat file-upload or text-area handling as manual review."
+    )
+
+
 # =============================================================================
 # Phase 4: prepare_application
 # =============================================================================
@@ -570,6 +752,16 @@ def prepare_application(
     except Exception as exc:  # noqa: BLE001 — lenient on batch-4 ATS integration
         ats_warnings.append(f"ats_check unavailable: {exc}")
 
+    generated_asset_refs = {
+        "resume": _build_resume_asset_ref(lead_id, data_root),
+        "cover_letter": _build_cover_letter_asset_ref(lead, candidate_profile, data_root),
+    }
+    generated_content_ids = [
+        str(ref["content_id"])
+        for ref in generated_asset_refs.values()
+        if ref.get("content_id")
+    ]
+
     # Tier + rationale
     tier, rationale = _compute_tier(
         ats_status=ats_status,
@@ -602,6 +794,8 @@ def prepare_application(
             "errors": ats_errors,
             "warnings": ats_warnings,
         },
+        "generated_asset_refs": generated_asset_refs,
+        "cover_letter_policy": _cover_letter_policy(surface),
         "prepared_at": now_iso(),
     }
     write_json(draft_dir / "plan.json", plan)
@@ -619,6 +813,7 @@ def prepare_application(
         "executor_backend": target.executor_backend,
         "tier": tier,
         "tier_rationale": rationale,
+        "generated_content_ids": generated_content_ids,
         "transitions": [],
         "attempts": [],
         "events": [],
@@ -1109,19 +1304,45 @@ def apply_posting(
         "dry_run": dry_run,
         "expected_checkpoints": load_checkpoint_dag(plan.get("playbook_path", "")),
     }
+    generated_asset_refs = plan.get("generated_asset_refs", {}) or {}
+    resume_asset = _resolve_upload_asset(
+        data_root,
+        (generated_asset_refs.get("resume") or {}).get("content_id"),
+    )
+    cover_letter_asset = _resolve_upload_asset(
+        data_root,
+        (generated_asset_refs.get("cover_letter") or {}).get("content_id"),
+    )
+    cover_letter_policy = plan.get("cover_letter_policy") or _cover_letter_policy(
+        str(plan.get("surface") or "")
+    )
+    bundle.update({
+        "resume_path": resume_asset.get("path"),
+        "resume_upload_kind": resume_asset.get("upload_kind"),
+        "resume_content_id": resume_asset.get("content_id"),
+        "cover_letter_path": cover_letter_asset.get("path"),
+        "cover_letter_pdf_path": cover_letter_asset.get("pdf_path"),
+        "cover_letter_md_path": cover_letter_asset.get("md_path"),
+        "cover_letter_available": bool(cover_letter_asset.get("available")),
+        "cover_letter_content_id": cover_letter_asset.get("content_id"),
+        "cover_letter_policy": cover_letter_policy,
+        "cover_letter_review_note": _cover_letter_review_note(
+            cover_letter_asset,
+            cover_letter_policy,
+        ),
+    })
     if handoff_kind == "manual_assist":
         bundle.update({
             "operator_checklist": [
                 "Open the LinkedIn job page manually in your own browser session.",
                 "Review every flagged field and provenance before typing anything.",
+                "Inspect whether LinkedIn offers a cover-letter upload field, text area, or no control at all.",
                 "Complete any login, MFA, CAPTCHA, or profile prompts manually.",
                 "Do not let the agent automate LinkedIn-hosted form actions.",
                 "Record the outcome after you submit, abort, or stop.",
             ],
             "field_summary": field_summary,
             "review_items": review_items,
-            "resume_path": "",
-            "cover_letter_path": "",
             "outcome_recording_instructions": (
                 "Record a follow-up attempt with status submitted_provisional, "
                 "paused_human_abort, or unknown_outcome after the human completes the LinkedIn flow."

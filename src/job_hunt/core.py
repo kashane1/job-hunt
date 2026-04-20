@@ -1413,6 +1413,7 @@ def checkpoint_records(report_generated_at: str) -> list[dict]:
 
 
 def report_markdown(report: dict, draft: dict, attempt: dict) -> str:
+    cover_letter = report.get("cover_letter", {})
     lines = [
         f"# Application Report: {report['lead_id']}",
         "",
@@ -1426,6 +1427,8 @@ def report_markdown(report: dict, draft: dict, attempt: dict) -> str:
         f"- Confirmed submitted: {report['submission']['confirmed_submitted']}",
         f"- Application quality score: {report['quality']['application_quality_score']}",
         f"- Truthfulness rating: {report['quality']['truthfulness_rating']}",
+        f"- Cover letter status: {cover_letter.get('status', 'unknown')}",
+        f"- Cover letter field type: {cover_letter.get('surface_field_type', 'unknown')}",
         "",
         "## Answers",
     ]
@@ -1446,6 +1449,13 @@ def report_markdown(report: dict, draft: dict, attempt: dict) -> str:
             f"- Hard limit hit: {report['browser_metrics']['hard_limit_hit']}",
             f"- Soft limit: {report['browser_metrics']['soft_limit']}",
             f"- Hard limit: {report['browser_metrics']['hard_limit']}",
+            "",
+            "## Cover Letter",
+            f"- Status: {cover_letter.get('status', 'unknown')}",
+            f"- Field type: {cover_letter.get('surface_field_type', 'unknown')}",
+            f"- Content ID: {cover_letter.get('content_id') or 'none'}",
+            f"- Reason code: {cover_letter.get('reason_code') or 'none'}",
+            f"- Notes: {cover_letter.get('notes') or 'none'}",
             "",
             "## Attempt Notes",
             f"- Account action: {attempt.get('account_action', 'unknown')}",
@@ -1476,6 +1486,15 @@ def write_application_report(
     account_creation = approval_snapshot(draft, "account_creation")
     answers_used = draft.get("prepared_answers", [])
     browser_audit = browser_metrics(attempt_payload, runtime_policy)
+    cover_letter = {
+        "status": str(attempt_payload.get("cover_letter_status") or "unknown"),
+        "surface_field_type": str(
+            attempt_payload.get("cover_letter_surface_field_type") or "unknown"
+        ),
+        "content_id": attempt_payload.get("cover_letter_content_id"),
+        "reason_code": attempt_payload.get("cover_letter_reason_code"),
+        "notes": str(attempt_payload.get("cover_letter_notes") or ""),
+    }
     # Reports must preserve enough machine-readable detail to explain exactly
     # what happened during an attempt without relying on browser session memory.
     report = {
@@ -1496,6 +1515,7 @@ def write_application_report(
         "quality": quality,
         "provenance_breakdown": provenance_breakdown,
         "browser_metrics": browser_audit,
+        "cover_letter": cover_letter,
         "answers_used": answers_used,
         "checkpoints": checkpoint_records(generated_at),
         "blockers": [attempt_payload["blocked_reason"]] if attempt_payload.get("blocked_reason") else [],

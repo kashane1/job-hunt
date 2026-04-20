@@ -126,6 +126,40 @@
         "warnings": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "generated_asset_refs": {
+      "type": "object",
+      "properties": {
+        "resume": {
+          "type": "object",
+          "properties": {
+            "content_id": { "type": ["string", "null"] },
+            "available": { "type": "boolean" },
+            "preferred_upload_kind": { "type": "string", "enum": ["pdf", "markdown"] },
+            "pdf_export_status": { "type": "string", "enum": ["ready", "failed", "not_attempted", "unavailable"] }
+          }
+        },
+        "cover_letter": {
+          "type": "object",
+          "properties": {
+            "content_id": { "type": ["string", "null"] },
+            "available": { "type": "boolean" },
+            "generation_status": { "type": "string", "enum": ["generated", "failed"] },
+            "generation_error_code": { "type": "string" },
+            "preferred_upload_kind": { "type": "string", "enum": ["pdf", "markdown"] },
+            "pdf_export_status": { "type": "string", "enum": ["ready", "failed", "not_attempted", "unavailable"] }
+          }
+        }
+      }
+    },
+    "cover_letter_policy": {
+      "type": "object",
+      "properties": {
+        "should_attempt_attachment": { "type": "boolean" },
+        "preferred_stage": { "type": "string" },
+        "text_area_policy": { "type": "string", "enum": ["manual_only"] },
+        "required_slot_without_asset_policy": { "type": "string", "enum": ["pause_for_human_review"] }
+      }
+    },
     "prepared_at": { "type": "string", "format": "date-time" }
   }
 }

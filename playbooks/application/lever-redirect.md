@@ -42,6 +42,12 @@ Click "Apply to this job" (top of the posting page). Single-page form loads.
 - `resume` — upload PDF
 - `current_company`, `current_title`, `linkedin`, `github` — where present
 
+## Cover-letter handling
+- Check Lever's documents block for a dedicated cover-letter upload field.
+- If `bundle.cover_letter_available=true` and the field exists, upload `bundle.cover_letter_pdf_path`.
+- If the field is absent, skip without error and record `cover_letter_status=skipped_optional_slot_missing`.
+- If Lever exposes only a text area, pause for manual review in v1 and record `cover_letter_status=text_area_not_supported`.
+
 ## Step 4: "Additional Information" + role-specific questions
 Each `plan.fields[N]` maps by normalized question. Missing → `tier_downgrade`, escalate.
 
