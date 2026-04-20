@@ -46,6 +46,7 @@ from .utils import (
 )
 from .boards.registry import playbook_for_surface as resolve_playbook_for_surface
 from .boards.registry import resolve_application_target
+from .surfaces.registry import cover_letter_policy as resolve_cover_letter_policy
 
 
 # =============================================================================
@@ -554,18 +555,52 @@ def _build_cover_letter_asset_ref(lead: dict, candidate_profile: dict, data_root
     }
 
 
-def _cover_letter_policy(surface: str) -> dict:
-    preferred_stage = "late_documents_step"
-    if surface == "workday_redirect":
-        preferred_stage = "explicit_documents_step"
-    elif surface == "linkedin_easy_apply_assisted":
-        preferred_stage = "human_review_step"
+def _routing_snapshot(lead: dict, posting_url: str, target) -> dict:
     return {
-        "should_attempt_attachment": True,
-        "preferred_stage": preferred_stage,
-        "text_area_policy": "manual_only",
-        "required_slot_without_asset_policy": "pause_for_human_review",
+        "schema_version": 1,
+        "posting_url": posting_url,
+        "apply_type": lead.get("apply_type"),
+        "apply_host": target.apply_host,
+        "redirect_chain": list(target.redirect_chain),
+        "surface": target.surface,
+        "executor_backend": target.executor_backend,
+        "resolver_version": 1,
     }
+
+
+def _handoff_context(handoff_kind: str, fields: list[dict]) -> dict:
+    context = {
+        "requires_human_submit": True,
+        "kind": handoff_kind,
+    }
+    if handoff_kind != "manual_assist":
+        return context
+    review_items = [
+        {
+            "field_id": field.get("field_id"),
+            "question_text": field.get("question_text"),
+            "provenance": field.get("provenance"),
+        }
+        for field in fields
+        if field.get("provenance") in {"inferred", "none", "curated_template"}
+    ]
+    context.update({
+        "current_checkpoint": "human_review_step",
+        "operator_checklist": [
+            "Open the LinkedIn job page manually in your own browser session.",
+            "Review every flagged field and provenance before typing anything.",
+            "Inspect whether LinkedIn offers a cover-letter upload field, text area, or no control at all.",
+            "Complete any login, MFA, CAPTCHA, or profile prompts manually.",
+            "Do not let the agent automate LinkedIn-hosted form actions.",
+            "Record the outcome after you submit, abort, or stop.",
+        ],
+        "review_items": review_items,
+        "resume_instructions": (
+            "Record a follow-up attempt with status submitted_provisional, "
+            "paused_human_abort, or unknown_outcome after the human completes the flow."
+        ),
+    })
+    return context
 
 
 def _resolve_upload_asset(data_root: Path, content_id: str | None) -> dict:
@@ -769,6 +804,9 @@ def prepare_application(
         runtime_policy=runtime_policy,
     )
 
+    routing_snapshot = _routing_snapshot(lead, posting_url, target)
+    handoff_context = _handoff_context(target.handoff_kind, fields)
+
     plan = {
         "schema_version": 1,
         "draft_id": draft_id,
@@ -780,9 +818,12 @@ def prepare_application(
         "apply_host": target.apply_host,
         "redirect_chain": target.redirect_chain,
         "handoff_kind": target.handoff_kind,
+        "requires_human_submit": True,
+        "handoff_context": handoff_context,
         "executor_backend": target.executor_backend,
         "batch_eligible": target.batch_eligible,
         "playbook_path": playbook_path,
+        "routing_snapshot": routing_snapshot,
         "correlation_keys": correlation_keys,
         "profile_snapshot": snapshot,
         "untrusted_fetched_content": untrusted,
@@ -795,7 +836,7 @@ def prepare_application(
             "warnings": ats_warnings,
         },
         "generated_asset_refs": generated_asset_refs,
-        "cover_letter_policy": _cover_letter_policy(surface),
+        "cover_letter_policy": resolve_cover_letter_policy(surface),
         "prepared_at": now_iso(),
     }
     write_json(draft_dir / "plan.json", plan)
@@ -810,7 +851,10 @@ def prepare_application(
         "surface": surface,
         "surface_policy": target.surface_policy,
         "handoff_kind": target.handoff_kind,
+        "requires_human_submit": True,
+        "handoff_context": handoff_context,
         "executor_backend": target.executor_backend,
+        "routing_snapshot": routing_snapshot,
         "tier": tier,
         "tier_rationale": rationale,
         "generated_content_ids": generated_content_ids,
@@ -1313,7 +1357,7 @@ def apply_posting(
         data_root,
         (generated_asset_refs.get("cover_letter") or {}).get("content_id"),
     )
-    cover_letter_policy = plan.get("cover_letter_policy") or _cover_letter_policy(
+    cover_letter_policy = plan.get("cover_letter_policy") or resolve_cover_letter_policy(
         str(plan.get("surface") or "")
     )
     bundle.update({
@@ -1332,24 +1376,21 @@ def apply_posting(
         ),
     })
     if handoff_kind == "manual_assist":
+        handoff_context = dict(plan.get("handoff_context") or {})
         bundle.update({
-            "operator_checklist": [
-                "Open the LinkedIn job page manually in your own browser session.",
-                "Review every flagged field and provenance before typing anything.",
-                "Inspect whether LinkedIn offers a cover-letter upload field, text area, or no control at all.",
-                "Complete any login, MFA, CAPTCHA, or profile prompts manually.",
-                "Do not let the agent automate LinkedIn-hosted form actions.",
-                "Record the outcome after you submit, abort, or stop.",
-            ],
+            "requires_human_submit": True,
+            "handoff_context": handoff_context,
+            "operator_checklist": handoff_context.get("operator_checklist", []),
             "field_summary": field_summary,
-            "review_items": review_items,
-            "outcome_recording_instructions": (
-                "Record a follow-up attempt with status submitted_provisional, "
-                "paused_human_abort, or unknown_outcome after the human completes the LinkedIn flow."
+            "review_items": handoff_context.get("review_items", review_items),
+            "outcome_recording_instructions": handoff_context.get(
+                "resume_instructions",
+                "Record a follow-up attempt after the human completes the flow.",
             ),
         })
     else:
         bundle.update({
+            "requires_human_submit": True,
             "playbook_path": plan.get("playbook_path"),
         })
     return bundle

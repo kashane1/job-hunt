@@ -1,25 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import re
 
 from .base import ApplicationTarget, BoardAdapter
 from .indeed import IndeedBoardAdapter
 from .linkedin import LinkedInBoardAdapter
+from ..surfaces.registry import (
+    batch_eligible as surface_batch_eligible,
+    executor_backend_for,
+    handoff_kind_for,
+    playbook_for_surface as surface_playbook_for_surface,
+    surface_policy_for,
+)
 
 _ADAPTERS: tuple[BoardAdapter, ...] = (
     LinkedInBoardAdapter(),
     IndeedBoardAdapter(),
 )
-
-_SURFACE_PLAYBOOKS = {
-    "indeed_easy_apply": "playbooks/application/indeed-easy-apply.md",
-    "indeed_external_redirect": "playbooks/application/indeed-easy-apply.md",
-    "greenhouse_redirect": "playbooks/application/greenhouse-redirect.md",
-    "lever_redirect": "playbooks/application/lever-redirect.md",
-    "workday_redirect": "playbooks/application/workday-redirect.md",
-    "ashby_redirect": "playbooks/application/ashby-redirect.md",
-    "linkedin_easy_apply_assisted": "playbooks/application/linkedin-easy-apply-assisted.md",
-}
 
 _DIRECT_URL_SURFACES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^https?://(?:boards|job-boards)\.greenhouse\.io/", re.IGNORECASE), "greenhouse_redirect"),
@@ -27,6 +25,17 @@ _DIRECT_URL_SURFACES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"^https?://[^/]+\.myworkdayjobs\.com/", re.IGNORECASE), "workday_redirect"),
     (re.compile(r"^https?://jobs\.ashbyhq\.com/", re.IGNORECASE), "ashby_redirect"),
 )
+
+
+def _hydrate_surface_metadata(target: ApplicationTarget) -> ApplicationTarget:
+    return replace(
+        target,
+        playbook_path=surface_playbook_for_surface(target.surface),
+        surface_policy=surface_policy_for(target.surface),
+        batch_eligible=surface_batch_eligible(target.surface, target),
+        handoff_kind=handoff_kind_for(target.surface),
+        executor_backend=executor_backend_for(target.surface),
+    )
 
 
 def get_board_adapter(lead: dict | None, url: str) -> BoardAdapter:
@@ -46,18 +55,16 @@ def resolve_application_target(
     if isinstance(adapter, IndeedBoardAdapter) and posting_url:
         for pattern, surface in _DIRECT_URL_SURFACES:
             if pattern.search(posting_url):
-                return ApplicationTarget(
+                return _hydrate_surface_metadata(ApplicationTarget(
                     origin_board=str((lead or {}).get("origin_board") or "unknown"),
                     surface=surface,
-                    playbook_path=playbook_for_surface(surface),
-                    surface_policy="browser_automated_human_submit",
                     correlation_keys_patch={},
-                    batch_eligible=True,
                     handoff_kind="automation_playbook",
-                    executor_backend="claude_chrome",
-                )
-    return adapter.resolve_application_target(lead or {}, posting_url=posting_url, apply_type=apply_type)
+                ))
+    return _hydrate_surface_metadata(
+        adapter.resolve_application_target(lead or {}, posting_url=posting_url, apply_type=apply_type)
+    )
 
 
 def playbook_for_surface(surface: str) -> str:
-    return _SURFACE_PLAYBOOKS.get(surface, _SURFACE_PLAYBOOKS["indeed_easy_apply"])
+    return surface_playbook_for_surface(surface)

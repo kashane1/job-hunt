@@ -61,46 +61,30 @@ class LinkedInBoardAdapter:
                 final_url = redirect_chain[-1]
 
         if ats_surface is not None:
-            playbook = {
-                "greenhouse_redirect": "playbooks/application/greenhouse-redirect.md",
-                "lever_redirect": "playbooks/application/lever-redirect.md",
-                "workday_redirect": "playbooks/application/workday-redirect.md",
-                "ashby_redirect": "playbooks/application/ashby-redirect.md",
-            }[ats_surface]
             return ApplicationTarget(
                 origin_board=self.name,
                 surface=ats_surface,
-                playbook_path=playbook,
-                surface_policy="browser_automated_human_submit",
                 correlation_keys_patch={
                     "origin_board": self.name,
                     "origin_posting_url": posting_url,
                     "posting_url": final_url,
                     "redirect_chain": redirect_chain,
                 },
-                batch_eligible=True,
                 apply_host=urlparse(final_url).netloc.lower(),
                 redirect_chain=redirect_chain,
-                handoff_kind="automation_playbook",
-                executor_backend="claude_chrome",
             )
 
         return ApplicationTarget(
             origin_board=self.name,
             surface="linkedin_easy_apply_assisted",
-            playbook_path="playbooks/application/linkedin-easy-apply-assisted.md",
-            surface_policy="automation_forbidden_on_origin",
             correlation_keys_patch={
                 "origin_board": self.name,
                 "origin_posting_url": posting_url,
                 "posting_url": final_url,
                 "redirect_chain": redirect_chain,
             },
-            batch_eligible=False,
             apply_host=urlparse(final_url).netloc.lower(),
             redirect_chain=redirect_chain,
-            handoff_kind="manual_assist",
-            executor_backend="none",
         )
 
     def normalize_manual_intake(self, metadata: dict) -> dict:
@@ -113,4 +97,3 @@ class LinkedInBoardAdapter:
         elif isinstance(chain, list):
             out["redirect_chain"] = [str(item) for item in chain if str(item).strip()]
         return out
-

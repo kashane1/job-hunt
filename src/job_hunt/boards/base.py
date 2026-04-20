@@ -8,8 +8,8 @@ from typing import Protocol
 class ApplicationTarget:
     origin_board: str
     surface: str
-    playbook_path: str
-    surface_policy: str
+    playbook_path: str = ""
+    surface_policy: str = ""
     correlation_keys_patch: dict[str, object] = field(default_factory=dict)
     batch_eligible: bool = True
     apply_host: str = ""
@@ -40,4 +40,3 @@ class RemoteIngestionAdapter(BoardAdapter, Protocol):
         url: str,
         html_text: str | None = None,
     ) -> dict: ...
-

@@ -46,6 +46,7 @@ from .net_policy import (
     RobotsCache,
 )
 from .utils import StructuredError, ensure_dir, now_iso, read_json, write_json
+from .discovery_providers.registry import get_discovery_provider
 
 logger = logging.getLogger(__name__)
 
@@ -909,100 +910,47 @@ def _run_source(
     truncated = False
 
     try:
-        if source_token == "greenhouse":
-            if not company.greenhouse:
-                return (
-                    SourceRun(
-                        company=company.name, source=source_token, started_at=started_at,
-                        completed=True, listing_truncated=False, budget_exhausted=False,
-                        entry_count=0,
-                    ),
-                    [],
-                    [],
-                )
-            entries, truncated = discover_greenhouse_board(company.greenhouse, rate_limiter)
-        elif source_token == "lever":
-            if not company.lever:
-                return (
-                    SourceRun(
-                        company=company.name, source=source_token, started_at=started_at,
-                        completed=True, listing_truncated=False, budget_exhausted=False,
-                        entry_count=0,
-                    ),
-                    [],
-                    [],
-                )
-            entries, truncated = discover_lever_board(company.lever, rate_limiter)
-        elif source_token == "indeed_search":
-            if not company.indeed_search_url:
-                return (
-                    SourceRun(
-                        company=company.name, source=source_token, started_at=started_at,
-                        completed=True, listing_truncated=False, budget_exhausted=False,
-                        entry_count=0,
-                    ),
-                    [],
-                    [],
-                )
-            from .indeed_discovery import discover_indeed_search
-
-            from dataclasses import replace
-
-            entries, truncated = discover_indeed_search(
-                company.indeed_search_url,
-                rate_limiter,
-            )
-            # Overwrite source_company with the watchlist name so downstream
-            # filters group Indeed hits under the human-readable target.
-            entries = [replace(e, source_company=company.name) for e in entries]
-        elif source_token == "careers":
-            if not company.careers_url:
-                return (
-                    SourceRun(
-                        company=company.name, source=source_token, started_at=started_at,
-                        completed=True, listing_truncated=False, budget_exhausted=False,
-                        entry_count=0,
-                    ),
-                    [],
-                    [],
-                )
-            crawl = discover_company_careers(
-                company.careers_url, rate_limiter, robots,
-                watchlist_company=company.name,
-            )
-            entries = list(crawl.high_confidence)
-            ats_spawned = list(crawl.ats_hits)
-            for low in crawl.low_confidence:
-                entry_id = _entry_id_from_url(low["candidate_url"])
-                try:
-                    if not dry_run:
-                        write_review_entry(
-                            review_dir,
-                            entry_id=entry_id,
-                            candidate_url=low["candidate_url"],
-                            anchor_text=low["anchor_text"],
-                            signals=low["signals"],
-                            source_page=low["source_page"],
-                            watchlist_company=company.name,
-                        )
-                except DiscoveryError as exc:
-                    outcomes.append(Outcome(bucket="failed", entry=None, detail=exc.to_dict()))
-                    continue
-                outcomes.append(Outcome(
-                    bucket="low_confidence",
-                    entry=None,
-                    detail={
-                        "entry_id": entry_id,
-                        "candidate_url": low["candidate_url"],
-                        "signals": ",".join(low["signals"]),
-                        "company": company.name,
-                    },
-                ))
-        else:
+        provider = get_discovery_provider(source_token)
+        if provider is None:
             raise DiscoveryError(
                 f"Unknown source token: {source_token!r}",
                 error_code="unknown_platform",
             )
+        page = provider.list_entries(
+            company,
+            rate_limiter=rate_limiter,
+            robots=robots,
+            watchlist_company=company.name,
+        )
+        entries = list(page.entries)
+        truncated = page.truncated
+        ats_spawned = list(page.ats_hits)
+        for low in page.low_confidence:
+            entry_id = _entry_id_from_url(low.candidate_url)
+            try:
+                if not dry_run:
+                    write_review_entry(
+                        review_dir,
+                        entry_id=entry_id,
+                        candidate_url=low.candidate_url,
+                        anchor_text=low.anchor_text,
+                        signals=low.signals,
+                        source_page=low.source_page,
+                        watchlist_company=company.name,
+                    )
+            except DiscoveryError as exc:
+                outcomes.append(Outcome(bucket="failed", entry=None, detail=exc.to_dict()))
+                continue
+            outcomes.append(Outcome(
+                bucket="low_confidence",
+                entry=None,
+                detail={
+                    "entry_id": entry_id,
+                    "candidate_url": low.candidate_url,
+                    "signals": ",".join(low.signals),
+                    "company": company.name,
+                },
+            ))
     except IngestionError as exc:
         outcomes.append(Outcome(bucket="failed", entry=None, detail=exc.to_dict()))
         return (

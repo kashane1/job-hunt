@@ -28,21 +28,15 @@ class IndeedBoardAdapter:
         return ApplicationTarget(
             origin_board=self.name,
             surface=surface,
-            playbook_path="playbooks/application/indeed-easy-apply.md",
-            surface_policy="browser_automated_human_submit",
             correlation_keys_patch={
                 "origin_board": self.name,
                 "origin_posting_url": posting_url,
             },
-            batch_eligible=surface != "indeed_external_redirect",
             apply_host=host,
             redirect_chain=[],
-            handoff_kind="automation_playbook",
-            executor_backend="claude_chrome",
         )
 
     def normalize_manual_intake(self, metadata: dict) -> dict:
         out = dict(metadata)
         out.setdefault("origin_board", self.name)
         return out
-

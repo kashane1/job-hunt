@@ -439,6 +439,12 @@ class PreparePipelineTest(unittest.TestCase):
             self.assertEqual(plan["handoff_kind"], "manual_assist")
             self.assertFalse(plan["batch_eligible"])
             self.assertEqual(plan["surface_policy"], "automation_forbidden_on_origin")
+            self.assertTrue(plan["requires_human_submit"])
+            self.assertEqual(plan["handoff_context"]["current_checkpoint"], "human_review_step")
+            self.assertEqual(plan["routing_snapshot"]["surface"], "linkedin_easy_apply_assisted")
+            status = read_json(result.draft_dir / "status.json")
+            self.assertTrue(status["requires_human_submit"])
+            self.assertEqual(status["routing_snapshot"]["executor_backend"], "none")
 
     def test_prepare_linkedin_redirect_reuses_ats_surface(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -698,6 +704,9 @@ class ApplyPostingTest(unittest.TestCase):
                     data_root=data_root,
                 )
             bundle = apply_posting(result.draft_id, data_root=data_root)
+            self.assertEqual(bundle["handoff_kind"], "manual_assist")
+            self.assertTrue(bundle["requires_human_submit"])
+            self.assertEqual(bundle["handoff_context"]["current_checkpoint"], "human_review_step")
             self.assertEqual(bundle["resume_upload_kind"], "pdf")
             self.assertTrue(bundle["resume_path"].endswith(".pdf"))
             self.assertEqual(bundle["cover_letter_pdf_path"], cover["pdf_path"])
