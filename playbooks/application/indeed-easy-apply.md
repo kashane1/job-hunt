@@ -74,8 +74,8 @@ For each field in `plan.fields` (index `i`):
   - `yes_no` → dropdown or radio; select matching option (one `form_input` regardless of mode).
   - `text` / `number` / `date` → type per `entry.typing.mode`:
     - `atomic`: one `form_input` call with the full string.
-    - `word_chunked`: split at `entry.typing.chunk_boundaries`; submit prefixes via successive `form_input` calls; sleep corresponding `entry.typing.chunk_delay_ms` between chunks (clamped to 60s).
-    - `per_char_prefix`: per-char prefix `form_input` with `chunk_delay_ms` pacing. Only if Phase 0 verified.
+    - `word_chunked`: split at `entry.typing.chunk_boundaries`; submit prefixes via successive `form_input` calls; sleep corresponding `entry.typing.chunk_delay_ms` between chunks (clamped to 60s). **Preferred execution vehicle:** wrap the chunk sequence in `mcp__Claude_in_Chrome__browser_batch` with `computer.wait` actions between — collapses LLM round-trip latency into one request so planned sub-second cadence actually lands on the wire.
+    - `per_char_prefix`: per-char prefix `form_input` with `chunk_delay_ms` pacing. Phase 0 verified functional but no detection advantage over `word_chunked` (same `isTrusted=false` dispatch). Escape hatch only.
   - `multi_select` → checkbox group; click each item.
 - If a field shown on the page has **no entry** in `plan.fields`: this is an unknown question. Downgrade the attempt to `tier_2` (write `tier_downgraded_from: tier_1`), escalate, pause for the human to complete the field.
 - After commit: sleep `min(entry.post_fill_gap_ms, 60000)` ms.

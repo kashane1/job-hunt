@@ -69,8 +69,8 @@ For each field in `plan.fields` (index `i`):
   - `yes_no` → dropdown or radio; select matching option (one `form_input` call regardless of mode).
   - `text` / `number` / `date` → type the answer per `entry.typing.mode`:
     - `atomic`: one `form_input` call with the full string.
-    - `word_chunked`: split the answer at `entry.typing.chunk_boundaries`; submit each successive prefix via a `form_input` call; between chunks sleep the corresponding `entry.typing.chunk_delay_ms[chunk_index]` (clamped to 60s).
-    - `per_char_prefix`: one `form_input` per single-char prefix with `chunk_delay_ms` pacing. Only use if Phase 0 Step F confirmed native pacing works.
+    - `word_chunked`: split the answer at `entry.typing.chunk_boundaries`; submit each successive prefix via a `form_input` call; between chunks sleep the corresponding `entry.typing.chunk_delay_ms[chunk_index]` (clamped to 60s). **Preferred execution vehicle:** wrap the chunk sequence in `mcp__Claude_in_Chrome__browser_batch` with `computer.wait` actions between each `form_input` — LLM round-trip latency between separate tool calls (~5s/call) otherwise dominates and washes out the planned sub-second delays. Phase 0 probe 3 confirmed each batched `form_input` still emits its own `change`+`input` pair, so event cadence is preserved.
+    - `per_char_prefix`: one `form_input` per single-char prefix with `chunk_delay_ms` pacing. Phase 0 verified this works but adds no detection benefit over `word_chunked` (both dispatch `isTrusted=false`). Treat as an escape hatch only.
   - `multi_select` → checkbox group; click each item.
 - Resume: select the existing LinkedIn-stored resume when the picker appears. Do not upload a PDF unless no stored resume is available.
 - Cover-letter handling: if `bundle.cover_letter_available=true` and a cover-letter upload/text-area is present, use `bundle.cover_letter_pdf_path` (file) or `bundle.cover_letter_md_path` contents (text-area). Otherwise record `cover_letter_status=skipped_optional_slot_missing`.

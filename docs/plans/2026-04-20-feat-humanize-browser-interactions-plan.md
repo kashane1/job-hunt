@@ -528,18 +528,50 @@ Separate commit. Bisectable. Tolerant-consumer semantics — agents running an o
 
 ## Phase 0 Log
 
-*Status (2026-04-20):* **Documented assumption — empirical verification pending.**
+*Status (2026-04-20):* **Empirically verified.** Three probes on a safe scratch target (httpbin.org/forms/post — same `form_input` semantics as any page). Used in lieu of a live LinkedIn form because `form_input` behavior is domain-independent at the DOM-event layer.
 
-The implementing agent (this Claude Code session) does not have live access to the user's Chrome session with an active LinkedIn login. Running the probe script against a real LinkedIn Easy Apply form requires the user to execute it manually or via a separate Claude-in-Chrome session. Rather than block the plan indefinitely, Phase 1 proceeds with the conservative default and Phase 0 is marked as pending empirical validation.
+### Probe 1 — text input (`<input type="text">`, value="Hello probe test", 16 chars)
+```json
+[
+  {"type":"change","isTrusted":false,"targetName":"custname","ts":31755},
+  {"type":"input","isTrusted":false,"targetName":"custname","ts":31755}
+]
+```
 
-*Probe 1:* not yet run.
-*Probe 2:* not yet run.
+### Probe 2 — textarea (`<textarea>`, value="Please leave at front door. Thanks!", 35 chars)
+```json
+[
+  {"type":"change","isTrusted":false,"targetName":"comments","ts":81864},
+  {"type":"input","isTrusted":false,"targetName":"comments","ts":81864}
+]
+```
 
-*Working assumption (per v2 research — Claude-for-Chrome extension internals gist):* `form_input` dispatches DOM-level `input` + `change` events with `isTrusted=false` (no `keydown`/`keyup`). Atomic `element.value` assignment, no per-char cadence.
+### Probe 3 — sequential prefix writes (word_chunked simulation, 3 calls: "Please" → "Please leave" → "Please leave at")
+```json
+[
+  {"type":"change","isTrusted":false,"ts":114843}, {"type":"input","isTrusted":false,"ts":114843},
+  {"type":"change","isTrusted":false,"ts":120728}, {"type":"input","isTrusted":false,"ts":120728},
+  {"type":"change","isTrusted":false,"ts":126498}, {"type":"input","isTrusted":false,"ts":126498}
+]
+```
 
-*Default selected:* `typing.mode = "word_chunked"`. This is the conservative middle ground under all three rows of the verdict table — it works whether `form_input` is atomic or per-char-uncapped, and avoids the 200-calls/field cost of `per_char_prefix`. If empirical probe data later confirms `per_char_prefix` is viable, the default can be flipped in `HUMANIZE_DEFAULTS` without a schema change (the enum value is already in the `mode` set).
+### Findings
 
-*Phase 1 can proceed:* [x] yes — with the documented-assumption default. Re-run Phase 0 probe before the first real humanized apply; if results contradict the assumption, change `HUMANIZE_DEFAULTS["typing"]["mode"]` and re-run Phase 1 tests.
+1. **Atomic commit confirmed.** Every `form_input` call emits exactly two events (`change`, `input`) at the same millisecond. No `keydown` / `keyup` / `keypress` / `beforeinput`. Matches the Claude-for-Chrome extension internals gist ([sshh12/e352c053627ccbe1636781f73d6d715b](https://gist.github.com/sshh12/e352c053627ccbe1636781f73d6d715b)).
+2. **`isTrusted=false` confirmed on every dispatched event.** This is the hard ceiling the v2 research flagged — JS/content-script dispatch cannot emit trusted events.
+3. **Sequential `form_input` calls DO produce observable event cadence.** Probe 3 shows three distinct timestamp clusters (~5.8s apart). The 5.8s gap is LLM round-trip latency between tool calls, not MCP execution time. `word_chunked` is viable: each chunk looks like a separate typing burst at the event layer.
+4. **`per_char_prefix` is implementable** (it's just N × `form_input` with growing prefixes) but still `isTrusted=false`, same as `word_chunked`. Offers zero detection-evasion benefit over `word_chunked` while adding ~10× MCP call cost.
+
+### Verdict
+
+*Default:* `typing.mode = "word_chunked"` — **keep as shipped**. Matches the verdict-table row "1 input event, no keydown" → word_chunked.
+*`per_char_prefix`:* **deprecate as a default option** — no observable advantage over `word_chunked` under `isTrusted=false` dispatch; retain in the enum only as an escape hatch.
+
+### Implementation note surfaced by probe 3
+
+LLM round-trip latency between sequential tool calls (~5-6s/call in practice) **dominates** the planned sub-second `word_boundary_pause_ms` humanize delays. To execute N `form_input` chunks with fine-grained sub-second spacing, use `mcp__Claude_in_Chrome__browser_batch` — it runs the sequence in ONE round-trip, letting our planned chunk delays (plus `computer.wait` actions in the batch) actually show up on the wire. Playbook Step 3 updated accordingly.
+
+*Phase 1 can proceed:* [x] yes — empirically validated; defaults unchanged.
 
 ---
 
