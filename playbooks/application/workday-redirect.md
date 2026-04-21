@@ -49,6 +49,9 @@ Off-origin → `off_origin_form_detected`.
 - `checkpoint-update` to `form_opened`.
 
 ## Step 4: Fill each wizard step
+
+**Humanization:** if `bundle.humanize.enabled` is true, apply the per-field recipe from `playbooks/application/linkedin-easy-apply.md` Step 3 (pre-read delay, `word_chunked` typing via `browser_batch`, post-fill gap, page-advance pacing between wizard steps, 60s sleep ceiling, mode-downgrade at `mcp_call_estimate.total > 150`). Treat the `bundle.humanize.*` keys identically. Workday's 5-step wizard means `page_advance` pacing fires at each step transition. Skip the block if `bundle.humanize` is absent or `enabled` is false.
+
 Workday's step names vary by tenant, but the sequence is stable:
 1. **My Information** — name, email, phone, address, legally-authorized dropdown, sponsorship-required dropdown, source ("How did you hear about us?").
 2. **My Experience** — education, work history entries. Upload DOCX resume here if skipped in Step 3.

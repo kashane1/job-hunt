@@ -17,6 +17,15 @@ _SURFACE_SPECS = {
         default_executor="claude_chrome",
         default_surface_policy="browser_automated_human_submit",
         handoff_kind="automation_playbook",
+        humanize_eligible=True,
+    ),
+    "glassdoor_easy_apply": SurfaceSpec(
+        surface="glassdoor_easy_apply",
+        playbook_path="playbooks/application/glassdoor-easy-apply.md",
+        default_executor="claude_chrome",
+        default_surface_policy="browser_automated_human_submit",
+        handoff_kind="automation_playbook",
+        humanize_eligible=True,
     ),
     "greenhouse_redirect": SurfaceSpec(
         surface="greenhouse_redirect",
@@ -24,6 +33,7 @@ _SURFACE_SPECS = {
         default_executor="claude_chrome",
         default_surface_policy="browser_automated_human_submit",
         handoff_kind="automation_playbook",
+        humanize_eligible=True,
     ),
     "lever_redirect": SurfaceSpec(
         surface="lever_redirect",
@@ -31,6 +41,7 @@ _SURFACE_SPECS = {
         default_executor="claude_chrome",
         default_surface_policy="browser_automated_human_submit",
         handoff_kind="automation_playbook",
+        humanize_eligible=True,
     ),
     "workday_redirect": SurfaceSpec(
         surface="workday_redirect",
@@ -38,6 +49,7 @@ _SURFACE_SPECS = {
         default_executor="claude_chrome",
         default_surface_policy="browser_automated_human_submit",
         handoff_kind="automation_playbook",
+        humanize_eligible=True,
     ),
     "ashby_redirect": SurfaceSpec(
         surface="ashby_redirect",
@@ -45,6 +57,7 @@ _SURFACE_SPECS = {
         default_executor="claude_chrome",
         default_surface_policy="browser_automated_human_submit",
         handoff_kind="automation_playbook",
+        humanize_eligible=True,
     ),
     "linkedin_easy_apply": SurfaceSpec(
         surface="linkedin_easy_apply",
@@ -100,4 +113,3 @@ def cover_letter_policy(surface: str) -> dict:
         "text_area_policy": "manual_only",
         "required_slot_without_asset_policy": "pause_for_human_review",
     }
-

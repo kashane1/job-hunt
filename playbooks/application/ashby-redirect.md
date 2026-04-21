@@ -36,6 +36,9 @@ Click "Apply for this job". Single-page form loads.
 `checkpoint-update` to `form_opened`.
 
 ## Step 3: Standard fields
+
+**Humanization:** if `bundle.humanize.enabled` is true, apply the per-field recipe from `playbooks/application/linkedin-easy-apply.md` Step 3 (pre-read delay, `word_chunked` typing via `browser_batch`, post-fill gap, page-advance pacing, 60s sleep ceiling, mode-downgrade at `mcp_call_estimate.total > 150`). Treat the `bundle.humanize.*` keys identically. Skip the block if `bundle.humanize` is absent or `enabled` is false.
+
 Ashby's prefix:
 - `first_name`, `last_name`
 - `email`

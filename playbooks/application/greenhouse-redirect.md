@@ -41,6 +41,9 @@ Off-origin → `ApplicationError(off_origin_form_detected)`.
 - `checkpoint-update` to `form_opened`.
 
 ## Step 3: Fill standard fields
+
+**Humanization:** if `bundle.humanize.enabled` is true, apply the per-field recipe from `playbooks/application/linkedin-easy-apply.md` Step 3 (pre-read delay, `word_chunked` typing via `browser_batch`, post-fill gap, page-advance pacing, 60s sleep ceiling, mode-downgrade at `mcp_call_estimate.total > 150`). Treat the `bundle.humanize.*` keys identically. Skip the block if `bundle.humanize` is absent or `enabled` is false.
+
 Greenhouse ships a fixed prefix:
 - `first_name`, `last_name` — from `profile_snapshot` or split from `contact` document.
 - `email` — from `plan.profile_snapshot` → `profile.contact.emails[0]`.
