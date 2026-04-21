@@ -10,4 +10,5 @@ class SurfaceSpec:
     default_executor: str
     default_surface_policy: str
     handoff_kind: str
+    humanize_eligible: bool = False
 

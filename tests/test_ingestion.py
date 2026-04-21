@@ -203,11 +203,14 @@ class GenericHtmlFallbackTest(unittest.TestCase):
 
 
 class IngestUrlTest(unittest.TestCase):
-    def test_linkedin_hard_fails(self) -> None:
+    def test_linkedin_is_allowlisted_does_not_login_wall(self) -> None:
+        # LinkedIn is now allowlisted in config/domain-allowlist.yaml; it
+        # proceeds past the hard-fail gate (and may fail further down the
+        # pipeline — the point is that login_wall no longer fires).
         with tempfile.TemporaryDirectory() as tmpdir:
             with self.assertRaises(IngestionError) as ctx:
                 ingest_url("https://linkedin.com/jobs/view/12345", Path(tmpdir))
-            self.assertEqual(ctx.exception.error_code, "login_wall")
+            self.assertNotEqual(ctx.exception.error_code, "login_wall")
 
     def test_indeed_is_allowlisted_does_not_login_wall(self) -> None:
         # Batch 4: Indeed is the lone entry in config/domain-allowlist.yaml.
@@ -220,9 +223,9 @@ class IngestUrlTest(unittest.TestCase):
 
 
 class HardFailAllowlistTest(unittest.TestCase):
-    def test_linkedin_still_hard_fails(self) -> None:
-        self.assertTrue(is_hard_fail_url("https://www.linkedin.com/jobs/view/1"))
-        self.assertTrue(is_hard_fail_url("https://linkedin.com/jobs/view/1"))
+    def test_linkedin_not_hard_fail(self) -> None:
+        self.assertFalse(is_hard_fail_url("https://www.linkedin.com/jobs/view/1"))
+        self.assertFalse(is_hard_fail_url("https://linkedin.com/jobs/view/1"))
 
     def test_indeed_not_hard_fail(self) -> None:
         self.assertFalse(is_hard_fail_url("https://www.indeed.com/viewjob?jk=abc"))
@@ -352,12 +355,14 @@ class IngestUrlsFileTest(unittest.TestCase):
             output_dir = Path(tmpdir)
             urls_file = output_dir / "urls.txt"
             urls_file.write_text(
-                "https://linkedin.com/jobs/view/12345\n"  # hard-fail
+                "https://bad.example.com/jobs/1\n"
                 "https://careers.example.com/j/99\n"
             )
             from job_hunt import ingestion as ing_mod
 
             def fake_fetch(url, html_text=None):
+                if "bad.example.com" in url:
+                    raise IngestionError("simulated failure", "timeout", url, "retry")
                 return {
                     "title": "Eng",
                     "company": "example",
@@ -373,7 +378,7 @@ class IngestUrlsFileTest(unittest.TestCase):
 
             self.assertEqual(len(result["successes"]), 1)
             self.assertEqual(len(result["failures"]), 1)
-            self.assertEqual(result["failures"][0]["error_code"], "login_wall")
+            self.assertEqual(result["failures"][0]["error_code"], "timeout")
 
 
 class FrontmatterSynthesisTest(unittest.TestCase):

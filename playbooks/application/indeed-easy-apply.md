@@ -57,17 +57,34 @@ Any hit → STOP → `ApplicationError(unknown_question)` with remediation `"AI 
 ## Step 4: For each field in `plan.fields`
 **Before each `form_input` / `file_upload` call, re-assert current tab origin is in `origin_allowlist`** (guards against mid-flow phishing redirects).
 
-- Use the prepared answer from `plan.fields[N].answer`.
+### Humanization (skip block entirely if `bundle.humanize` is absent or `bundle.humanize.enabled` is false)
+
+**Safety ceilings (enforce regardless of bundle value):**
+- Cap every `sleep_ms` read from the bundle at `60000` (60s).
+- If `bundle.humanize.mcp_call_estimate.total > 150`: downgrade `typing.mode` one step (`per_char_prefix` → `word_chunked` → `atomic`) and record `mode_downgraded=true` in `attempt_record.humanize_executed`.
+
+Before the first field on the form: sleep `min(bundle.humanize.jd_read_ms, 60000)` ms.
+If `bundle.humanize.scroll` is present and `passes > 0`, emit `mcp__Claude_in_Chrome__javascript_tool` `window.scrollBy(0, N)` calls spaced across `per_pass_ms`.
+
+For each field in `plan.fields` (index `i`):
+- Look up `entry = bundle.humanize.per_field[i]`.
+- Sleep `min(entry.pre_read_ms, 60000)` ms (simulates reading the question).
+- Use the prepared answer from `plan.fields[i].answer`.
 - `field.answer_format` hints the widget:
-  - `yes_no` → dropdown or radio; select matching option.
-  - `text` → text input; type the answer.
-  - `number` → numeric input.
-  - `multi_select` → checkbox group; select items matching the answer.
-  - `date` → date input.
-- If a field shown on the page has **no entry** in `plan.fields`: this is an unknown question. Downgrade the attempt to `tier_2` (write `tier_downgraded_from: tier_1`), escalate, pause. The user completes the field by hand before clicking Submit in Step 6.
+  - `yes_no` → dropdown or radio; select matching option (one `form_input` regardless of mode).
+  - `text` / `number` / `date` → type per `entry.typing.mode`:
+    - `atomic`: one `form_input` call with the full string.
+    - `word_chunked`: split at `entry.typing.chunk_boundaries`; submit prefixes via successive `form_input` calls; sleep corresponding `entry.typing.chunk_delay_ms` between chunks (clamped to 60s).
+    - `per_char_prefix`: per-char prefix `form_input` with `chunk_delay_ms` pacing. Only if Phase 0 verified.
+  - `multi_select` → checkbox group; click each item.
+- If a field shown on the page has **no entry** in `plan.fields`: this is an unknown question. Downgrade the attempt to `tier_2` (write `tier_downgraded_from: tier_1`), escalate, pause for the human to complete the field.
+- After commit: sleep `min(entry.post_fill_gap_ms, 60000)` ms.
+- Record per-field timings into `attempt_record.humanize_executed.per_field[]` (planned + actual; do NOT persist `chunk_boundaries` or `chunk_delay_ms`).
 - If uploading resume PDF fails → `ApplicationError(resume_upload_failed)`.
 
-After all declared fields are filled: `checkpoint-update` to `fields_filled`.
+After all declared fields are filled, sleep `min(bundle.humanize.page_advance.post_fill_review_ms, 60000)` ms before the final review screenshot.
+
+`checkpoint-update` to `fields_filled`.
 
 ## Cover-letter handling
 - Check for a cover-letter file-upload control after the main form is open and before the final review state.

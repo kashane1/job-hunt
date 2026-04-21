@@ -350,13 +350,17 @@ class CareerCrawlerTest(unittest.TestCase):
                 )
         self.assertEqual(ctx.exception.error_code, "anti_bot_blocked")
 
-    def test_linkedin_url_hard_fails(self) -> None:
-        with self.assertRaises(DiscoveryError) as ctx:
+    def test_linkedin_url_is_allowlisted(self) -> None:
+        # LinkedIn is allowlisted in config/domain-allowlist.yaml; discovery no
+        # longer hard-fails on hard_fail_platform. The call may still raise for
+        # other reasons (robots, anti-bot) but not with hard_fail_platform.
+        try:
             discover_company_careers(
                 "https://linkedin.com/jobs/",
                 self.limiter, self.robots, watchlist_company="LI",
             )
-        self.assertEqual(ctx.exception.error_code, "hard_fail_platform")
+        except DiscoveryError as exc:
+            self.assertNotEqual(exc.error_code, "hard_fail_platform")
 
 
 class ReviewFileWriterTest(unittest.TestCase):

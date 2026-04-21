@@ -21,3 +21,7 @@ allowed:
     reason: "Primary job-board target per docs/brainstorms/2026-04-16-indeed-auto-apply-brainstorm.md"
     added: "2026-04-16"
     surface_playbook: "playbooks/application/indeed-easy-apply.md"
+  - domain: "linkedin.com"
+    reason: "User-authorized LinkedIn Easy Apply automation up to the human submit gate"
+    added: "2026-04-20"
+    surface_playbook: "playbooks/application/linkedin-easy-apply.md"

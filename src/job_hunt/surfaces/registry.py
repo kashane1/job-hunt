@@ -9,6 +9,7 @@ _SURFACE_SPECS = {
         default_executor="claude_chrome",
         default_surface_policy="browser_automated_human_submit",
         handoff_kind="automation_playbook",
+        humanize_eligible=True,
     ),
     "indeed_external_redirect": SurfaceSpec(
         surface="indeed_external_redirect",
@@ -44,6 +45,14 @@ _SURFACE_SPECS = {
         default_executor="claude_chrome",
         default_surface_policy="browser_automated_human_submit",
         handoff_kind="automation_playbook",
+    ),
+    "linkedin_easy_apply": SurfaceSpec(
+        surface="linkedin_easy_apply",
+        playbook_path="playbooks/application/linkedin-easy-apply.md",
+        default_executor="claude_chrome",
+        default_surface_policy="browser_automated_human_submit",
+        handoff_kind="automation_playbook",
+        humanize_eligible=True,
     ),
     "linkedin_easy_apply_assisted": SurfaceSpec(
         surface="linkedin_easy_apply_assisted",

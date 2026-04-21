@@ -13,7 +13,7 @@ Operate this repository as a trustworthy job-search system for one person. The g
 - **The agent fills application forms but NEVER clicks the final Submit button.** Every per-surface playbook gates Step 6 on a human submit click. `apply_policy.auto_submit_tiers = []` is a compile-time invariant; runtime overrides can tighten field-level review depth but cannot enable auto-submit. (Batch 4 v4 policy revision; see `docs/solutions/security-issues/human-in-the-loop-on-submit-as-tos-defense.md`.)
 - V1 still requires explicit human approval before account creation.
 - Never store passwords or secrets in git-tracked files.
-- LinkedIn URLs hard-fail. **Indeed.com is allowlisted per `config/domain-allowlist.yaml`**; all other sites in `HARD_FAIL_URL_PATTERNS` continue to hard-fail unless explicitly allowlisted.
+- **Indeed.com and LinkedIn.com are allowlisted per `config/domain-allowlist.yaml`** and have automation playbooks (`indeed-easy-apply.md`, `linkedin-easy-apply.md`) that drive forms up to the human submit gate. All other sites in `HARD_FAIL_URL_PATTERNS` continue to hard-fail unless explicitly allowlisted.
 
 ## Browser Guardrails
 
@@ -130,7 +130,7 @@ The same contract applies to `analyze-skills-gap` (≥10 scored leads) and `anal
 - `discover-jobs` reads `config/watchlist.yaml` and polls the configured sources (Greenhouse board API, Lever postings API, generic careers crawl). All HTTP goes through `ingestion.fetch`, which pins the validated IP to close DNS-rebinding TOCTOUs while preserving TLS hostname validation.
 - Per-domain rate limiter (`net_policy.DomainRateLimiter`) enforces a 500ms minimum interval per registered domain with a reserve-first slot allocation — no thundering herd when N threads poll Greenhouse simultaneously.
 - `net_policy.RobotsCache` persists robots.txt decisions at `data/discovery/robots_cache.json` with a 24h TTL for allow decisions and a 1h TTL for disallow decisions. Spec-correct on 5xx (treated as disallow per RFC 9309). Invalidates on resolved-IP change.
-- LinkedIn/Indeed hard-fail at every entry point (listing, careers URL, promote). They are login-walled and cannot be reliably scraped.
+- LinkedIn/Indeed are login-walled but allowlisted per `config/domain-allowlist.yaml`; discovery uses their adapters rather than generic scraping.
 - Generic career-page crawl is three-signal: JSON-LD `JobPosting` → ATS-subdomain detection → heuristic regex. Heuristic hits need ≥2 signals to auto-promote; 1-signal entries land in `data/discovery/review/<entry_id>.md` for human triage.
 - Anti-bot detection (Cloudflare/Akamai) requires HTTP 403/503 AND (`cf-ray` header OR `<title>Just a moment...`). Body-alone is DoS-prone and bypassable.
 

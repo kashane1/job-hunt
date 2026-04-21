@@ -279,7 +279,10 @@ class LinkedInBatchSelectionTest(unittest.TestCase):
                 score_floor=None,
                 data_root=data_root,
             )
-            self.assertEqual([lead["lead_id"] for lead in leads], ["linkedin-lead-redirect"])
+            self.assertEqual(
+                sorted(lead["lead_id"] for lead in leads),
+                ["linkedin-lead-manual", "linkedin-lead-redirect"],
+            )
 
 
 class PipeliningTest(unittest.TestCase):

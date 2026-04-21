@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -13,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Iterable
 
+from .humanize import HUMANIZE_DEFAULTS
 from .schema_checks import validate
 from .simple_yaml import loads as load_yaml
 
@@ -153,6 +155,10 @@ DEFAULT_RUNTIME_POLICY = {
         "retention_days": 365,
         "allow_account_creation": False,
         "gmail_query_window_days": 14,
+        # Humanize browser interactions — single-sourced from humanize.py so
+        # the sampler and policy cannot drift. deepcopy() is required: dict()
+        # would share nested sub-dict references with the module default.
+        "humanize": copy.deepcopy(HUMANIZE_DEFAULTS),
     },
 }
 
@@ -244,6 +250,45 @@ TARGET_TITLE_PATTERNS = (
     re.compile(r"\bmy next (?:position|role).{0,80}?\b(?:as|is)\s+(?:a|an)?\s*([A-Za-z][A-Za-z /-]{4,60}?(?:engineer|developer|programmer|architect|manager|lead))\b", re.I),
 )
 COMPENSATION_PATTERN = re.compile(r"\$ ?(\d[\d,]{4,})")
+
+
+def _humanize_override_from_args(args: argparse.Namespace) -> dict | None:
+    """Translate --humanize-mode / --humanize-enabled CLI flags into an override.
+
+    Returns ``None`` when no flag was passed (no policy mutation); a partial
+    nested dict otherwise. ``--humanize-enabled false`` and
+    ``--humanize-mode off`` both map to ``{"enabled": False}``.
+    """
+    mode = getattr(args, "humanize_mode", None)
+    enabled_flag = getattr(args, "humanize_enabled", None)
+    if mode is None and enabled_flag is None:
+        return None
+    override: dict = {}
+    if mode == "off" or enabled_flag == "false":
+        override["enabled"] = False
+    elif enabled_flag == "true":
+        override["enabled"] = True
+    if mode and mode != "off":
+        override["typing"] = {"mode": mode}
+    return override
+
+
+def _deep_merge_humanize_override(
+    apply_policy: dict, humanize_override: dict
+) -> dict:
+    """Merge a humanize override into an apply_policy snapshot.
+
+    Returns a NEW dict; does not mutate inputs. Nested ``typing`` keys are
+    merged shallowly (override wins) so callers can flip a single knob.
+    """
+    merged = copy.deepcopy(apply_policy)
+    current = merged.setdefault("humanize", {})
+    for key, value in humanize_override.items():
+        if isinstance(value, dict) and isinstance(current.get(key), dict):
+            current[key] = {**current[key], **value}
+        else:
+            current[key] = value
+    return merged
 
 
 def read_text_with_fallback(path: Path) -> str:
@@ -1949,6 +1994,18 @@ def build_parser() -> argparse.ArgumentParser:
     prep.add_argument("--data-root", default="data")
     prep.add_argument("--force", action="store_true")
     prep.add_argument("--dry-run", action="store_true")
+    prep.add_argument(
+        "--humanize-mode",
+        choices=["atomic", "word_chunked", "per_char_prefix", "off"],
+        default=None,
+        help="Override humanize.typing.mode for this run.",
+    )
+    prep.add_argument(
+        "--humanize-enabled",
+        choices=["true", "false"],
+        default=None,
+        help="Override humanize.enabled for this run.",
+    )
 
     post = subparsers.add_parser(
         "apply-posting",
@@ -1957,6 +2014,18 @@ def build_parser() -> argparse.ArgumentParser:
     post.add_argument("--draft-id", required=True)
     post.add_argument("--data-root", default="data")
     post.add_argument("--dry-run", action="store_true")
+    post.add_argument(
+        "--humanize-mode",
+        choices=["atomic", "word_chunked", "per_char_prefix", "off"],
+        default=None,
+        help="Override humanize.typing.mode for this run.",
+    )
+    post.add_argument(
+        "--humanize-enabled",
+        choices=["true", "false"],
+        default=None,
+        help="Override humanize.enabled for this run.",
+    )
 
     rec_att = subparsers.add_parser(
         "record-attempt",
@@ -1973,6 +2042,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     app_status.add_argument("--draft-id", required=True)
     app_status.add_argument("--data-root", default="data")
+    app_status.add_argument(
+        "--include-humanize",
+        action="store_true",
+        help="Include the persisted humanize_executed audit block from the latest attempt.",
+    )
 
     recon = subparsers.add_parser(
         "reconcile-applications",
@@ -2759,6 +2833,14 @@ def main(argv: list[str] | None = None) -> int:
         lead = read_json(Path(args.lead))
         profile = read_json(Path(args.profile))
         policy = {**DEFAULT_RUNTIME_POLICY, **load_yaml_file(Path(args.runtime_config), {})}
+        humanize_override = _humanize_override_from_args(args)
+        if humanize_override:
+            policy = {
+                **policy,
+                "apply_policy": _deep_merge_humanize_override(
+                    policy.get("apply_policy", {}) or {}, humanize_override,
+                ),
+            }
         try:
             result = prepare_application(
                 lead, profile, policy,
@@ -2797,6 +2879,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.draft_id,
                 dry_run=args.dry_run,
                 data_root=Path(args.data_root),
+                humanize_override=_humanize_override_from_args(args),
             )
         except PlanError as exc:
             print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
@@ -2829,13 +2912,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "apply-status":
-        from .application import PlanError, apply_status
+        from .application import PlanError, apply_status, latest_humanize_executed
 
         try:
             status = apply_status(args.draft_id, data_root=Path(args.data_root))
         except PlanError as exc:
             print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
             return 2
+        if getattr(args, "include_humanize", False):
+            status = dict(status)
+            status["humanize_executed"] = latest_humanize_executed(
+                args.draft_id, data_root=Path(args.data_root),
+            )
         print(json.dumps(status, indent=2))
         return 0
 

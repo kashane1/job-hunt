@@ -45,6 +45,7 @@ class LinkedInBoardAdapter:
         posting_url: str,
         apply_type: str | None = None,
     ) -> ApplicationTarget:
+        origin_posting_url = str(lead.get("posting_url") or posting_url)
         redirect_chain = [
             str(item) for item in (lead.get("redirect_chain") or []) if str(item).strip()
         ]
@@ -66,7 +67,7 @@ class LinkedInBoardAdapter:
                 surface=ats_surface,
                 correlation_keys_patch={
                     "origin_board": self.name,
-                    "origin_posting_url": posting_url,
+                    "origin_posting_url": origin_posting_url,
                     "posting_url": final_url,
                     "redirect_chain": redirect_chain,
                 },
@@ -76,10 +77,10 @@ class LinkedInBoardAdapter:
 
         return ApplicationTarget(
             origin_board=self.name,
-            surface="linkedin_easy_apply_assisted",
+            surface="linkedin_easy_apply",
             correlation_keys_patch={
                 "origin_board": self.name,
-                "origin_posting_url": posting_url,
+                "origin_posting_url": origin_posting_url,
                 "posting_url": final_url,
                 "redirect_chain": redirect_chain,
             },

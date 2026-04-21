@@ -260,14 +260,15 @@ class SurfaceDetectionTest(unittest.TestCase):
     def test_every_surface_has_a_playbook(self) -> None:
         for surface in (
             "indeed_easy_apply", "greenhouse_redirect", "lever_redirect",
-            "workday_redirect", "ashby_redirect", "linkedin_easy_apply_assisted",
+            "workday_redirect", "ashby_redirect",
+            "linkedin_easy_apply", "linkedin_easy_apply_assisted",
         ):
             self.assertTrue(playbook_for_surface(surface))
 
-    def test_linkedin_hosted_routes_to_manual_assist_surface(self) -> None:
+    def test_linkedin_hosted_routes_to_easy_apply_surface(self) -> None:
         self.assertEqual(
             detect_surface("https://www.linkedin.com/jobs/view/1234567890/"),
-            "linkedin_easy_apply_assisted",
+            "linkedin_easy_apply",
         )
 
 
@@ -423,7 +424,7 @@ class PreparePipelineTest(unittest.TestCase):
                 )
             self.assertEqual(ctx.exception.error_code, "policy_loosen_attempt")
 
-    def test_prepare_linkedin_manual_assist_writes_manual_handoff_metadata(self) -> None:
+    def test_prepare_linkedin_hosted_writes_automation_handoff_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
             _seed_bank(data_root)
@@ -435,16 +436,14 @@ class PreparePipelineTest(unittest.TestCase):
                 )
             plan = read_json(result.draft_dir / "plan.json")
             self.assertEqual(plan["origin_board"], "linkedin")
-            self.assertEqual(plan["surface"], "linkedin_easy_apply_assisted")
-            self.assertEqual(plan["handoff_kind"], "manual_assist")
-            self.assertFalse(plan["batch_eligible"])
-            self.assertEqual(plan["surface_policy"], "automation_forbidden_on_origin")
+            self.assertEqual(plan["surface"], "linkedin_easy_apply")
+            self.assertEqual(plan["handoff_kind"], "automation_playbook")
+            self.assertEqual(plan["surface_policy"], "browser_automated_human_submit")
             self.assertTrue(plan["requires_human_submit"])
-            self.assertEqual(plan["handoff_context"]["current_checkpoint"], "human_review_step")
-            self.assertEqual(plan["routing_snapshot"]["surface"], "linkedin_easy_apply_assisted")
+            self.assertEqual(plan["routing_snapshot"]["surface"], "linkedin_easy_apply")
             status = read_json(result.draft_dir / "status.json")
             self.assertTrue(status["requires_human_submit"])
-            self.assertEqual(status["routing_snapshot"]["executor_backend"], "none")
+            self.assertEqual(status["routing_snapshot"]["executor_backend"], "claude_chrome")
 
     def test_prepare_linkedin_redirect_reuses_ats_surface(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -460,6 +459,14 @@ class PreparePipelineTest(unittest.TestCase):
             self.assertEqual(plan["origin_board"], "linkedin")
             self.assertEqual(plan["surface"], "greenhouse_redirect")
             self.assertEqual(plan["handoff_kind"], "automation_playbook")
+            self.assertEqual(
+                plan["correlation_keys"]["origin_posting_url"],
+                "https://www.linkedin.com/jobs/view/1234567890/",
+            )
+            self.assertEqual(
+                plan["correlation_keys"]["posting_url"],
+                "https://boards.greenhouse.io/co/jobs/1",
+            )
             self.assertEqual(plan["redirect_chain"][-1], "https://boards.greenhouse.io/co/jobs/1")
 
 
@@ -539,42 +546,24 @@ class RecordAttemptTest(unittest.TestCase):
                 }, data_root=data_root)
             self.assertEqual(ctx.exception.error_code, "plan_schema_invalid")
 
-    def test_manual_assist_attempt_promotes_to_awaiting_human_action(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            data_root = Path(tmp)
-            _seed_bank(data_root)
-            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
-                result = prepare_application(
-                    LINKEDIN_ASSIST_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
-                    output_root=data_root / "applications",
-                    data_root=data_root,
-                )
-            record_attempt(result.draft_id, {
-                "status": "paused_manual_assist",
-                "checkpoint": "assist_bundle_ready",
-            }, data_root=data_root)
-            status = apply_status(result.draft_id, data_root=data_root)
-            self.assertEqual(status["lifecycle_state"], "awaiting_human_action")
-            self.assertIn("manual_assist_deferred", [e["type"] for e in status["events"]])
-
     def test_checkpoint_progression_is_monotonic(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
             _seed_bank(data_root)
             with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
                 result = prepare_application(
-                    LINKEDIN_ASSIST_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
                     output_root=data_root / "applications",
                     data_root=data_root,
                 )
             record_attempt(result.draft_id, {
-                "status": "paused_manual_assist",
-                "checkpoint": "human_form_in_progress",
+                "status": "in_progress",
+                "checkpoint": "fields_filled",
             }, data_root=data_root)
             with self.assertRaises(ApplicationError) as ctx:
                 record_attempt(result.draft_id, {
-                    "status": "paused_manual_assist",
-                    "checkpoint": "assist_bundle_ready",
+                    "status": "in_progress",
+                    "checkpoint": "form_opened",
                 }, data_root=data_root)
             self.assertEqual(ctx.exception.error_code, "plan_schema_invalid")
 
@@ -666,6 +655,84 @@ class ApplyPostingTest(unittest.TestCase):
             self.assertIn("<untrusted_jd_", bundle["wrapped_jd"])
             self.assertIn("</untrusted_jd_", bundle["wrapped_jd"])
 
+    def test_humanize_bundle_shape_for_eligible_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
+                result = prepare_application(
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            bundle = apply_posting(result.draft_id, data_root=data_root)
+            self.assertIn("humanize", bundle)
+            humanize = bundle["humanize"]
+            self.assertTrue(humanize["enabled"])
+            self.assertIn("jd_read_ms", humanize)
+            self.assertIn("page_advance", humanize)
+            self.assertIn("per_field", humanize)
+            self.assertIn("mcp_call_estimate", humanize)
+            for entry in humanize["per_field"]:
+                self.assertIn("pre_read_ms", entry)
+                self.assertIn("typing", entry)
+                self.assertIn("mode", entry["typing"])
+
+    def test_humanize_audit_round_trip_strips_secret_arrays(self) -> None:
+        from job_hunt.application import (
+            checkpoint_update, latest_humanize_executed, record_attempt,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
+                result = prepare_application(
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            # Agent-style attempt that includes a humanize_executed block
+            # WITH chunk_boundaries (which must be stripped on persist).
+            attempt = record_attempt(
+                result.draft_id,
+                {
+                    "status": "in_progress",
+                    "checkpoint": "preflight_done",
+                    "tier_at_attempt": result.tier,
+                    "humanize_executed": {
+                        "bundle_seed": 123,
+                        "typing_mode_used": "word_chunked",
+                        "mode_downgraded": False,
+                        "per_field": [
+                            {
+                                "field_index": 0,
+                                "pre_read_ms_planned": 2400,
+                                "typing": {
+                                    "mode": "word_chunked",
+                                    "chunk_count": 3,
+                                    "chunk_boundaries": [4, 9, 15],
+                                    "chunk_delay_ms": [210, 340, 180],
+                                },
+                            },
+                        ],
+                    },
+                },
+                data_root=data_root,
+            )
+            persisted = read_json(
+                result.draft_dir / "attempts" / attempt["attempt_filename"]
+            )
+            block = persisted["humanize_executed"]
+            self.assertEqual(block["typing_mode_used"], "word_chunked")
+            entry = block["per_field"][0]
+            self.assertNotIn("chunk_boundaries", entry["typing"])
+            self.assertNotIn("chunk_delay_ms", entry["typing"])
+            self.assertEqual(entry["typing"]["chunk_count"], 3)
+            # latest_humanize_executed surfaces the redacted block.
+            latest = latest_humanize_executed(result.draft_id, data_root=data_root)
+            self.assertIsNotNone(latest)
+            self.assertEqual(latest["typing_mode_used"], "word_chunked")
+
     def test_manual_assist_bundle_resolves_real_asset_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)
@@ -704,9 +771,8 @@ class ApplyPostingTest(unittest.TestCase):
                     data_root=data_root,
                 )
             bundle = apply_posting(result.draft_id, data_root=data_root)
-            self.assertEqual(bundle["handoff_kind"], "manual_assist")
+            self.assertEqual(bundle["handoff_kind"], "automation_playbook")
             self.assertTrue(bundle["requires_human_submit"])
-            self.assertEqual(bundle["handoff_context"]["current_checkpoint"], "human_review_step")
             self.assertEqual(bundle["resume_upload_kind"], "pdf")
             self.assertTrue(bundle["resume_path"].endswith(".pdf"))
             self.assertEqual(bundle["cover_letter_pdf_path"], cover["pdf_path"])
@@ -780,6 +846,33 @@ class MutationsTest(unittest.TestCase):
             drafts = list_drafts(data_root=data_root)
             matched = [d for d in drafts if d["lead_id"] == "never-prepared-lead"]
             self.assertEqual(len(matched), 1)
+
+    def test_list_drafts_source_matches_origin_board_and_surface(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])):
+                linkedin_manual = prepare_application(
+                    LINKEDIN_ASSIST_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+                linkedin_redirect = prepare_application(
+                    LINKEDIN_REDIRECT_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications",
+                    data_root=data_root,
+                )
+            linkedin_drafts = list_drafts(source="linkedin", data_root=data_root)
+            self.assertEqual(
+                {draft["draft_id"] for draft in linkedin_drafts},
+                {linkedin_manual.draft_id, linkedin_redirect.draft_id},
+            )
+            greenhouse_drafts = list_drafts(source="greenhouse_redirect", data_root=data_root)
+            self.assertEqual(
+                [draft["draft_id"] for draft in greenhouse_drafts],
+                [linkedin_redirect.draft_id],
+            )
+            self.assertEqual(linkedin_drafts[0]["origin_board"], "linkedin")
 
     def test_refresh_application_bumps_snapshot_version(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
