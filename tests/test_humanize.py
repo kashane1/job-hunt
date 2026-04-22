@@ -157,6 +157,48 @@ class GrepInvariantTest(unittest.TestCase):
         self.assertEqual(offenders, [], "Auto-submit patterns found:\n" + "\n".join(offenders))
 
 
+class TuningTest(unittest.TestCase):
+    """Tuning rules surfaced by the Inversion dry-run."""
+
+    def test_url_answer_is_typed_atomically_regardless_of_mode(self) -> None:
+        spec = humanize._sample_typing_spec(
+            "https://www.linkedin.com/in/kashanesakha",
+            _policy(),
+            rng=random.Random(0),
+        )
+        self.assertEqual(spec["mode"], "atomic")
+        self.assertEqual(spec["chunk_boundaries"], [])
+        self.assertEqual(spec["chunk_delay_ms"], [])
+
+    def test_email_answer_is_typed_atomically(self) -> None:
+        spec = humanize._sample_typing_spec(
+            "user+tag@example.com", _policy(), rng=random.Random(0),
+        )
+        self.assertEqual(spec["mode"], "atomic")
+
+    def test_plain_text_answer_still_chunked(self) -> None:
+        spec = humanize._sample_typing_spec(
+            "hello world from a human", _policy(), rng=random.Random(0),
+        )
+        self.assertEqual(spec["mode"], "word_chunked")
+        self.assertGreater(len(spec["chunk_boundaries"]), 1)
+
+    def test_curated_provenance_lowers_read_time_floor(self) -> None:
+        # Curated short-question field: floor drops from default 600ms to 300ms.
+        policy = _policy()
+        fields = [
+            {"question_text": "Remote?", "answer": "Yes", "provenance": "curated"},
+            {"question_text": "Remote?", "answer": "Yes", "provenance": "curated_template"},
+        ]
+        rng = random.Random(7)
+        plan = build_humanize_plan(fields, _page_info(0), policy, rng=rng)
+        entries = plan["per_field"]
+        # With seed=7, the curated field should land below 600 (the default floor)
+        # while curated_template still respects the 600 floor.
+        self.assertLess(entries[0]["pre_read_ms"], 600)
+        self.assertGreaterEqual(entries[1]["pre_read_ms"], 600)
+
+
 class RedactionTest(unittest.TestCase):
     """Sanity check for redact_humanize_for_audit (used by application.py)."""
 

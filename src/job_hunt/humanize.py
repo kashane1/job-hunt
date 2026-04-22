@@ -24,6 +24,7 @@ import copy
 import hashlib
 import math
 import random
+import re
 from typing import Any, Mapping, Sequence, TypedDict
 
 
@@ -204,12 +205,20 @@ def _uniform_int(rng: random.Random, lo: int, hi: int) -> int:
 
 
 def _sample_read_time_ms(
-    word_count: int, policy: Mapping[str, Any], *, rng: random.Random
+    word_count: int,
+    policy: Mapping[str, Any],
+    *,
+    rng: random.Random,
+    min_ms_override: int | None = None,
 ) -> int:
-    """Sample a read-time delay in ms for text of ``word_count`` words."""
+    """Sample a read-time delay in ms for text of ``word_count`` words.
+
+    ``min_ms_override`` lets callers lower the floor for content the user has
+    already reviewed (e.g. a curated yes/no answer — no reading time needed).
+    """
     read = policy["read"]
     wpm = float(read["wpm"])
-    min_ms = int(read["min_ms"])
+    min_ms = int(read["min_ms"]) if min_ms_override is None else int(min_ms_override)
     max_ms = int(read["max_ms"])
     variance = float(read.get("variance", 0.35))
     skim_prob = float(read.get("skim_probability", 0.0))
@@ -222,6 +231,12 @@ def _sample_read_time_ms(
     if skim_prob > 0 and rng.random() < skim_prob:
         sampled = int(sampled * 0.3)
     return _clamp(sampled, min_ms, max_ms)
+
+
+# Provenance values for which the user has pre-reviewed the exact answer.
+# Read-time floor drops for these — no in-the-moment reading needed.
+_PREREVIEWED_PROVENANCES = frozenset({"curated"})
+_PREREVIEWED_READ_FLOOR_MS = 300
 
 
 def _split_chunk_boundaries(answer: str) -> list[int]:
@@ -238,6 +253,21 @@ def _split_chunk_boundaries(answer: str) -> list[int]:
     return boundaries
 
 
+# Answers that look like URLs or email addresses should be typed atomically —
+# humans paste them as a unit, not word-by-word. Chunking a URL splits on
+# slashes/colons/dots which produces an obviously-bot cadence.
+_URL_LIKE_RE = re.compile(
+    r"^\s*(?:https?://|www\.|mailto:|[\w.+-]+@)", re.IGNORECASE
+)
+
+
+def _is_atomic_paste_answer(answer: str) -> bool:
+    """True if the answer should be committed in one shot regardless of mode."""
+    if not answer:
+        return False
+    return bool(_URL_LIKE_RE.match(answer))
+
+
 def _sample_typing_spec(
     answer: str, policy: Mapping[str, Any], *, rng: random.Random
 ) -> TypingSpec:
@@ -246,6 +276,11 @@ def _sample_typing_spec(
     mode = str(typing_policy.get("mode", "word_chunked"))
     if mode not in {"atomic", "word_chunked", "per_char_prefix"}:
         raise ValueError(f"unknown typing.mode: {mode!r}")
+
+    # Override: URL- and email-shaped answers always commit atomically.
+    # Humans paste these; chunking them is a bot tell.
+    if _is_atomic_paste_answer(answer):
+        mode = "atomic"
 
     mean_ms = float(typing_policy["mean_ms_per_char"])
     stddev_ms = float(typing_policy["stddev_ms_per_char"])
@@ -271,7 +306,10 @@ def _sample_typing_spec(
         total_ms = sum(per_char_samples)
 
     if mode == "atomic":
-        return {"mode": mode, "total_ms": total_ms,
+        # Atomic mode pastes the answer in one shot — nothing sleeps for the
+        # sampled per-char budget, so reporting it as total_ms would mislead
+        # the playbook / audit. Report 0 to reflect actual wall-clock cost.
+        return {"mode": mode, "total_ms": 0,
                 "chunk_boundaries": [], "chunk_delay_ms": []}
 
     # word_chunked / per_char_prefix both need boundary/delay arrays. For
@@ -378,10 +416,21 @@ def build_humanize_plan(
 
     per_field_entries: list[PerFieldEntry] = []
     for idx, field in enumerate(fields):
-        question = str(field.get("question") or field.get("label") or "")
+        question = str(
+            field.get("question")
+            or field.get("question_text")
+            or field.get("label")
+            or ""
+        )
         answer = str(field.get("answer") or "")
+        provenance = str(field.get("provenance") or "")
         question_words = max(1, len(question.split()))
-        pre_read_ms = _sample_read_time_ms(question_words, policy, rng=rng)
+        read_floor: int | None = None
+        if provenance in _PREREVIEWED_PROVENANCES:
+            read_floor = _PREREVIEWED_READ_FLOOR_MS
+        pre_read_ms = _sample_read_time_ms(
+            question_words, policy, rng=rng, min_ms_override=read_floor,
+        )
         typing = _sample_typing_spec(answer, policy, rng=rng)
         post_fill_gap_ms = _uniform_int(rng, int(gap_lo), int(gap_hi))
         per_field_entries.append({
