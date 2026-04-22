@@ -215,3 +215,69 @@ class RedactionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SalaryRuleTest(unittest.TestCase):
+    """Minimum-salary answer rule: fallback when posting caps below $140k."""
+
+    def setUp(self) -> None:
+        from job_hunt.application import (
+            _parse_comp_range_usd,
+            _resolve_minimum_salary_answer,
+        )
+        self.parse = _parse_comp_range_usd
+        self.resolve = _resolve_minimum_salary_answer
+
+    def test_parse_range_usd_with_dash(self) -> None:
+        self.assertEqual(self.parse("USD 139000-201000 YEAR"), (139000, 201000))
+        self.assertEqual(self.parse("USD 139000–201000 YEAR"), (139000, 201000))
+        self.assertEqual(self.parse("$100K - $150K"), (100000, 150000))
+
+    def test_parse_range_ignores_hourly(self) -> None:
+        self.assertIsNone(self.parse("$75-$90 / hour"))
+        self.assertIsNone(self.parse("50/hr to 80/hr"))
+
+    def test_parse_range_unknown_returns_none(self) -> None:
+        self.assertIsNone(self.parse(""))
+        self.assertIsNone(self.parse("competitive"))
+
+    def test_range_includes_140k_uses_40p_floored_at_140k(self) -> None:
+        # 139k-201k range → 40p = 163.8k → rounded to $164k → above 140 floor.
+        self.assertEqual(
+            self.resolve({"compensation": "USD 139000-201000 YEAR"}),
+            "$164,000",
+        )
+
+    def test_range_above_140k_asks_at_40p(self) -> None:
+        # 150k-200k → 40p = 170000 → asks $170k (no reason to floor down).
+        self.assertEqual(
+            self.resolve({"compensation": "USD 150000-200000 YEAR"}),
+            "$170,000",
+        )
+
+    def test_tight_range_around_140k_floors_at_140k(self) -> None:
+        # 140k-150k → 40p = 144k → asks $144k (above floor).
+        self.assertEqual(
+            self.resolve({"compensation": "$140K - $150K"}),
+            "$144,000",
+        )
+
+    def test_narrow_low_range_including_140k_floors_at_140k(self) -> None:
+        # 135k-145k → 40p = 139k → floored up to $140k (range includes 140).
+        self.assertEqual(
+            self.resolve({"compensation": "$135K - $145K"}),
+            "$140,000",
+        )
+
+    def test_range_caps_below_140k_uses_120k_fallback(self) -> None:
+        # $80k-$120k → 40p = 96k → floored up to $120k (range caps below 140).
+        self.assertEqual(
+            self.resolve({"compensation": "$80K - $120K"}),
+            "$120,000",
+        )
+
+    def test_no_parseable_comp_returns_none(self) -> None:
+        # Sampler keeps bank-resolved answer when we can't parse.
+        self.assertIsNone(self.resolve({"compensation": ""}))
+        self.assertIsNone(self.resolve({"compensation": "competitive salary"}))
+        self.assertIsNone(self.resolve({}))

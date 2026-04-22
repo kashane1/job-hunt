@@ -348,6 +348,80 @@ DEFAULT_FIELD_SET: Final = (
 )
 
 
+# Compensation rules (see user memory feedback_salary_ask_rule.md +
+# feedback_salary_floor.md for rationale):
+#   1. When the posting lists a salary range, ask at the 40th percentile:
+#      ask = bottom + 0.4 * (top - bottom).
+#   2. Floor the result at $140,000 as long as the posted range includes or
+#      exceeds $140k. If the posted range caps below $140k, drop the floor
+#      to $120k (the hard negotiation minimum).
+#   3. When no range is posted / parsable, keep the bank's default answer.
+_SALARY_PRIMARY_FLOOR_USD = 140_000
+_SALARY_FALLBACK_FLOOR_USD = 120_000
+# Match either 3+-digit numbers (full-USD salaries) or 2+-digit followed by
+# a 'k' suffix. Short bare numbers without 'k' (like hours-per-week "40") are
+# filtered below via the 20_000 threshold.
+_COMP_NUMERIC_RE: Final = re.compile(r"(\d[\d,]{1,})\s*(k)?", re.IGNORECASE)
+
+
+def _parse_comp_range_usd(raw: str) -> tuple[int, int] | None:
+    """Parse a compensation string into a (low, high) USD-per-year range.
+
+    Accepts shapes like:
+      "USD 139000-201000 YEAR", "$100K - $150K", "80,000 – 120,000".
+
+    Returns ``None`` when no numeric range can be extracted. Hourly / monthly
+    strings (containing 'hour', 'hr', 'month') are treated as out-of-scope
+    and return ``None`` so the caller keeps the bank-resolved answer.
+    """
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if any(word in lowered for word in ("hour", "/hr", "hr ", "month", "/mo")):
+        return None
+    matches = list(_COMP_NUMERIC_RE.finditer(raw))
+    values: list[int] = []
+    for m in matches:
+        n = int(m.group(1).replace(",", ""))
+        if m.group(2):  # trailing 'k' suffix
+            n *= 1000
+        if n >= 20_000:  # filter out ZIP codes, percentages, years, etc.
+            values.append(n)
+    if len(values) < 2:
+        return None
+    return min(values), max(values)
+
+
+def _format_usd(amount_usd: int) -> str:
+    """Format ``amount_usd`` as ``$NN,NNN``."""
+    return f"${amount_usd:,}"
+
+
+def _resolve_minimum_salary_answer(lead: dict) -> str | None:
+    """Apply the compensation-range rule to the minimum_salary answer.
+
+    Returns the answer string to use, or ``None`` to keep whatever the
+    answer-bank resolver produced. Called from ``prepare_application``.
+    """
+    comp = str(lead.get("compensation") or lead.get("salary") or "")
+    parsed = _parse_comp_range_usd(comp)
+    if parsed is None:
+        return None
+    lo, hi = parsed
+    # 40th percentile of the posted range.
+    fortieth = int(round(lo + 0.4 * (hi - lo)))
+    # Floor based on whether the range includes $140k.
+    floor_usd = (
+        _SALARY_PRIMARY_FLOOR_USD
+        if hi >= _SALARY_PRIMARY_FLOOR_USD
+        else _SALARY_FALLBACK_FLOOR_USD
+    )
+    ask = max(fortieth, floor_usd)
+    # Round to nearest $1,000 for readability.
+    ask = round(ask / 1000) * 1000
+    return _format_usd(ask)
+
+
 def detect_surface(posting_url: str, apply_type: str | None = None) -> str:
     """Compatibility wrapper around the board registry during migration."""
     return resolve_application_target(None, posting_url, apply_type=apply_type).surface
@@ -766,17 +840,24 @@ def prepare_application(
             res = answer_bank.AnswerResolution(
                 entry_id="", answer="", provenance="none", answer_format=answer_format,
             )
+        answer = res.answer
+        # Compensation-range rule: substitute the fallback when the posting's
+        # range caps below our primary disclosed minimum.
+        if field_id == "minimum_salary":
+            override = _resolve_minimum_salary_answer(lead)
+            if override is not None:
+                answer = override
         fields.append({
             "field_id": field_id,
             "question_text": question,
             "normalized_question": answer_bank.normalize_question(question),
-            "answer": res.answer,
+            "answer": answer,
             "provenance": res.provenance,
             "answer_format": res.answer_format or answer_format,
         })
-        if res.provenance == "none" or not res.answer:
+        if res.provenance == "none" or not answer:
             unresolved_fields.append(field_id)
-        elif "{{" in res.answer:
+        elif "{{" in answer:
             unresolved_fields.append(field_id)
 
     # ATS check — best-effort; absence doesn't block prepare_application
