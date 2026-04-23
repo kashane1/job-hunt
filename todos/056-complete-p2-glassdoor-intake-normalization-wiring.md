@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "056"
 tags: [code-review, plan, architecture, intake, glassdoor]
@@ -59,7 +59,8 @@ at the shared entrypoint.
 
 ## Recommended Action
 
-To be filled during triage.
+Resolved by wiring `core.extract_lead()` through
+`GlassdoorBoardAdapter.normalize_manual_intake()` for `origin_board=glassdoor`.
 
 ## Technical Details
 
@@ -88,3 +89,15 @@ To be filled during triage.
 **Learnings:**
 - Plan-level architecture often fails at the caller seam, not the new module
   seam
+
+### 2026-04-21 - Resolution
+
+**By:** Codex
+
+**Actions:**
+- Added `GlassdoorBoardAdapter.normalize_manual_intake()`
+- Updated `extract_lead()` to invoke it before persistence
+- Added intake tests for hosted and redirecting Glassdoor manual artifacts
+
+**Learnings:**
+- The end-to-end extract path is the only place this normalization really becomes durable system behavior

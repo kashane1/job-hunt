@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p1
 issue_id: "052"
 tags: [code-review, plan, security, policy, glassdoor]
@@ -65,7 +65,10 @@ automation.
 
 ## Recommended Action
 
-To be filled during triage.
+Resolved by recording an explicit Glassdoor-hosted automation exception in
+`docs/solutions/security-issues/glassdoor-hosted-automation-policy-exception.md`
+and by narrowing the shipped slice to manual/local intake plus human-submit
+only execution.
 
 ## Technical Details
 
@@ -98,3 +101,15 @@ To be filled during triage.
 **Learnings:**
 - Human-submit protects the commit action, but not necessarily the broader
   automated-agent policy language on the site
+
+### 2026-04-21 - Resolution
+
+**By:** Codex
+
+**Actions:**
+- Added a dedicated Glassdoor policy-exception document to record the board-specific decision
+- Updated `AGENTS.md` and the new Glassdoor operator guide to reflect the narrow first-slice scope
+- Kept Glassdoor out of the global login-wall allowlist in this rollout
+
+**Learnings:**
+- The repo needed an explicit exception record, not just a warning that one should exist

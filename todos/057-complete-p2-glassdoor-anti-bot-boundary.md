@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "057"
 tags: [code-review, plan, security, anti-bot, glassdoor]
@@ -62,7 +62,8 @@ terminal states that abort the attempt and batch.
 
 ## Recommended Action
 
-To be filled during triage.
+Resolved by making the Glassdoor playbook's anti-bot/login/CAPTCHA/MFA
+handling explicitly terminal and non-evasive.
 
 ## Technical Details
 
@@ -91,3 +92,15 @@ To be filled during triage.
 **Learnings:**
 - "Stop on challenge" is not enough unless the plan also forbids what happens
   next
+
+### 2026-04-21 - Resolution
+
+**By:** Codex
+
+**Actions:**
+- Added explicit terminal-boundary language to the Glassdoor playbook
+- Documented that anti-bot signals abort rather than retry or escalate selectors
+- Added operator docs so the boundary is visible outside the playbook file itself
+
+**Learnings:**
+- The safest anti-bot policy is the one the operator can read in one sentence and the playbook repeats verbatim

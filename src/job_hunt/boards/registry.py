@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import re
 
 from .base import ApplicationTarget, BoardAdapter
+from .glassdoor import GlassdoorBoardAdapter
 from .indeed import IndeedBoardAdapter
 from .linkedin import LinkedInBoardAdapter
+from .routing import surface_for_external_url
 from ..surfaces.registry import (
     batch_eligible as surface_batch_eligible,
     executor_backend_for,
@@ -16,14 +17,8 @@ from ..surfaces.registry import (
 
 _ADAPTERS: tuple[BoardAdapter, ...] = (
     LinkedInBoardAdapter(),
+    GlassdoorBoardAdapter(),
     IndeedBoardAdapter(),
-)
-
-_DIRECT_URL_SURFACES: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"^https?://(?:boards|job-boards)\.greenhouse\.io/", re.IGNORECASE), "greenhouse_redirect"),
-    (re.compile(r"^https?://jobs\.lever\.co/", re.IGNORECASE), "lever_redirect"),
-    (re.compile(r"^https?://[^/]+\.myworkdayjobs\.com/", re.IGNORECASE), "workday_redirect"),
-    (re.compile(r"^https?://jobs\.ashbyhq\.com/", re.IGNORECASE), "ashby_redirect"),
 )
 
 
@@ -53,14 +48,14 @@ def resolve_application_target(
 ) -> ApplicationTarget:
     adapter = get_board_adapter(lead, posting_url)
     if isinstance(adapter, IndeedBoardAdapter) and posting_url:
-        for pattern, surface in _DIRECT_URL_SURFACES:
-            if pattern.search(posting_url):
-                return _hydrate_surface_metadata(ApplicationTarget(
-                    origin_board=str((lead or {}).get("origin_board") or "unknown"),
-                    surface=surface,
-                    correlation_keys_patch={},
-                    handoff_kind="automation_playbook",
-                ))
+        surface = surface_for_external_url(posting_url)
+        if surface is not None:
+            return _hydrate_surface_metadata(ApplicationTarget(
+                origin_board=str((lead or {}).get("origin_board") or "unknown"),
+                surface=surface,
+                correlation_keys_patch={},
+                handoff_kind="automation_playbook",
+            ))
     return _hydrate_surface_metadata(
         adapter.resolve_application_target(lead or {}, posting_url=posting_url, apply_type=apply_type)
     )

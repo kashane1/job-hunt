@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "055"
 tags: [code-review, plan, architecture, routing, glassdoor]
@@ -62,7 +62,8 @@ manual-intake normalization; use shared re-resolution for ATS handoffs.
 
 ## Recommended Action
 
-To be filled during triage.
+Resolved by centralizing ATS-host detection in shared board-routing helpers and
+using that same shared resolver for Glassdoor late handoffs.
 
 ## Technical Details
 
@@ -92,3 +93,15 @@ To be filled during triage.
 **Learnings:**
 - Late reroute paths need explicit checkpoint contracts or they leak complexity
   into unrelated modules
+
+### 2026-04-21 - Resolution
+
+**By:** Codex
+
+**Actions:**
+- Added shared routing helpers for Greenhouse/Lever/Workday/Ashby host detection
+- Reused those helpers from both the board registry and the LinkedIn/Glassdoor adapters
+- Added the `ats_redirect_handoff` playbook checkpoint and Glassdoor reroute tests
+
+**Learnings:**
+- Pulling ATS host matching into one helper removed the duplication risk the plan called out

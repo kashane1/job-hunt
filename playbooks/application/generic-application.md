@@ -13,6 +13,7 @@ This file is the dispatch map used by `apply-posting`. Open the per-surface play
 | `plan.surface` | Playbook |
 |---|---|
 | `indeed_easy_apply` | `playbooks/application/indeed-easy-apply.md` |
+| `glassdoor_easy_apply` | `playbooks/application/glassdoor-easy-apply.md` |
 | `greenhouse_redirect` | `playbooks/application/greenhouse-redirect.md` |
 | `lever_redirect` | `playbooks/application/lever-redirect.md` |
 | `workday_redirect` | `playbooks/application/workday-redirect.md` |
@@ -23,10 +24,12 @@ This file is the dispatch map used by `apply-posting`. Open the per-surface play
 ## URL routing
 
 - Matches `indeed.com/viewjob` → `indeed_easy_apply`
+- Matches `glassdoor.com` hosted apply URLs → `glassdoor_easy_apply`
 - Redirects to `boards.greenhouse.io` or `job-boards.greenhouse.io` → `greenhouse_redirect`
 - Redirects to `jobs.lever.co` or `hire.lever.co` → `lever_redirect`
 - Redirects to `*.myworkdayjobs.com` → `workday_redirect`
 - Redirects to `jobs.ashbyhq.com` → `ashby_redirect`
+- Glassdoor late redirects to supported ATS hosts are re-resolved through the shared router after checkpoint `ats_redirect_handoff`
 - LinkedIn-hosted Easy Apply / inline apply → `linkedin_easy_apply_assisted`
 - Any other redirect host → `ApplicationError(suspicious_redirect_host)` (stop)
 

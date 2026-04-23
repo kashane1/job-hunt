@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p1
 issue_id: "053"
 tags: [code-review, plan, security, confirmation, glassdoor]
@@ -63,7 +63,9 @@ body correlation, and tests.
 
 ## Recommended Action
 
-To be filled during triage.
+Resolved via the safer first-slice default: Glassdoor stays at
+`submitted_provisional` and defers email-driven confirmation promotion until
+verified sender rules land with tests.
 
 ## Technical Details
 
@@ -98,3 +100,15 @@ To be filled during triage.
 **Learnings:**
 - Confirmation support is security-sensitive enough that "follow-up later" is
   not an acceptable core-plan default
+
+### 2026-04-21 - Resolution
+
+**By:** Codex
+
+**Actions:**
+- Added the provisional-only rule to the Glassdoor playbook and operator guide
+- Added pipeline coverage asserting the shipped Glassdoor lane ends at `submitted_provisional`
+- Left `confirmation.py` unchanged for Glassdoor in this slice to avoid spoofable state promotion
+
+**Learnings:**
+- Choosing the safer lifecycle up front let the rollout stay narrow without leaving a hidden security gap

@@ -254,6 +254,12 @@ class SurfaceDetectionTest(unittest.TestCase):
             "greenhouse_redirect",
         )
 
+    def test_glassdoor_url(self) -> None:
+        self.assertEqual(
+            detect_surface("https://www.glassdoor.com/job-listing/example-role"),
+            "glassdoor_easy_apply",
+        )
+
     def test_unknown_defaults_indeed(self) -> None:
         self.assertEqual(detect_surface("https://example.com/jobs/1"), "indeed_easy_apply")
 
@@ -262,6 +268,7 @@ class SurfaceDetectionTest(unittest.TestCase):
             "indeed_easy_apply", "greenhouse_redirect", "lever_redirect",
             "workday_redirect", "ashby_redirect",
             "linkedin_easy_apply", "linkedin_easy_apply_assisted",
+            "glassdoor_easy_apply",
         ):
             self.assertTrue(playbook_for_surface(surface))
 

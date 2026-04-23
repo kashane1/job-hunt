@@ -29,6 +29,13 @@ class SurfaceRegistryTest(unittest.TestCase):
         self.assertEqual(spec.handoff_kind, "manual_assist")
         self.assertEqual(surface_policy_for(spec.surface), "automation_forbidden_on_origin")
 
+    def test_glassdoor_easy_apply_metadata(self) -> None:
+        spec = get_surface_spec("glassdoor_easy_apply")
+        self.assertEqual(spec.playbook_path, "playbooks/application/glassdoor-easy-apply.md")
+        self.assertEqual(spec.default_executor, "claude_chrome")
+        self.assertEqual(spec.handoff_kind, "automation_playbook")
+        self.assertEqual(surface_policy_for(spec.surface), "browser_automated_human_submit")
+
     def test_batch_eligibility_is_surface_owned(self) -> None:
         automated = ApplicationTarget(origin_board="indeed", surface="indeed_easy_apply")
         manual = ApplicationTarget(origin_board="linkedin", surface="linkedin_easy_apply_assisted")

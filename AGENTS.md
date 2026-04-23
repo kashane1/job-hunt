@@ -14,6 +14,7 @@ Operate this repository as a trustworthy job-search system for one person. The g
 - V1 still requires explicit human approval before account creation.
 - Never store passwords or secrets in git-tracked files.
 - **Indeed.com and LinkedIn.com are allowlisted per `config/domain-allowlist.yaml`** and have automation playbooks (`indeed-easy-apply.md`, `linkedin-easy-apply.md`) that drive forms up to the human submit gate. All other sites in `HARD_FAIL_URL_PATTERNS` continue to hard-fail unless explicitly allowlisted.
+- **Glassdoor-hosted automation is a board-specific exception, not a new login-wall default.** The repo may automate explicit manual/local Glassdoor intake up to the human submit gate via `glassdoor-easy-apply.md`, but `glassdoor.com` is not globally allowlisted for ingestion/discovery in the first slice.
 
 ## Browser Guardrails
 

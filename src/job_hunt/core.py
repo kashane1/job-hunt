@@ -1094,6 +1094,10 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
         from .boards.linkedin import LinkedInBoardAdapter
 
         metadata = LinkedInBoardAdapter().normalize_manual_intake(metadata)
+    elif origin_board == "glassdoor":
+        from .boards.glassdoor import GlassdoorBoardAdapter
+
+        metadata = GlassdoorBoardAdapter().normalize_manual_intake(metadata)
     elif origin_board == "indeed":
         from .boards.indeed import IndeedBoardAdapter
 

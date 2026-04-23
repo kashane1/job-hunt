@@ -1,7 +1,7 @@
 ---
 title: "feat: Add Glassdoor automation up to the human submit gate"
 type: feat
-status: active
+status: completed
 date: 2026-04-20
 origin: docs/plans/2026-04-20-001-feat-glassdoor-board-support-plan.md
 ---
@@ -533,54 +533,54 @@ Why:
 
 ### Functional
 
-- [ ] The repo records an explicit policy exception for Glassdoor-hosted
+- [x] The repo records an explicit policy exception for Glassdoor-hosted
       automation before implementation begins.
-- [ ] A Glassdoor-origin lead with a Glassdoor-hosted final URL resolves to
+- [x] A Glassdoor-origin lead with a Glassdoor-hosted final URL resolves to
       `glassdoor_easy_apply`.
-- [ ] A Glassdoor-origin lead with Greenhouse final URL resolves to
+- [x] A Glassdoor-origin lead with Greenhouse final URL resolves to
       `greenhouse_redirect`.
-- [ ] A Glassdoor-origin lead with Lever final URL resolves to
+- [x] A Glassdoor-origin lead with Lever final URL resolves to
       `lever_redirect`.
-- [ ] A Glassdoor-origin lead with Workday final URL resolves to
+- [x] A Glassdoor-origin lead with Workday final URL resolves to
       `workday_redirect`.
-- [ ] A Glassdoor-origin lead with Ashby final URL resolves to
+- [x] A Glassdoor-origin lead with Ashby final URL resolves to
       `ashby_redirect`.
-- [ ] `extract_lead()` applies Glassdoor manual-intake normalization before the
+- [x] `extract_lead()` applies Glassdoor manual-intake normalization before the
       lead is persisted.
-- [ ] `apply_posting()` emits an automation bundle for `glassdoor_easy_apply`
+- [x] `apply_posting()` emits an automation bundle for `glassdoor_easy_apply`
       with `requires_human_submit=true`.
-- [ ] A late Glassdoor-to-ATS handoff re-resolves through the shared router
+- [x] A late Glassdoor-to-ATS handoff re-resolves through the shared router
       without losing `origin_board=glassdoor`.
-- [ ] The first slice either stops at `submitted_provisional`, or ships
+- [x] The first slice either stops at `submitted_provisional`, or ships
       verified Glassdoor confirmation support in the same rollout.
 
 ### Safety and policy
 
-- [ ] The Glassdoor playbook never clicks the final submit button.
-- [ ] The Glassdoor playbook re-asserts allowlisted origin before every field
+- [x] The Glassdoor playbook never clicks the final submit button.
+- [x] The Glassdoor playbook re-asserts allowlisted origin before every field
       input or upload.
-- [ ] The Glassdoor playbook fails closed on unknown redirect hosts.
-- [ ] Login/MFA/CAPTCHA/account-creation gates still require human handling per
+- [x] The Glassdoor playbook fails closed on unknown redirect hosts.
+- [x] Login/MFA/CAPTCHA/account-creation gates still require human handling per
       current policy.
-- [ ] Anti-bot challenges abort the attempt; they do not trigger automated
+- [x] Anti-bot challenges abort the attempt; they do not trigger automated
       retries, refresh loops, or evasive fallback behavior.
-- [ ] If `glassdoor.com` is added to `config/domain-allowlist.yaml`, the same
-      rollout documents and tests the ingestion/discovery side effects.
+- [x] `glassdoor.com` is not added to `config/domain-allowlist.yaml` in the
+      first slice, so ingestion/discovery side effects remain unchanged.
 
 ### Tests
 
-- [ ] Surface registry tests cover `glassdoor_easy_apply`.
-- [ ] Board routing tests cover Glassdoor-hosted and Glassdoor-to-ATS paths.
-- [ ] Manual-intake tests cover Glassdoor normalization through
+- [x] Surface registry tests cover `glassdoor_easy_apply`.
+- [x] Board routing tests cover Glassdoor-hosted and Glassdoor-to-ATS paths.
+- [x] Manual-intake tests cover Glassdoor normalization through
       `extract_lead()`.
-- [ ] Pipeline tests cover Glassdoor-hosted automation bundle generation.
-- [ ] Playbook/router tests confirm Glassdoor surface discovery and late
+- [x] Pipeline tests cover Glassdoor-hosted automation bundle generation.
+- [x] Playbook/router tests confirm Glassdoor surface discovery and late
       Glassdoor-to-ATS handoff.
-- [ ] Regression tests confirm the submit gate remains human-only.
-- [ ] Existing fixed surface/playbook fixture lists are updated so CI covers the
+- [x] Regression tests confirm the submit gate remains human-only.
+- [x] Existing fixed surface/playbook fixture lists are updated so CI covers the
       new surface explicitly.
-- [ ] If confirmation support lands in-slice, unverified Glassdoor-like
-      messages are quarantined instead of advancing state.
+- [x] Confirmation support does not land in-slice, so Glassdoor remains
+      `submitted_provisional` in the shipped first slice.
 
 ## Success Metrics
 

@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "054"
 tags: [code-review, plan, architecture, ingestion, glassdoor]
@@ -62,7 +62,9 @@ ingestion/discovery docs and tests in the same slice.
 
 ## Recommended Action
 
-To be filled during triage.
+Resolved by keeping `glassdoor.com` out of `config/domain-allowlist.yaml` in
+the first slice and documenting Glassdoor support as manual/local intake plus
+browser automation only.
 
 ## Technical Details
 
@@ -93,3 +95,15 @@ To be filled during triage.
 **Learnings:**
 - In this repo, domain allowlists are wider policy levers than surface
   playbooks alone
+
+### 2026-04-21 - Resolution
+
+**By:** Codex
+
+**Actions:**
+- Left the global login-wall allowlist unchanged
+- Added docs clarifying that Glassdoor automation does not widen ingestion/discovery behavior
+- Shipped the browser lane through board/surface routing instead of config allowlist mutation
+
+**Learnings:**
+- Separating browser-lane support from fetch/discovery scope kept this rollout much easier to reason about

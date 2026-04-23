@@ -37,6 +37,7 @@ from job_hunt.utils import parse_frontmatter, repo_root, write_json
 
 PLAYBOOK_FILES = (
     "playbooks/application/indeed-easy-apply.md",
+    "playbooks/application/glassdoor-easy-apply.md",
     "playbooks/application/greenhouse-redirect.md",
     "playbooks/application/lever-redirect.md",
     "playbooks/application/workday-redirect.md",
@@ -75,6 +76,7 @@ class FrontmatterShipTest(unittest.TestCase):
         for surface in (
             "indeed_easy_apply", "greenhouse_redirect", "lever_redirect",
             "workday_redirect", "ashby_redirect", "linkedin_easy_apply_assisted",
+            "glassdoor_easy_apply",
         ):
             self.assertIn(surface, text, f"generic router missing reference to {surface}")
 
@@ -82,6 +84,7 @@ class FrontmatterShipTest(unittest.TestCase):
         for surface in (
             "indeed_easy_apply", "greenhouse_redirect", "lever_redirect",
             "workday_redirect", "ashby_redirect", "linkedin_easy_apply_assisted",
+            "glassdoor_easy_apply",
         ):
             path = repo_root() / playbook_for_surface(surface)
             self.assertTrue(path.is_file(), f"{surface} → {path} does not exist")
