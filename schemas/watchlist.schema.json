@@ -14,13 +14,44 @@
           "name": { "type": "string", "pattern": "^[A-Za-z0-9 ._-]{1,64}$" },
           "greenhouse": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
           "lever": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "ashby": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "workable": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
           "careers_url": { "type": "string", "pattern": "^https://" },
           "indeed_search_url": {
             "type": "string",
             "pattern": "^https://(?:www\\.|secure\\.)?indeed\\.com/jobs",
             "description": "Batch 4 (Indeed auto-apply). Full Indeed search URL including q and optionally l, radius."
           },
+          "usajobs_search_profile": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9_-]{1,64}$",
+            "description": "Named USAJOBS search profile defined in the top-level usajobs_profiles list."
+          },
           "notes": { "type": "string", "maxLength": 1000 }
+        }
+      }
+    },
+    "usajobs_profiles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "keyword": { "type": "string" },
+          "location_name": { "type": "string" },
+          "organization": { "type": "string" },
+          "results_per_page": { "type": "integer", "minimum": 1, "maximum": 500 },
+          "who_may_apply": { "enum": ["All", "Public", "Status"] },
+          "remote_indicator": { "type": "boolean" },
+          "fields": { "enum": ["Min", "Full"] },
+          "date_posted": { "type": "integer", "minimum": 0, "maximum": 60 },
+          "sort_field": { "type": "string" },
+          "sort_direction": { "enum": ["Asc", "Desc"] },
+          "job_category_code": { "type": "string" },
+          "position_schedule_type_code": { "type": "string" },
+          "position_offering_type_code": { "type": "string" },
+          "hiring_path": { "type": "string" }
         }
       }
     },

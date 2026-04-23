@@ -4,23 +4,41 @@
 # companies. `config/watchlist.yaml` is gitignored (contains target-company
 # names, which are PII-adjacent).
 #
-# Each entry needs at least ONE of greenhouse / lever / careers_url /
-# indeed_search_url — otherwise it's skipped with a warning.
+# Each entry needs at least ONE of greenhouse / lever / ashby / workable /
+# careers_url / indeed_search_url / usajobs_search_profile — otherwise it's
+# skipped with a warning.
 
 companies:
   - name: "ExampleCo"
     greenhouse: "exampleco"
     lever: "exampleco"
+    ashby: "exampleco"
     careers_url: "https://exampleco.com/careers"
     notes: "primary target"
   - name: "AnotherCorp"
     lever: "anothercorp"
+    workable: "anothercorp"
   - name: "ThirdCo"
     careers_url: "https://thirdco.com/jobs"
     notes: "generic crawl only"
   - name: "Indeed platform search"
     indeed_search_url: "https://www.indeed.com/jobs?q=senior+platform+engineer&l=Remote&radius=0"
     notes: "batch 4 — one virtual company per saved Indeed search"
+  - name: "USAJOBS federal remote"
+    usajobs_search_profile: "federal_remote_platform"
+    notes: "uses local API credentials plus a named profile below"
+
+usajobs_profiles:
+  - name: "federal_remote_platform"
+    keyword: "platform engineer"
+    location_name: "Washington, District of Columbia"
+    results_per_page: 50
+    who_may_apply: "Public"
+    remote_indicator: true
+    fields: "Full"
+    date_posted: 14
+    sort_field: "openingdate"
+    sort_direction: "Desc"
 
 filters:
   # Title OR location must contain at least one keyword (if list non-empty).

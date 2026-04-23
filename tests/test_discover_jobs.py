@@ -130,6 +130,9 @@ filters:
             lead = json.loads(p.read_text())
             self.assertIn("discovered_via", lead)
             self.assertGreaterEqual(len(lead["discovered_via"]), 1)
+            self.assertIn("primary_source", lead)
+            self.assertIn("observed_sources", lead)
+            self.assertGreaterEqual(len(lead["observed_sources"]), 1)
         # History artifact written
         history = list((self.discovery_root / "history").glob("*.json"))
         self.assertEqual(len(history), 1)
@@ -167,12 +170,12 @@ filters:
                     auto_score=False,
                 ),
             )
-        # Cursor should not advance for budget-exhausted sources
+        # Budget exhaustion should persist a resumable partial state rather than
+        # pretending the source completed cleanly.
         cursor = load_cursor(self.discovery_root / "state.json")
-        self.assertNotIn(
-            _cursor_key("ExampleGH", "greenhouse"),
-            cursor.get("entries", {}),
-        )
+        state = cursor["entries"][_cursor_key("ExampleGH", "greenhouse")]
+        self.assertEqual(state["last_run_status"], "partial")
+        self.assertNotIn("next_cursor", state)
 
     def test_idempotent_second_run(self) -> None:
         with patch("job_hunt.discovery.fetch", side_effect=self._patched_fetch()), \
@@ -192,6 +195,64 @@ filters:
             lead_count_after_first,
         )
         self.assertGreater(result2.to_dict()["counts"]["already_known"], 0)
+
+    def test_usajobs_partial_cursor_round_trip(self) -> None:
+        self.watchlist_path.write_text(
+            """
+companies:
+  - name: "Federal"
+    usajobs_search_profile: "federal_remote"
+usajobs_profiles:
+  - name: "federal_remote"
+    keyword: "platform engineer"
+    location_name: "Washington, District of Columbia"
+    results_per_page: 25
+    who_may_apply: "Public"
+    fields: "Full"
+""",
+            encoding="utf-8",
+        )
+        page_1 = (FIXTURES / "usajobs-search-page-1.json").read_text(encoding="utf-8")
+        page_2 = (FIXTURES / "usajobs-search-page-2.json").read_text(encoding="utf-8")
+
+        def usajobs_fetch(url, **kwargs):
+            if "Page=2" in url:
+                return FetchResult(status=200, headers={"content-type": "application/json"}, body=page_2)
+            if "Page=1" in url:
+                return FetchResult(status=200, headers={"content-type": "application/json"}, body=page_1)
+            return FetchResult(
+                status=200,
+                headers={"content-type": "text/html"},
+                body="<html><title>USAJOBS posting</title><main>Federal role</main></html>",
+            )
+
+        with patch.dict("os.environ", {
+            "USAJOBS_API_KEY": "secret",
+            "USAJOBS_USER_AGENT_EMAIL": "person@example.com",
+        }, clear=False), \
+            patch("job_hunt.discovery_providers.usajobs.fetch", side_effect=usajobs_fetch), \
+            patch("job_hunt.ingestion.fetch", side_effect=usajobs_fetch):
+            discover_jobs(
+                self.watchlist_path,
+                self.leads_dir,
+                self.discovery_root,
+                DiscoveryConfig(sources=("usajobs",), auto_score=False),
+            )
+            cursor = load_cursor(self.discovery_root / "state.json")
+            state = cursor["entries"][_cursor_key("Federal", "usajobs")]
+            self.assertEqual(state["last_run_status"], "partial")
+            self.assertEqual(state["next_cursor"], "2")
+
+            discover_jobs(
+                self.watchlist_path,
+                self.leads_dir,
+                self.discovery_root,
+                DiscoveryConfig(sources=("usajobs",), auto_score=False),
+            )
+        cursor = load_cursor(self.discovery_root / "state.json")
+        state = cursor["entries"][_cursor_key("Federal", "usajobs")]
+        self.assertEqual(state["last_run_status"], "complete")
+        self.assertNotIn("next_cursor", state)
 
 
 class CliDiscoverySmokeTest(unittest.TestCase):

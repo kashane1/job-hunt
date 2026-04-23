@@ -30,8 +30,21 @@ VALID_YAML = """
 companies:
   - name: "ExampleCo"
     greenhouse: "exampleco"
+    ashby: "exampleco"
   - name: "AnotherCorp"
     lever: "anothercorp"
+    workable: "anothercorp"
+  - name: "Federal"
+    usajobs_search_profile: "federal_remote"
+
+usajobs_profiles:
+  - name: "federal_remote"
+    keyword: "platform engineer"
+    location_name: "Washington, District of Columbia"
+    results_per_page: 25
+    who_may_apply: "Public"
+    remote_indicator: true
+    fields: "Full"
 
 filters:
   keywords_any:
@@ -46,10 +59,12 @@ class ParseWatchlistTest(unittest.TestCase):
         from job_hunt.simple_yaml import loads as load_yaml
         data = load_yaml(VALID_YAML)
         wl = parse_watchlist(data)
-        self.assertEqual(len(wl.companies), 2)
+        self.assertEqual(len(wl.companies), 3)
         self.assertEqual(wl.companies[0].name, "ExampleCo")
         self.assertEqual(wl.companies[0].greenhouse, "exampleco")
+        self.assertEqual(wl.companies[0].ashby, "exampleco")
         self.assertEqual(wl.filters.keywords_any, ("engineer",))
+        self.assertEqual(wl.companies[2].usajobs_profile.name, "federal_remote")
 
     def test_missing_name_rejected(self) -> None:
         with self.assertRaises(WatchlistValidationError):
@@ -75,6 +90,13 @@ class ParseWatchlistTest(unittest.TestCase):
             parse_watchlist({"companies": [
                 {"name": "X"}, {"name": "X"},
             ]})
+
+    def test_invalid_usajobs_profile_rejected(self) -> None:
+        with self.assertRaises(WatchlistValidationError):
+            parse_watchlist({
+                "companies": [{"name": "Federal", "usajobs_search_profile": "federal"}],
+                "usajobs_profiles": [{"name": "federal", "results_per_page": 999}],
+            })
 
 
 class FilterSemanticsTest(unittest.TestCase):
@@ -143,7 +165,7 @@ class WatchlistCrudTest(unittest.TestCase):
 
     def test_show_all_and_single(self) -> None:
         watchlist_add(self.path, {"name": "AA", "greenhouse": "a"})
-        watchlist_add(self.path, {"name": "BB", "lever": "b"})
+        watchlist_add(self.path, {"name": "BB", "lever": "b", "workable": "bb"})
         all_data = watchlist_show(self.path)
         self.assertEqual(len(all_data["companies"]), 2)
         one = watchlist_show(self.path, company="AA")
@@ -178,6 +200,19 @@ class WatchlistValidateTest(unittest.TestCase):
         result = watchlist_validate(self.path)
         self.assertTrue(result["valid"])
         self.assertTrue(any("NoSource" in w for w in result["warnings"]))
+
+    def test_usajobs_profile_missing_is_reported_in_readiness(self) -> None:
+        self.path.write_text(
+            """
+companies:
+  - name: "Federal"
+    usajobs_search_profile: "federal"
+""",
+            encoding="utf-8",
+        )
+        result = watchlist_validate(self.path)
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["source_readiness"][0]["state"], "profile_missing")
 
     def test_invalid_file_errors(self) -> None:
         self.path.write_text("companies:\n  - greenhouse: \"x\"\n", encoding="utf-8")

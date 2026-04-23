@@ -1,0 +1,29 @@
+{
+  "apiVersion": "1",
+  "jobs": [
+    {
+      "title": "Senior Platform Engineer",
+      "location": "Remote",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "publishedAt": "2026-04-18T00:00:00+00:00",
+      "employmentType": "FullTime",
+      "descriptionHtml": "<p>Build platform systems.</p>",
+      "jobUrl": "https://jobs.ashbyhq.com/exampleco/11111111-1111-1111-1111-111111111111",
+      "applyUrl": "https://jobs.ashbyhq.com/exampleco/11111111-1111-1111-1111-111111111111/application"
+    },
+    {
+      "title": "Hidden Role",
+      "location": "Houston, TX",
+      "isListed": false,
+      "isRemote": false,
+      "workplaceType": "OnSite",
+      "publishedAt": "2026-04-17T00:00:00+00:00",
+      "employmentType": "FullTime",
+      "descriptionHtml": "<p>Do not surface.</p>",
+      "jobUrl": "https://jobs.ashbyhq.com/exampleco/22222222-2222-2222-2222-222222222222",
+      "applyUrl": "https://jobs.ashbyhq.com/exampleco/22222222-2222-2222-2222-222222222222/application"
+    }
+  ]
+}

@@ -60,11 +60,71 @@
               "lever_board",
               "careers_html",
               "careers_html_review",
-              "manual"
+              "manual",
+              "indeed_search",
+              "ashby_public_api",
+              "workable_public_api",
+              "usajobs_api"
             ]
           },
           "company": { "type": "string" },
           "discovered_at": { "type": "string" },
+          "listing_updated_at": { "type": ["string", "null"] },
+          "confidence": { "enum": ["high", "weak_inference"] }
+        }
+      }
+    },
+    "primary_source": {
+      "type": "object",
+      "required": ["provider", "authority", "precedence"],
+      "properties": {
+        "provider": {
+          "enum": [
+            "greenhouse",
+            "lever",
+            "careers",
+            "indeed_search",
+            "ashby",
+            "workable",
+            "usajobs"
+          ]
+        },
+        "authority": { "enum": ["system_of_record", "derived"] },
+        "precedence": {
+          "enum": ["ats_public", "government_api", "board_search", "aggregator"]
+        }
+      }
+    },
+    "observed_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "provider",
+          "authority",
+          "precedence",
+          "company",
+          "observed_at",
+          "confidence"
+        ],
+        "properties": {
+          "provider": {
+            "enum": [
+              "greenhouse",
+              "lever",
+              "careers",
+              "indeed_search",
+              "ashby",
+              "workable",
+              "usajobs"
+            ]
+          },
+          "authority": { "enum": ["system_of_record", "derived"] },
+          "precedence": {
+            "enum": ["ats_public", "government_api", "board_search", "aggregator"]
+          },
+          "company": { "type": "string" },
+          "observed_at": { "type": "string" },
           "listing_updated_at": { "type": ["string", "null"] },
           "confidence": { "enum": ["high", "weak_inference"] }
         }

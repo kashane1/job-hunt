@@ -304,6 +304,7 @@ def check_integrity(data_root: Path) -> dict:
     stale_review_entries: list[dict] = []
     unscored_discovered_leads: list[dict] = []
     stale_tmp_files: list[dict] = []
+    missing_discovery_provenance: list[dict] = []
 
     discovery_root = data_root / "discovery"
     review_dir = discovery_root / "review"
@@ -339,6 +340,15 @@ def check_integrity(data_root: Path) -> dict:
                     "path": str(p),
                     "age_seconds": int(age.total_seconds()),
                 })
+            discovered_via = lead.get("discovered_via")
+            if isinstance(discovered_via, list) and discovered_via:
+                if not isinstance(lead.get("primary_source"), dict) or not isinstance(
+                    lead.get("observed_sources"), list
+                ):
+                    missing_discovery_provenance.append({
+                        "lead_id": lead.get("lead_id", p.stem),
+                        "path": str(p),
+                    })
 
     if data_root.exists():
         for p in data_root.rglob("*.tmp"):
@@ -467,6 +477,7 @@ def check_integrity(data_root: Path) -> dict:
         "stale_review_entries": stale_review_entries,
         "unscored_discovered_leads": unscored_discovered_leads,
         "stale_tmp_files": stale_tmp_files,
+        "missing_discovery_provenance": missing_discovery_provenance,
         "stale_in_progress_attempts": stale_in_progress_attempts,
         "stale_inferred_bank_entries": stale_inferred_bank_entries,
         "orphan_checkpoints_dirs": orphan_checkpoints_dirs,

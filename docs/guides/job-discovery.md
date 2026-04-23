@@ -18,15 +18,35 @@ via the same canonical path as `ingest-url`.
    user-specific target-company names (PII-adjacent). The `.example.yaml`
    template stays tracked.
 
-2. Add companies. Each entry needs at least ONE of `greenhouse`, `lever`,
-   or `careers_url`:
+2. Add companies. Each entry needs at least ONE discovery source field:
+   `greenhouse`, `lever`, `ashby`, `workable`, `careers_url`,
+   `indeed_search_url`, or `usajobs_search_profile`.
 
    ```yaml
    companies:
      - name: "ExampleCo"
        greenhouse: "exampleco"
        lever: "exampleco"
+       ashby: "exampleco"
        careers_url: "https://exampleco.com/careers"
+     - name: "Federal remote"
+       usajobs_search_profile: "federal_remote_platform"
+
+   usajobs_profiles:
+     - name: "federal_remote_platform"
+       keyword: "platform engineer"
+       location_name: "Washington, District of Columbia"
+       results_per_page: 50
+       who_may_apply: "Public"
+       remote_indicator: true
+       fields: "Full"
+   ```
+
+   USAJOBS also needs local credentials:
+
+   ```bash
+   export USAJOBS_API_KEY="..."
+   export USAJOBS_USER_AGENT_EMAIL="you@example.com"
    ```
 
 3. Validate before running:
@@ -62,13 +82,11 @@ with `keywords_any: [engineer, developer]`: **excluded** (no title match).
 
 ## Cursor behavior
 
-`data/discovery/state.json` tracks `(company, source)` tuples that have
-completed at least one successful run. Subsequent runs skip already-seen
-listings. Cursor advances only when a source run is:
-
-- Complete (no errors mid-traversal)
-- Not budget-capped (`--max-ingest` didn't cut it short)
-- Not listing-truncated (response body fit under `MAX_LISTING_BYTES`)
+`data/discovery/state.json` tracks `(company, source)` tuples across runs.
+Completed sources clear any resume cursor; partial sources persist
+`last_run_status: "partial"` plus `next_cursor` when a provider can resume
+cleanly (for example USAJOBS page 2 of N). Budget-capped runs stay partial
+instead of pretending to be complete.
 
 Reset with:
 
@@ -93,12 +111,15 @@ python3 scripts/job_hunt.py review-dismiss <entry_id> --reason "off topic"
 
 ## LinkedIn and Indeed policy
 
-Both hard-fail at every entry point (listing, careers crawl, promote).
-They're behind login walls, aggressively bot-detected, and legally risky
-to scrape. If a careers URL points at either site it's rejected during
-watchlist validation. Manual ingestion via
-`python3 scripts/job_hunt.py extract-lead --input <file>` is the escape
-hatch.
+LinkedIn still hard-fails at discovery and ingestion entry points.
+
+Indeed is the exception: generic scraping is still blocked, but the repo
+supports `indeed_search_url` through the dedicated `indeed_search`
+provider. If a careers URL points at LinkedIn or Indeed it is still
+rejected; use a direct supported source field instead.
+
+Manual ingestion via `python3 scripts/job_hunt.py extract-lead --input <file>`
+remains the escape hatch for login-walled or unsupported sources.
 
 ## Troubleshooting
 
@@ -106,7 +127,10 @@ hatch.
 |---|---|---|
 | `error_code: watchlist_invalid` | YAML parse error or schema miss | Run `watchlist-validate` for specifics. |
 | `error_code: cursor_corrupt` | `state.json` failed schema validation | `rm data/discovery/state.json` and re-run. |
-| `error_code: anti_bot_blocked` | Careers page is gated by Cloudflare/Akamai | Add a Greenhouse/Lever slug if available; otherwise skip. |
+| `error_code: anti_bot_blocked` | Careers page is gated by Cloudflare/Akamai | Add a direct ATS/public source (`greenhouse`, `lever`, `ashby`, `workable`) if available; otherwise skip. |
+| `error_code: usajobs_profile_missing` | The named USAJOBS profile is undefined | Add the profile under `usajobs_profiles` in `config/watchlist.yaml`. |
+| `error_code: usajobs_credentials_missing` | USAJOBS env vars are unset locally | Set `USAJOBS_API_KEY` and `USAJOBS_USER_AGENT_EMAIL`. |
+| `error_code: usajobs_auth_invalid` | USAJOBS rejected the API key/email pair | Verify the approved registration details and try again. |
 | `error_code: watchlist_comments_present` | `watchlist-add` would lose comments | Pass `--force` or edit the YAML directly. |
 | 50-company runs are slow | Cold robots cache / LLM scoring inline | First cold run takes 8–12 min; subsequent ~3–6 min. |
 

@@ -45,6 +45,11 @@ from .net_policy import (
     DomainRateLimiter,
     RobotsCache,
 )
+from .source_provenance import (
+    DISCOVERY_SOURCE_TOKENS,
+    SOURCE_NAME_MAP,
+    append_discovery_observation,
+)
 from .utils import StructuredError, ensure_dir, now_iso, read_json, write_json
 from .discovery_providers.registry import get_discovery_provider
 
@@ -82,6 +87,9 @@ DISCOVERY_ERROR_CODES: Final = frozenset({
     "anti_bot_blocked",
     "review_schema_invalid",
     "lead_write_race",
+    "usajobs_profile_missing",
+    "usajobs_credentials_missing",
+    "usajobs_auth_invalid",
 })
 
 
@@ -89,14 +97,6 @@ class DiscoveryError(StructuredError):
     """Structured error for discovery-specific failures."""
 
     ALLOWED_ERROR_CODES = DISCOVERY_ERROR_CODES
-
-
-SOURCE_NAME_MAP: Final = {
-    "greenhouse": ("greenhouse", "greenhouse_board"),
-    "lever": ("lever", "lever_board"),
-    "careers": ("careers_html", "careers_html"),
-    "indeed_search": ("indeed_search", "indeed_search"),
-}
 
 
 # =============================================================================
@@ -179,9 +179,11 @@ class SourceRun:
     source: str
     started_at: str
     completed: bool
+    last_run_status: str
     listing_truncated: bool
     budget_exhausted: bool
     entry_count: int
+    next_cursor: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -189,9 +191,11 @@ class SourceRun:
             "source": self.source,
             "started_at": self.started_at,
             "completed": self.completed,
+            "last_run_status": self.last_run_status,
             "listing_truncated": self.listing_truncated,
             "budget_exhausted": self.budget_exhausted,
             "entry_count": self.entry_count,
+            "next_cursor": self.next_cursor,
         }
 
 
@@ -815,21 +819,19 @@ def _append_discovered_via(
             )
         lead = read_json(lead_path)
         existing = lead.get("discovered_via")
-        if not isinstance(existing, list):
-            if existing is not None:
-                logger.warning(
-                    "lead %s had non-list discovered_via (%r); resetting to []",
-                    lead_id, type(existing).__name__,
-                )
-            existing = []
-        existing.append({
-            "source": SOURCE_NAME_MAP[entry.source][1] if entry.source in SOURCE_NAME_MAP else entry.source,
-            "company": watchlist_company,
-            "discovered_at": now_iso(),
-            "listing_updated_at": entry.updated_at or None,
-            "confidence": entry.confidence,
-        })
-        lead["discovered_via"] = existing
+        if existing is not None and not isinstance(existing, list):
+            logger.warning(
+                "lead %s had non-list discovered_via (%r); resetting to []",
+                lead_id, type(existing).__name__,
+            )
+        lead = append_discovery_observation(
+            lead,
+            entry.source,
+            watchlist_company,
+            observed_at=now_iso(),
+            listing_updated_at=entry.updated_at or None,
+            confidence=entry.confidence,
+        )
         write_json(lead_path, lead)
 
 
@@ -896,6 +898,7 @@ def _run_source(
     budget_lock: threading.Lock,
     dry_run: bool,
     review_dir: Path,
+    source_cursor: str | None,
 ) -> tuple[SourceRun, list[Outcome], list[Path]]:
     """Execute one (company, source) tuple. Returns (source_run, outcomes, new_lead_paths).
 
@@ -908,6 +911,7 @@ def _run_source(
     entries: list[ListingEntry] = []
     ats_spawned: list[tuple[str, str]] = []
     truncated = False
+    provider_next_cursor: str | None = None
 
     try:
         provider = get_discovery_provider(source_token)
@@ -921,9 +925,11 @@ def _run_source(
             rate_limiter=rate_limiter,
             robots=robots,
             watchlist_company=company.name,
+            cursor=source_cursor,
         )
         entries = list(page.entries)
         truncated = page.truncated
+        provider_next_cursor = page.next_cursor
         ats_spawned = list(page.ats_hits)
         for low in page.low_confidence:
             entry_id = _entry_id_from_url(low.candidate_url)
@@ -956,8 +962,9 @@ def _run_source(
         return (
             SourceRun(
                 company=company.name, source=source_token, started_at=started_at,
-                completed=False, listing_truncated=False, budget_exhausted=False,
-                entry_count=0,
+                completed=False, last_run_status="failed",
+                listing_truncated=False, budget_exhausted=False,
+                entry_count=0, next_cursor=source_cursor,
             ),
             outcomes,
             [],
@@ -967,8 +974,9 @@ def _run_source(
         return (
             SourceRun(
                 company=company.name, source=source_token, started_at=started_at,
-                completed=False, listing_truncated=False, budget_exhausted=False,
-                entry_count=0,
+                completed=False, last_run_status="failed",
+                listing_truncated=False, budget_exhausted=False,
+                entry_count=0, next_cursor=source_cursor,
             ),
             outcomes,
             [],
@@ -988,6 +996,10 @@ def _run_source(
                 extra, extra_truncated = discover_greenhouse_board(slug, rate_limiter)
             elif platform == "lever":
                 extra, extra_truncated = discover_lever_board(slug, rate_limiter)
+            elif platform == "ashby":
+                from .discovery_providers.ashby import discover_ashby_board
+
+                extra, extra_truncated = discover_ashby_board(slug, rate_limiter)
             else:
                 continue
         except IngestionError as exc:
@@ -1072,16 +1084,15 @@ def _run_source(
             continue
 
         lead_path = leads_dir / f"{lead['lead_id']}.json"
-        # Append the first discovered_via entry to the freshly written lead.
         lead_obj = read_json(lead_path)
-        lead_obj.setdefault("discovered_via", [])
-        lead_obj["discovered_via"].append({
-            "source": SOURCE_NAME_MAP.get(entry.source, (entry.source, entry.source))[1],
-            "company": company.name,
-            "discovered_at": now_iso(),
-            "listing_updated_at": entry.updated_at or None,
-            "confidence": entry.confidence,
-        })
+        lead_obj = append_discovery_observation(
+            lead_obj,
+            entry.source,
+            company.name,
+            observed_at=now_iso(),
+            listing_updated_at=entry.updated_at or None,
+            confidence=entry.confidence,
+        )
         lead_obj.setdefault("status", "discovered")
         # For sources that parsed listing-card metadata directly (Indeed
         # search today, other aggregators later), prefer the card's
@@ -1105,14 +1116,28 @@ def _run_source(
             detail={"canonical_url": canonical, "lead_id": lead["lead_id"]},
         ))
 
+    resume_cursor: str | None = None
+    if budget_exhausted:
+        resume_cursor = source_cursor
+    elif provider_next_cursor:
+        resume_cursor = provider_next_cursor
+    elif truncated:
+        resume_cursor = source_cursor
+
+    last_run_status = "complete"
+    if budget_exhausted or truncated or provider_next_cursor is not None:
+        last_run_status = "partial"
+
     source_run = SourceRun(
         company=company.name,
         source=source_token,
         started_at=started_at,
-        completed=not budget_exhausted and not truncated,
+        completed=not budget_exhausted and not truncated and resume_cursor is None,
+        last_run_status=last_run_status,
         listing_truncated=truncated,
         budget_exhausted=budget_exhausted,
         entry_count=entry_count,
+        next_cursor=resume_cursor,
     )
     return source_run, outcomes, new_lead_paths
 
@@ -1196,15 +1221,13 @@ def discover_jobs(
         reset_cursor_entries(cursor, company, source if source != "" else None)
         save_cursor(cursor_path, cursor)
 
-    sources_filter = tuple(config.sources) if config.sources else (
-        "greenhouse", "lever", "careers", "indeed_search",
-    )
+    sources_filter = tuple(config.sources) if config.sources else DISCOVERY_SOURCE_TOKENS
     invalid = [s for s in sources_filter if s not in SOURCE_NAME_MAP]
     if invalid:
         raise DiscoveryError(
             f"Unknown source token(s): {invalid!r}",
             error_code="unknown_platform",
-            remediation="Accepted tokens: greenhouse, lever, careers, indeed_search",
+            remediation=f"Accepted tokens: {', '.join(DISCOVERY_SOURCE_TOKENS)}",
         )
 
     rate_limiter = DomainRateLimiter(default_interval_s=0.5)
@@ -1237,11 +1260,13 @@ def discover_jobs(
         company_outcomes: list[Outcome] = []
         company_paths: list[Path] = []
         for source_token in sources_filter:
+            entry_cursor = cursor.get("entries", {}).get(_cursor_key(entry.name, source_token), {})
             sr, outs, paths = _run_source(
                 entry, source_token, wl.filters, rate_limiter, robots,
                 existing_canonical, within_run_seen, within_run_lock,
                 leads_dir, budget_remaining, budget_lock, config.dry_run,
                 review_dir,
+                str(entry_cursor.get("next_cursor") or "") or None,
             )
             company_runs.append(sr)
             company_outcomes.extend(outs)
@@ -1258,15 +1283,18 @@ def discover_jobs(
             all_outcomes.extend(outs)
             freshly_written.extend(paths)
 
-    # Cursor advancement — only for complete, non-capped, non-truncated sources
+    # Cursor advancement — completed runs clear resume state; partial or failed
+    # runs keep enough provider cursor information to resume safely.
     for sr in all_source_runs:
-        if sr.completed and not sr.listing_truncated and not sr.budget_exhausted:
-            key = _cursor_key(sr.company, sr.source)
-            cursor.setdefault("entries", {})[key] = {
-                "last_run_at": sr.started_at,
-                "last_entry_count": sr.entry_count,
-                "last_run_status": "complete",
-            }
+        key = _cursor_key(sr.company, sr.source)
+        entry_state = {
+            "last_run_at": sr.started_at,
+            "last_entry_count": sr.entry_count,
+            "last_run_status": sr.last_run_status,
+        }
+        if sr.next_cursor is not None:
+            entry_state["next_cursor"] = sr.next_cursor
+        cursor.setdefault("entries", {})[key] = entry_state
     if not config.dry_run:
         save_cursor(cursor_path, cursor)
 
@@ -1393,12 +1421,14 @@ def promote_review_entry(
     lead = ingest_url(candidate_url, leads_dir)
     lead_path = leads_dir / f"{lead['lead_id']}.json"
     lead_obj = read_json(lead_path)
-    lead_obj.setdefault("discovered_via", []).append({
-        "source": "careers_html_review",
-        "company": watchlist_company,
-        "discovered_at": now_iso(),
-        "confidence": "weak_inference",
-    })
+    lead_obj = append_discovery_observation(
+        lead_obj,
+        "careers",
+        watchlist_company,
+        observed_at=now_iso(),
+        confidence="weak_inference",
+        discovered_via_source_override="careers_html_review",
+    )
     lead_obj.setdefault("status", "discovered")
     write_json(lead_path, lead_obj)
     update_review_status(review_dir, entry_id, "promoted")

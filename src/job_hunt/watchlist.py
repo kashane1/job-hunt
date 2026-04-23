@@ -28,6 +28,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Iterable
 
+from .discovery_providers.usajobs import (
+    USAJobsSearchProfile,
+    usajobs_readiness_state,
+)
 from .simple_yaml import (
     emit_watchlist_yaml,
     has_comments,
@@ -108,16 +112,23 @@ class WatchlistEntry:
     name: str
     greenhouse: str = ""
     lever: str = ""
+    ashby: str = ""
+    workable: str = ""
     careers_url: str = ""
     indeed_search_url: str = ""
+    usajobs_search_profile: str = ""
+    usajobs_profile: USAJobsSearchProfile | None = None
     notes: str = ""
 
     def has_source(self) -> bool:
         return bool(
             self.greenhouse
             or self.lever
+            or self.ashby
+            or self.workable
             or self.careers_url
             or self.indeed_search_url
+            or self.usajobs_search_profile
         )
 
 
@@ -125,6 +136,7 @@ class WatchlistEntry:
 class Watchlist:
     companies: tuple[WatchlistEntry, ...]
     filters: WatchlistFilters
+    usajobs_profiles: tuple[USAJobsSearchProfile, ...] = ()
 
 
 # =============================================================================
@@ -162,14 +174,21 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
         )
     greenhouse = raw.get("greenhouse", "") or ""
     lever = raw.get("lever", "") or ""
+    ashby = raw.get("ashby", "") or ""
+    workable = raw.get("workable", "") or ""
     careers_url = raw.get("careers_url", "") or ""
     indeed_search_url = raw.get("indeed_search_url", "") or ""
+    usajobs_search_profile = raw.get("usajobs_search_profile", "") or ""
     notes = raw.get("notes", "") or ""
 
     if greenhouse and not ATS_SLUG_RE.match(greenhouse):
         raise WatchlistValidationError(f"invalid greenhouse slug: {greenhouse!r}")
     if lever and not ATS_SLUG_RE.match(lever):
         raise WatchlistValidationError(f"invalid lever slug: {lever!r}")
+    if ashby and not ATS_SLUG_RE.match(ashby):
+        raise WatchlistValidationError(f"invalid ashby slug: {ashby!r}")
+    if workable and not ATS_SLUG_RE.match(workable):
+        raise WatchlistValidationError(f"invalid workable subdomain: {workable!r}")
     if careers_url and not HTTPS_URL_RE.match(careers_url):
         raise WatchlistValidationError(
             f"careers_url must be https://: {careers_url!r}"
@@ -187,6 +206,10 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
             raise WatchlistValidationError(
                 f"indeed_search_url must target indeed.com: {indeed_search_url!r}"
             )
+    if usajobs_search_profile and not ATS_SLUG_RE.match(usajobs_search_profile):
+        raise WatchlistValidationError(
+            f"invalid usajobs_search_profile: {usajobs_search_profile!r}"
+        )
     if len(notes) > MAX_NOTES_LEN:
         raise WatchlistValidationError(
             f"notes too long ({len(notes)} > {MAX_NOTES_LEN})"
@@ -195,11 +218,73 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
         name=name,
         greenhouse=greenhouse,
         lever=lever,
+        ashby=ashby,
+        workable=workable,
         careers_url=careers_url,
         indeed_search_url=indeed_search_url,
+        usajobs_search_profile=usajobs_search_profile,
         notes=notes,
     )
     return entry
+
+
+def _validate_usajobs_profile(raw: dict) -> USAJobsSearchProfile:
+    if not isinstance(raw, dict):
+        raise WatchlistValidationError(
+            f"usajobs profile must be a mapping, got {type(raw).__name__}"
+        )
+    name = str(raw.get("name") or "")
+    if not ATS_SLUG_RE.match(name):
+        raise WatchlistValidationError(f"invalid usajobs profile name: {name!r}")
+    results_per_page = raw.get("results_per_page", 25)
+    if not isinstance(results_per_page, int) or not (1 <= results_per_page <= 500):
+        raise WatchlistValidationError(
+            f"usajobs results_per_page must be 1-500: {results_per_page!r}"
+        )
+    who_may_apply = str(raw.get("who_may_apply", "Public") or "Public")
+    if who_may_apply not in {"All", "Public", "Status"}:
+        raise WatchlistValidationError(
+            f"usajobs who_may_apply must be All, Public, or Status: {who_may_apply!r}"
+        )
+    fields = str(raw.get("fields", "Full") or "Full")
+    if fields not in {"Min", "Full"}:
+        raise WatchlistValidationError(
+            f"usajobs fields must be Min or Full: {fields!r}"
+        )
+    remote_indicator = raw.get("remote_indicator")
+    if remote_indicator not in (None, True, False):
+        raise WatchlistValidationError(
+            f"usajobs remote_indicator must be true/false: {remote_indicator!r}"
+        )
+    date_posted = raw.get("date_posted")
+    if date_posted is not None and (
+        not isinstance(date_posted, int) or not (0 <= date_posted <= 60)
+    ):
+        raise WatchlistValidationError(
+            f"usajobs date_posted must be 0-60 days: {date_posted!r}"
+        )
+    sort_direction = str(raw.get("sort_direction", "") or "")
+    if sort_direction and sort_direction not in {"Asc", "Desc"}:
+        raise WatchlistValidationError(
+            f"usajobs sort_direction must be Asc or Desc: {sort_direction!r}"
+        )
+    return USAJobsSearchProfile(
+        name=name,
+        keyword=str(raw.get("keyword", "") or ""),
+        location_name=str(raw.get("location_name", "") or ""),
+        organization=str(raw.get("organization", "") or ""),
+        results_per_page=results_per_page,
+        who_may_apply=who_may_apply,
+        remote_indicator=remote_indicator,
+        fields=fields,
+        date_posted=date_posted if isinstance(date_posted, int) else None,
+        sort_field=str(raw.get("sort_field", "") or ""),
+        sort_direction=sort_direction,
+        job_category_code=str(raw.get("job_category_code", "") or ""),
+        position_schedule_type_code=str(raw.get("position_schedule_type_code", "") or ""),
+        position_offering_type_code=str(raw.get("position_offering_type_code", "") or ""),
+        hiring_path=str(raw.get("hiring_path", "") or ""),
+    )
 
 
 def _validate_filters(raw) -> WatchlistFilters:
@@ -225,6 +310,20 @@ def parse_watchlist(data: dict) -> Watchlist:
         raise WatchlistValidationError(
             f"too many companies ({len(raw_companies)} > {MAX_COMPANIES})"
         )
+    raw_profiles = data.get("usajobs_profiles")
+    profile_entries: list[USAJobsSearchProfile] = []
+    profiles_by_name: dict[str, USAJobsSearchProfile] = {}
+    if raw_profiles is not None:
+        if not isinstance(raw_profiles, list):
+            raise WatchlistValidationError("usajobs_profiles must be a list")
+        for raw_profile in raw_profiles:
+            profile = _validate_usajobs_profile(raw_profile)
+            if profile.name in profiles_by_name:
+                raise WatchlistValidationError(
+                    f"duplicate usajobs profile name: {profile.name!r}"
+                )
+            profiles_by_name[profile.name] = profile
+            profile_entries.append(profile)
     seen_names: set[str] = set()
     entries: list[WatchlistEntry] = []
     for raw in raw_companies:
@@ -232,9 +331,26 @@ def parse_watchlist(data: dict) -> Watchlist:
         if entry.name in seen_names:
             raise WatchlistValidationError(f"duplicate company name: {entry.name!r}")
         seen_names.add(entry.name)
+        if entry.usajobs_search_profile:
+            entry = WatchlistEntry(
+                name=entry.name,
+                greenhouse=entry.greenhouse,
+                lever=entry.lever,
+                ashby=entry.ashby,
+                workable=entry.workable,
+                careers_url=entry.careers_url,
+                indeed_search_url=entry.indeed_search_url,
+                usajobs_search_profile=entry.usajobs_search_profile,
+                usajobs_profile=profiles_by_name.get(entry.usajobs_search_profile),
+                notes=entry.notes,
+            )
         entries.append(entry)
     filters = _validate_filters(data.get("filters"))
-    return Watchlist(companies=tuple(entries), filters=filters)
+    return Watchlist(
+        companies=tuple(entries),
+        filters=filters,
+        usajobs_profiles=tuple(profile_entries),
+    )
 
 
 def load_watchlist(path: Path) -> Watchlist:
@@ -254,10 +370,16 @@ def watchlist_to_dict(wl: Watchlist) -> dict:
             entry["greenhouse"] = c.greenhouse
         if c.lever:
             entry["lever"] = c.lever
+        if c.ashby:
+            entry["ashby"] = c.ashby
+        if c.workable:
+            entry["workable"] = c.workable
         if c.careers_url:
             entry["careers_url"] = c.careers_url
         if c.indeed_search_url:
             entry["indeed_search_url"] = c.indeed_search_url
+        if c.usajobs_search_profile:
+            entry["usajobs_search_profile"] = c.usajobs_search_profile
         if c.notes:
             entry["notes"] = c.notes
         companies.append(entry)
@@ -274,6 +396,49 @@ def watchlist_to_dict(wl: Watchlist) -> dict:
         filters_dict["seniority_any"] = list(f.seniority_any)
     if filters_dict:
         result["filters"] = filters_dict
+    if wl.usajobs_profiles:
+        result["usajobs_profiles"] = [
+            {
+                "name": profile.name,
+                **({
+                    "keyword": profile.keyword,
+                } if profile.keyword else {}),
+                **({
+                    "location_name": profile.location_name,
+                } if profile.location_name else {}),
+                **({
+                    "organization": profile.organization,
+                } if profile.organization else {}),
+                "results_per_page": profile.results_per_page,
+                "who_may_apply": profile.who_may_apply,
+                "fields": profile.fields,
+                **({
+                    "remote_indicator": profile.remote_indicator,
+                } if profile.remote_indicator is not None else {}),
+                **({
+                    "date_posted": profile.date_posted,
+                } if profile.date_posted is not None else {}),
+                **({
+                    "sort_field": profile.sort_field,
+                } if profile.sort_field else {}),
+                **({
+                    "sort_direction": profile.sort_direction,
+                } if profile.sort_direction else {}),
+                **({
+                    "job_category_code": profile.job_category_code,
+                } if profile.job_category_code else {}),
+                **({
+                    "position_schedule_type_code": profile.position_schedule_type_code,
+                } if profile.position_schedule_type_code else {}),
+                **({
+                    "position_offering_type_code": profile.position_offering_type_code,
+                } if profile.position_offering_type_code else {}),
+                **({
+                    "hiring_path": profile.hiring_path,
+                } if profile.hiring_path else {}),
+            }
+            for profile in wl.usajobs_profiles
+        ]
     return result
 
 
@@ -325,10 +490,16 @@ def _entry_dict(c: WatchlistEntry) -> dict:
         out["greenhouse"] = c.greenhouse
     if c.lever:
         out["lever"] = c.lever
+    if c.ashby:
+        out["ashby"] = c.ashby
+    if c.workable:
+        out["workable"] = c.workable
     if c.careers_url:
         out["careers_url"] = c.careers_url
     if c.indeed_search_url:
         out["indeed_search_url"] = c.indeed_search_url
+    if c.usajobs_search_profile:
+        out["usajobs_search_profile"] = c.usajobs_search_profile
     if c.notes:
         out["notes"] = c.notes
     return out
@@ -344,11 +515,15 @@ def watchlist_add(
     if path.exists():
         existing = load_watchlist(path)
     else:
-        existing = Watchlist(companies=(), filters=WatchlistFilters())
+        existing = Watchlist(companies=(), filters=WatchlistFilters(), usajobs_profiles=())
     if any(c.name == new_entry.name for c in existing.companies):
         raise WatchlistValidationError("watchlist_entry_exists")
     companies = existing.companies + (new_entry,)
-    updated = Watchlist(companies=companies, filters=existing.filters)
+    updated = Watchlist(
+        companies=companies,
+        filters=existing.filters,
+        usajobs_profiles=existing.usajobs_profiles,
+    )
     write_watchlist(path, updated, force=force)
     return updated
 
@@ -363,14 +538,18 @@ def watchlist_remove(
     remaining = tuple(c for c in existing.companies if c.name != name)
     if len(remaining) == len(existing.companies):
         raise WatchlistValidationError(f"company not found: {name!r}")
-    updated = Watchlist(companies=remaining, filters=existing.filters)
+    updated = Watchlist(
+        companies=remaining,
+        filters=existing.filters,
+        usajobs_profiles=existing.usajobs_profiles,
+    )
     write_watchlist(path, updated, force=force)
     return updated
 
 
 def watchlist_validate(path: Path) -> dict:
     """Return {valid, errors, warnings} for the CLI."""
-    result: dict = {"valid": True, "errors": [], "warnings": []}
+    result: dict = {"valid": True, "errors": [], "warnings": [], "source_readiness": []}
     try:
         wl = load_watchlist(path)
     except WatchlistValidationError as exc:
@@ -384,7 +563,26 @@ def watchlist_validate(path: Path) -> dict:
     for c in wl.companies:
         if not c.has_source():
             result["warnings"].append(
-                f"{c.name!r} has no greenhouse/lever/careers_url/indeed_search_url "
+                f"{c.name!r} has no greenhouse/lever/ashby/workable/"
+                "careers_url/indeed_search_url/usajobs_search_profile "
                 "source — will be skipped"
             )
+        if c.usajobs_search_profile:
+            state = usajobs_readiness_state(c.usajobs_profile)
+            readiness = {
+                "company": c.name,
+                "source": "usajobs",
+                "profile": c.usajobs_search_profile,
+                "state": state,
+            }
+            result["source_readiness"].append(readiness)
+            if state == "profile_missing":
+                result["warnings"].append(
+                    f"{c.name!r} references missing USAJOBS profile "
+                    f"{c.usajobs_search_profile!r}"
+                )
+            elif state == "credentials_missing":
+                result["warnings"].append(
+                    f"{c.name!r} has a USAJOBS profile but missing local API credentials"
+                )
     return result

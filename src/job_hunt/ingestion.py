@@ -99,6 +99,9 @@ LEVER_URL_RE = re.compile(
 ASHBY_URL_RE = re.compile(
     r"https?://jobs\.ashbyhq\.com/(?P<company>[^/]+)/(?P<job_id>[a-f0-9-]+)"
 )
+WORKABLE_URL_RE = re.compile(
+    r"https?://(?P<subdomain>[^./]+)\.workable\.com/jobs/(?P<job_id>\d+)"
+)
 
 # Sites that require login and cannot be reliably scraped. We refuse politely
 # rather than silently scraping a login page as the job description.
@@ -504,6 +507,7 @@ def fetch(
     timeout: int = MAX_FETCH_TIMEOUT_S,
     max_bytes: int = MAX_FETCH_BYTES,
     max_decompressed_bytes: int = MAX_DECOMPRESSED_BYTES,
+    headers: dict[str, str] | None = None,
 ) -> FetchResult:
     """Stdlib HTTP GET with SSRF guards, IP pinning, timeout, size limits, gzip.
 
@@ -521,19 +525,19 @@ def fetch(
     # Shared Chrome UA from net_policy — the previous "job-hunt-cli/0.2"
     # identifier was an obvious bot signal. Browser-shaped Accept headers
     # keep the request looking like an ordinary page load.
-    req = urllib.request.Request(
-        url,
-        headers={
-            "User-Agent": DISCOVERY_USER_AGENT,
-            "Accept": (
-                "text/html,application/xhtml+xml,application/xml;q=0.9,"
-                "image/avif,image/webp,*/*;q=0.8"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, identity",
-            "Connection": "close",
-        },
-    )
+    request_headers = {
+        "User-Agent": DISCOVERY_USER_AGENT,
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,*/*;q=0.8"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, identity",
+        "Connection": "close",
+    }
+    if headers:
+        request_headers.update(headers)
+    req = urllib.request.Request(url, headers=request_headers)
     try:
         with opener.open(req, timeout=timeout) as resp:
             status = getattr(resp, "status", 200) or 200
@@ -679,6 +683,32 @@ def _fetch_lever(company: str, job_id: str) -> dict:
         "source": "lever",
         "ingestion_method": "url_fetch_json",
     }
+
+
+def _fetch_ashby(company: str, job_id: str) -> dict:
+    from .discovery_providers.ashby import fetch_ashby_job
+
+    payload = fetch_ashby_job(company, job_id)
+    if payload is None:
+        raise IngestionError(
+            f"Ashby job not found for company={company!r} job_id={job_id!r}",
+            error_code="not_found",
+            url=f"https://jobs.ashbyhq.com/{company}/{job_id}",
+        )
+    return payload
+
+
+def _fetch_workable(url: str) -> dict:
+    from .discovery_providers.workable import fetch_workable_job
+
+    payload = fetch_workable_job(url)
+    if payload is None:
+        raise IngestionError(
+            f"Workable job not found for url={url!r}",
+            error_code="not_found",
+            url=url,
+        )
+    return payload
 
 
 _INDEED_VIEWJOB_URL_RE = re.compile(r"https?://(?:www\.)?indeed\.com/viewjob")
@@ -952,6 +982,10 @@ def ingest_url(
                 fetched = _fetch_greenhouse(m["company"], m["job_id"])
             elif m := LEVER_URL_RE.match(url):
                 fetched = _fetch_lever(m["company"], m["job_id"])
+            elif m := ASHBY_URL_RE.match(url):
+                fetched = _fetch_ashby(m["company"], m["job_id"])
+            elif WORKABLE_URL_RE.match(url):
+                fetched = _fetch_workable(url)
             elif _INDEED_VIEWJOB_URL_RE.match(url):
                 fetched = _fetch_indeed_viewjob(url)
             else:

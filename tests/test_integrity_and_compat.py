@@ -72,6 +72,44 @@ class BackwardCompatLeadSchemaTest(unittest.TestCase):
         }
         validate(lead, LEAD_SCHEMA)
 
+    def test_lead_with_new_source_provenance_fields_validates(self) -> None:
+        lead = {
+            "lead_id": "new-2",
+            "fingerprint": "abc",
+            "source": "ashby",
+            "application_url": "https://jobs.ashbyhq.com/co/1",
+            "company": "NewCo",
+            "title": "Staff Engineer",
+            "location": "Remote",
+            "raw_description": "desc",
+            "normalized_requirements": {
+                "required": [], "preferred": [], "keywords": [],
+            },
+            "status": "discovered",
+            "primary_source": {
+                "provider": "ashby",
+                "authority": "system_of_record",
+                "precedence": "ats_public",
+            },
+            "observed_sources": [{
+                "provider": "ashby",
+                "authority": "system_of_record",
+                "precedence": "ats_public",
+                "company": "NewCo",
+                "observed_at": "2026-04-21T00:00:00Z",
+                "listing_updated_at": "2026-04-20T00:00:00Z",
+                "confidence": "high",
+            }],
+            "discovered_via": [{
+                "source": "ashby_public_api",
+                "company": "NewCo",
+                "discovered_at": "2026-04-21T00:00:00Z",
+                "listing_updated_at": "2026-04-20T00:00:00Z",
+                "confidence": "high",
+            }],
+        }
+        validate(lead, LEAD_SCHEMA)
+
 
 class CheckIntegrityBatch3Test(unittest.TestCase):
     def setUp(self) -> None:
@@ -141,6 +179,29 @@ class CheckIntegrityBatch3Test(unittest.TestCase):
         self.assertEqual(
             report["summary"]["issue_counts"]["stale_review_entries"], 1,
         )
+
+    def test_detects_missing_discovery_provenance_for_newer_discovered_leads(self) -> None:
+        lead_path = self.data_root / "leads" / "missing-provenance.json"
+        lead_path.write_text(json.dumps({
+            "lead_id": "missing-provenance",
+            "fingerprint": "x",
+            "source": "greenhouse",
+            "application_url": "https://boards.greenhouse.io/co/jobs/1",
+            "company": "X",
+            "title": "Engineer",
+            "location": "Remote",
+            "raw_description": "",
+            "normalized_requirements": {"required": [], "preferred": [], "keywords": []},
+            "status": "discovered",
+            "discovered_via": [{
+                "source": "greenhouse_board",
+                "company": "X",
+                "discovered_at": "2026-04-20T00:00:00Z",
+                "confidence": "high",
+            }],
+        }), encoding="utf-8")
+        report = check_integrity(self.data_root)
+        self.assertEqual(len(report["missing_discovery_provenance"]), 1)
 
 
 class DiscoveryErrorCodeCoverageTest(unittest.TestCase):

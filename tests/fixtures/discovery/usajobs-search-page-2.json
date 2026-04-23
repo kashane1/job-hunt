@@ -1,0 +1,25 @@
+{
+  "SearchResult": {
+    "SearchResultCount": 1,
+    "SearchResultCountAll": 2,
+    "SearchResultItems": [
+      {
+        "MatchedObjectId": "21947201",
+        "MatchedObjectDescriptor": {
+          "PositionID": "SW62210-05-1716110PB411414Z",
+          "PositionTitle": "PLATFORM ENGINEER",
+          "PositionURI": "https://www.usajobs.gov/GetJob/ViewDetails/21947201",
+          "ApplyURI": [
+            "https://www.usajobs.gov/GetJob/ViewDetails/21947201?PostingChannelID=RESTAPI"
+          ],
+          "PositionLocationDisplay": "Washington, District of Columbia",
+          "OrganizationName": "Office of Personnel Management",
+          "PublicationStartDate": "2026-04-19T00:00:00Z"
+        }
+      }
+    ]
+  },
+  "UserArea": {
+    "NumberOfPages": 2
+  }
+}

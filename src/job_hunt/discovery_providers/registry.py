@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from .ashby import AshbyDiscoveryProvider
 from .base import DiscoveryLowConfidenceEntry, DiscoveryPage
+from .usajobs import USAJobsDiscoveryProvider
+from .workable import WorkableDiscoveryProvider
 
 
 class GreenhouseDiscoveryProvider:
@@ -114,9 +117,11 @@ _PROVIDERS = {
     "lever": LeverDiscoveryProvider(),
     "indeed_search": IndeedSearchDiscoveryProvider(),
     "careers": CareersDiscoveryProvider(),
+    "ashby": AshbyDiscoveryProvider(),
+    "workable": WorkableDiscoveryProvider(),
+    "usajobs": USAJobsDiscoveryProvider(),
 }
 
 
 def get_discovery_provider(name: str):
     return _PROVIDERS.get(name)
-

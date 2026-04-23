@@ -1,0 +1,28 @@
+{
+  "name": "ExampleCo",
+  "jobs": [
+    {
+      "id": "3949357",
+      "title": "Senior Backend Engineer",
+      "shortcode": "AE84C38EE2",
+      "url": "https://exampleco.workable.com/jobs/3949357",
+      "application_url": "https://exampleco.workable.com/jobs/3949357/candidates/new",
+      "shortlink": "https://apply.workable.com/j/AE84C38EE2",
+      "location": {
+        "location_str": "London, United Kingdom",
+        "country": "United Kingdom",
+        "city": "London",
+        "telecommuting": false,
+        "workplace_type": "on_site"
+      },
+      "description": "<p>Build backend systems.</p>",
+      "employment_type": "full_time",
+      "salary": {
+        "salary_from": 60000,
+        "salary_to": 80000,
+        "salary_currency": "gbp"
+      },
+      "created_at": "2026-04-18T00:00:00Z"
+    }
+  ]
+}

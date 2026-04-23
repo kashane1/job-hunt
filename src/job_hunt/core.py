@@ -1843,14 +1843,18 @@ def build_parser() -> argparse.ArgumentParser:
     # ----- Batch 3: active job discovery -----
     disc_parser = subparsers.add_parser(
         "discover-jobs",
-        help="Poll the watchlist for new openings (Greenhouse/Lever/careers)",
+        help="Poll the watchlist for new openings (Greenhouse/Lever/careers/Indeed/Ashby/Workable/USAJOBS)",
     )
     disc_parser.add_argument("--watchlist", default="config/watchlist.yaml")
     disc_parser.add_argument("--leads-dir", default="data/leads")
     disc_parser.add_argument("--discovery-root", default="data/discovery")
     disc_parser.add_argument("--max-ingest", type=int, default=50)
     disc_parser.add_argument("--max-workers", type=int, default=3)
-    disc_parser.add_argument("--sources", default="", help="Comma-separated: greenhouse,lever,careers")
+    disc_parser.add_argument(
+        "--sources",
+        default="",
+        help="Comma-separated: greenhouse,lever,careers,indeed_search,ashby,workable,usajobs",
+    )
     disc_parser.add_argument("--dry-run", action="store_true")
     disc_parser.add_argument("--no-score", action="store_true")
     disc_parser.add_argument("--score-concurrency", type=int, default=3)
@@ -1880,8 +1884,11 @@ def build_parser() -> argparse.ArgumentParser:
     wla_parser.add_argument("--name", required=True)
     wla_parser.add_argument("--greenhouse", default="")
     wla_parser.add_argument("--lever", default="")
+    wla_parser.add_argument("--ashby", default="")
+    wla_parser.add_argument("--workable", default="")
     wla_parser.add_argument("--careers-url", default="")
     wla_parser.add_argument("--indeed-search-url", default="")
+    wla_parser.add_argument("--usajobs-search-profile", default="")
     wla_parser.add_argument("--notes", default="")
     wla_parser.add_argument(
         "--force", action="store_true",
@@ -2615,17 +2622,33 @@ def main(argv: list[str] | None = None) -> int:
         from .watchlist import WatchlistValidationError, validate_cli_string, watchlist_add
 
         try:
-            for field_name in ("name", "greenhouse", "lever", "careers_url", "indeed_search_url", "notes"):
+            for field_name in (
+                "name",
+                "greenhouse",
+                "lever",
+                "ashby",
+                "workable",
+                "careers_url",
+                "indeed_search_url",
+                "usajobs_search_profile",
+                "notes",
+            ):
                 validate_cli_string(getattr(args, field_name.replace("_", "_")) or "", field_name)
             entry = {"name": args.name}
             if args.greenhouse:
                 entry["greenhouse"] = args.greenhouse
             if args.lever:
                 entry["lever"] = args.lever
+            if args.ashby:
+                entry["ashby"] = args.ashby
+            if args.workable:
+                entry["workable"] = args.workable
             if args.careers_url:
                 entry["careers_url"] = args.careers_url
             if args.indeed_search_url:
                 entry["indeed_search_url"] = args.indeed_search_url
+            if args.usajobs_search_profile:
+                entry["usajobs_search_profile"] = args.usajobs_search_profile
             if args.notes:
                 entry["notes"] = args.notes
             watchlist_add(Path(args.watchlist), entry, force=args.force)

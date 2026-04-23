@@ -8,13 +8,14 @@
     "entries": {
       "type": "object",
       "patternProperties": {
-        "^[A-Za-z0-9 ._-]{1,64}\\|(greenhouse|lever|careers)$": {
+        "^[A-Za-z0-9 ._-]{1,64}\\|(greenhouse|lever|careers|indeed_search|ashby|workable|usajobs)$": {
           "type": "object",
           "required": ["last_run_at", "last_entry_count"],
           "properties": {
             "last_run_at": { "type": "string" },
             "last_entry_count": { "type": "integer" },
-            "last_run_status": { "enum": ["complete", "failed"] }
+            "last_run_status": { "enum": ["complete", "failed", "partial"] },
+            "next_cursor": { "type": "string" }
           }
         }
       }

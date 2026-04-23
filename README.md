@@ -62,13 +62,13 @@ python3 scripts/job_hunt.py audit-profile-docs
 
 ```bash
 cp config/watchlist.example.yaml config/watchlist.yaml
-# edit config/watchlist.yaml — add your target-company Greenhouse/Lever slugs
+# edit config/watchlist.yaml — add your target-company source fields
 python3 scripts/job_hunt.py discover-jobs
 ```
 
 `config/watchlist.yaml` is gitignored (target-company names are
 PII-adjacent). See `docs/guides/job-discovery.md` for filter semantics,
-cursor behavior, and review-queue triage.
+cursor behavior, USAJOBS local credential setup, and review-queue triage.
 
 4. Add or collect a raw job description file, then extract and score it:
 
@@ -115,6 +115,24 @@ The v4 policy invariant: the agent never clicks Submit. Tiers describe
 how much field-level review the human does before clicking, not whether
 the click happens. See `docs/solutions/security-issues/human-in-the-loop-on-submit-as-tos-defense.md`
 for the design rationale.
+
+## Discovery Sources
+
+Active discovery now supports:
+
+- `greenhouse`
+- `lever`
+- `careers`
+- `indeed_search`
+- `ashby`
+- `workable`
+- `usajobs`
+
+The discovery/source catalog is tracked in `config/sources.yaml` and is
+kept in lockstep with the runtime provider registry. `watchlist-validate`
+also reports USAJOBS readiness states (`profile_missing`,
+`credentials_missing`, `ready`) so missing local setup is visible before a
+run fails.
 
 ## Batch 2: URL Ingestion, PDF Export, ATS Checks, Analytics
 

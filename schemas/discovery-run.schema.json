@@ -59,6 +59,7 @@
           "source",
           "started_at",
           "completed",
+          "last_run_status",
           "listing_truncated",
           "budget_exhausted",
           "entry_count"
@@ -68,9 +69,11 @@
           "source": { "type": "string" },
           "started_at": { "type": "string" },
           "completed": { "type": "boolean" },
+          "last_run_status": { "enum": ["complete", "failed", "partial"] },
           "listing_truncated": { "type": "boolean" },
           "budget_exhausted": { "type": "boolean" },
-          "entry_count": { "type": "integer" }
+          "entry_count": { "type": "integer" },
+          "next_cursor": { "type": ["string", "null"] }
         }
       }
     },

@@ -1,17 +1,18 @@
 supported_sources:
-  - linkedin
-  - indeed
   - greenhouse
   - lever
-  - workday
+  - careers
+  - indeed_search
   - ashby
+  - workable
+  - usajobs
 company_site_ats_keywords:
   - greenhouse
   - lever
   - workday
   - ashby
+  - workable
 discovery_notes:
-  - prefer sources where the operator is already signed in
+  - discovery source catalog should match runtime-supported source tokens exactly
   - capture one normalized lead format regardless of origin
   - reuse tabs when possible during discovery
-

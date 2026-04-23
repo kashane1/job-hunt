@@ -35,8 +35,13 @@ from job_hunt.discovery import (
     discover_lever_board,
     write_review_entry,
 )
+from job_hunt.discovery_providers.ashby import discover_ashby_board
+from job_hunt.discovery_providers.usajobs import USAJobsSearchProfile, discover_usajobs_profile
+from job_hunt.discovery_providers.workable import discover_workable_account
 from job_hunt.ingestion import FetchResult, GREENHOUSE_URL_RE, IngestionError, LEVER_URL_RE
 from job_hunt.net_policy import DomainRateLimiter
+from job_hunt.source_provenance import compare_source_precedence
+from job_hunt.utils import load_yaml_file
 
 
 FIXTURES = ROOT / "tests" / "fixtures" / "discovery"
@@ -113,6 +118,70 @@ class LeverBoardTest(unittest.TestCase):
         self.assertEqual(entries, [])
 
 
+class AshbyBoardTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.limiter = DomainRateLimiter(default_interval_s=0.0)
+
+    def test_listed_jobs_only(self) -> None:
+        body = (FIXTURES / "ashby-board-valid.json").read_text(encoding="utf-8")
+        with patch("job_hunt.discovery_providers.ashby.fetch", return_value=_fetch_ok(body)):
+            entries, truncated = discover_ashby_board("exampleco", self.limiter)
+        self.assertFalse(truncated)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].source, "ashby")
+        self.assertEqual(entries[0].location, "Remote")
+
+
+class WorkableBoardTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.limiter = DomainRateLimiter(default_interval_s=0.0)
+
+    def test_public_account_jobs_are_normalized(self) -> None:
+        body = (FIXTURES / "workable-account-valid.json").read_text(encoding="utf-8")
+        with patch("job_hunt.discovery_providers.workable.fetch", return_value=_fetch_ok(body)):
+            entries, truncated = discover_workable_account("exampleco", self.limiter)
+        self.assertFalse(truncated)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].source, "workable")
+        self.assertEqual(entries[0].location, "London, United Kingdom")
+
+
+class USAJobsProviderTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.limiter = DomainRateLimiter(default_interval_s=0.0)
+        self.profile = USAJobsSearchProfile(
+            name="federal_remote",
+            keyword="platform engineer",
+            location_name="Washington, District of Columbia",
+            results_per_page=25,
+        )
+
+    def test_paged_search_returns_next_cursor(self) -> None:
+        body = (FIXTURES / "usajobs-search-page-1.json").read_text(encoding="utf-8")
+        with patch.dict("os.environ", {
+            "USAJOBS_API_KEY": "secret",
+            "USAJOBS_USER_AGENT_EMAIL": "person@example.com",
+        }, clear=False), patch(
+            "job_hunt.discovery_providers.usajobs.fetch",
+            return_value=_fetch_ok(body),
+        ):
+            entries, truncated, next_cursor = discover_usajobs_profile(
+                self.profile,
+                self.limiter,
+                cursor="1",
+            )
+        self.assertFalse(truncated)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(next_cursor, "2")
+        self.assertEqual(entries[0].source, "usajobs")
+
+    def test_missing_credentials_raise_structured_error(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaises(DiscoveryError) as ctx:
+                discover_usajobs_profile(self.profile, self.limiter)
+        self.assertEqual(ctx.exception.error_code, "usajobs_credentials_missing")
+
+
 class ListingEntryContractsTest(unittest.TestCase):
     def test_high_confidence_for_board_sources(self) -> None:
         body = (FIXTURES / "greenhouse-board-valid.json").read_text(encoding="utf-8")
@@ -159,6 +228,17 @@ class DataTypeShapesTest(unittest.TestCase):
             self.assertIsInstance(cli_token, str)
             self.assertIsInstance(runtime_source, str)
             self.assertIsInstance(discovered_via, str)
+
+    def test_source_catalog_matches_runtime_source_map(self) -> None:
+        catalog = load_yaml_file(ROOT / "config" / "sources.yaml", {})
+        self.assertEqual(
+            tuple(catalog.get("supported_sources", [])),
+            tuple(SOURCE_NAME_MAP.keys()),
+        )
+
+    def test_source_precedence_helper(self) -> None:
+        self.assertGreater(compare_source_precedence("ats_public", "board_search"), 0)
+        self.assertGreater(compare_source_precedence("government_api", "aggregator"), 0)
 
 
 class DiscoveryErrorTest(unittest.TestCase):

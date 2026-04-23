@@ -1,7 +1,7 @@
 ---
 title: Expand official job API integrations for discovery and future gated application integrations
 type: feat
-status: active
+status: completed
 date: 2026-04-21
 origin: docs/brainstorms/2026-04-15-job-hunt-brainstorm.md
 ---
@@ -605,39 +605,39 @@ erDiagram
 
 ### Functional Requirements
 
-- [ ] `discover-jobs` supports Ashby public board discovery via `src/job_hunt/discovery_providers/ashby.py`
-- [ ] `discover-jobs` supports Workable public board discovery via `src/job_hunt/discovery_providers/workable.py`
-- [ ] `discover-jobs` supports USAJOBS discovery via `src/job_hunt/discovery_providers/usajobs.py`
-- [ ] Watchlist/config schemas can represent these new discovery sources without breaking existing entries
-- [ ] Lead artifacts preserve source provenance and can distinguish direct ATS/public feeds from aggregators
-- [ ] No new public command or docs language implies seeker-side API auto-submit is broadly available
-- [ ] Ashby discovery excludes `isListed=false` jobs unless an explicit future policy says otherwise
-- [ ] USAJOBS discovery documents and validates required local auth config before runtime
-- [ ] Phase 0 restores parity for every already-emitted discovery source token before any new provider emits new ones
-- [ ] Provider emission of new `discovered_via.source` values happens only after schema and compatibility coverage lands
-- [ ] `lead.source` remains a compatibility alias for agent-facing source selection during the rollout
+- [x] `discover-jobs` supports Ashby public board discovery via `src/job_hunt/discovery_providers/ashby.py`
+- [x] `discover-jobs` supports Workable public board discovery via `src/job_hunt/discovery_providers/workable.py`
+- [x] `discover-jobs` supports USAJOBS discovery via `src/job_hunt/discovery_providers/usajobs.py`
+- [x] Watchlist/config schemas can represent these new discovery sources without breaking existing entries
+- [x] Lead artifacts preserve source provenance and can distinguish direct ATS/public feeds from aggregators
+- [x] No new public command or docs language implies seeker-side API auto-submit is broadly available
+- [x] Ashby discovery excludes `isListed=false` jobs unless an explicit future policy says otherwise
+- [x] USAJOBS discovery documents and validates required local auth config before runtime
+- [x] Phase 0 restores parity for every already-emitted discovery source token before any new provider emits new ones
+- [x] Provider emission of new `discovered_via.source` values happens only after schema and compatibility coverage lands
+- [x] `lead.source` remains a compatibility alias for agent-facing source selection during the rollout
 
 ### Non-Functional Requirements
 
-- [ ] Existing discovery safety invariants in `src/job_hunt/ingestion.py` remain intact
-- [ ] New providers reuse structured error envelopes and existing stdout JSON CLI contract
-- [ ] No secrets, tokens, or session material are written to git-tracked files
-- [ ] Human-submit and account-creation approval boundaries remain unchanged unless a later plan explicitly tightens them
-- [ ] Old lead/application artifacts remain readable during the rollout because new fields are additive first
-- [ ] The plan does not promise cross-source authority collapse beyond exact-URL duplicates
-- [ ] USAJOBS secret inputs come only from env vars or local ignored files, not tracked config
+- [x] Existing discovery safety invariants in `src/job_hunt/ingestion.py` remain intact
+- [x] New providers reuse structured error envelopes and existing stdout JSON CLI contract
+- [x] No secrets, tokens, or session material are written to git-tracked files
+- [x] Human-submit and account-creation approval boundaries remain unchanged unless a later plan explicitly tightens them
+- [x] Old lead/application artifacts remain readable during the rollout because new fields are additive first
+- [x] The plan does not promise cross-source authority collapse beyond exact-URL duplicates
+- [x] USAJOBS secret inputs come only from env vars or local ignored files, not tracked config
 
 ### Quality Gates
 
-- [ ] Provider-specific tests exist for each new public source
-- [ ] Dedupe and authority precedence tests cover overlapping exact-URL cases
-- [ ] Docs explain discovery-source categories and integration boundaries clearly
-- [ ] Fixtures cover USAJOBS auth failure remediation and Ashby unlisted-posting suppression
-- [ ] Consumer-first schema tests cover any new source-metadata fields before producers emit them
-- [ ] One shared precedence helper/contract is named and reused instead of letting consumers infer precedence ad hoc
-- [ ] Provenance tests cover both `primary_source` winner selection and `observed_sources[]` retention
-- [ ] Cursor/state compatibility tests cover old discovery cursor artifacts after pagination support lands
-- [ ] Integrity checks enforce provenance population for newly written in-scope leads after rollout
+- [x] Provider-specific tests exist for each new public source
+- [x] Dedupe and authority precedence tests cover overlapping exact-URL cases
+- [x] Docs explain discovery-source categories and integration boundaries clearly
+- [x] Fixtures cover USAJOBS auth failure remediation and Ashby unlisted-posting suppression
+- [x] Consumer-first schema tests cover any new source-metadata fields before producers emit them
+- [x] One shared precedence helper/contract is named and reused instead of letting consumers infer precedence ad hoc
+- [x] Provenance tests cover both `primary_source` winner selection and `observed_sources[]` retention
+- [x] Cursor/state compatibility tests cover old discovery cursor artifacts after pagination support lands
+- [x] Integrity checks enforce provenance population for newly written in-scope leads after rollout
 
 ## Success Metrics
 
