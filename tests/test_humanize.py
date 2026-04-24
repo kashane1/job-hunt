@@ -199,6 +199,36 @@ class TuningTest(unittest.TestCase):
         self.assertGreaterEqual(entries[1]["pre_read_ms"], 600)
 
 
+class InterApplicationCooldownTest(unittest.TestCase):
+    """sample_inter_application_cooldown: log-normal pre-apply sleep + coffee break."""
+
+    def test_seeded_output_is_deterministic(self) -> None:
+        from job_hunt.humanize import sample_inter_application_cooldown
+        a = sample_inter_application_cooldown(2, rng=random.Random(7))
+        b = sample_inter_application_cooldown(2, rng=random.Random(7))
+        self.assertEqual(a, b)
+
+    def test_coffee_break_fires_every_n(self) -> None:
+        from job_hunt.humanize import sample_inter_application_cooldown
+        # Default every_n = 5 from humanize.py
+        at_5 = sample_inter_application_cooldown(5, rng=random.Random(0))
+        at_4 = sample_inter_application_cooldown(4, rng=random.Random(0))
+        self.assertTrue(at_5["coffee_break"])
+        self.assertFalse(at_4["coffee_break"])
+        self.assertGreaterEqual(at_5["coffee_break_ms"], 300_000)
+        self.assertLessEqual(at_5["coffee_break_ms"], 900_000)
+
+    def test_pre_apply_sleep_within_policy_window(self) -> None:
+        from job_hunt.humanize import sample_inter_application_cooldown
+        policy = {"apply_policy": {"inter_application_delay_seconds": [60, 120]}}
+        for seed in range(20):
+            r = sample_inter_application_cooldown(
+                seed, runtime_policy=policy, rng=random.Random(seed),
+            )
+            self.assertGreaterEqual(r["pre_apply_sleep_ms"], 60_000)
+            self.assertLessEqual(r["pre_apply_sleep_ms"], 300_000)  # upper*2.5
+
+
 class RedactionTest(unittest.TestCase):
     """Sanity check for redact_humanize_for_audit (used by application.py)."""
 

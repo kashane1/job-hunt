@@ -387,6 +387,80 @@ def _estimate_mcp_calls(
 
 
 # ---------------------------------------------------------------------------
+# Inter-application cooldown — pacing across successive applies in a session.
+# Complements `_sample_inter_application_delay` in application.py (which paces
+# `apply_batch`) by exposing the same log-normal shape to ad-hoc / interactive
+# apply flows that don't go through the batch loop.
+# ---------------------------------------------------------------------------
+
+
+_DEFAULT_COOLDOWN_RANGE_S = (90, 240)       # log-normal clamp window
+_DEFAULT_COFFEE_BREAK_EVERY_N = 5            # every N applies, add a long pause
+_DEFAULT_COFFEE_BREAK_RANGE_S = (300, 900)   # 5-15 min long pause
+
+
+class CooldownPlan(TypedDict):
+    pre_apply_sleep_ms: int
+    coffee_break: bool
+    coffee_break_ms: int
+    batch_index: int
+
+
+def sample_inter_application_cooldown(
+    batch_index: int,
+    runtime_policy: Mapping[str, Any] | None = None,
+    *,
+    rng: random.Random,
+) -> CooldownPlan:
+    """Sample a cooldown before the Nth apply in a session.
+
+    ``batch_index`` is the 0-based position of the upcoming apply within the
+    current session. The very first apply of a session still gets a small
+    warm-up sleep so an agent driving the browser cannot fire 6 applies in
+    20 minutes.
+
+    Shape matches application.py's ``_sample_inter_application_delay``:
+    truncated log-normal in the policy-defined window, with an extra
+    "coffee break" every N applies. Kept in ``humanize.py`` so the
+    interactive apply path and the ``humanize`` test harness share the
+    same seeded logic.
+    """
+    apply_policy = (runtime_policy or {}).get("apply_policy", {}) or {}
+    lo, hi = tuple(
+        apply_policy.get("inter_application_delay_seconds")
+        or _DEFAULT_COOLDOWN_RANGE_S
+    )
+    lo = max(0, int(lo))
+    hi = max(lo + 1, int(hi))
+    mu = math.log(max(lo, 1.0) * 1.5)
+    sigma = 0.4
+    sampled = int(math.exp(rng.gauss(mu, sigma)) * 1000)  # convert to ms
+    min_ms = lo * 1000
+    max_ms = int(hi * 2.5 * 1000)
+    pre_apply_sleep_ms = _clamp(sampled, min_ms, max_ms)
+
+    every_n = int(apply_policy.get(
+        "inter_application_coffee_break_every_n", _DEFAULT_COFFEE_BREAK_EVERY_N,
+    ) or 0)
+    take_break = (
+        batch_index > 0
+        and every_n > 0
+        and batch_index % every_n == 0
+    )
+    break_lo, break_hi = _DEFAULT_COFFEE_BREAK_RANGE_S
+    coffee_break_ms = (
+        _uniform_int(rng, break_lo * 1000, break_hi * 1000) if take_break else 0
+    )
+
+    return {
+        "pre_apply_sleep_ms": pre_apply_sleep_ms,
+        "coffee_break": take_break,
+        "coffee_break_ms": coffee_break_ms,
+        "batch_index": batch_index,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 
