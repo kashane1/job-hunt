@@ -32,7 +32,9 @@ config/watchlist.yaml
 
 # Batch 4 (Indeed auto-apply) PII-bearing runtime artifacts.
 # Template seed `data/answer-bank.seed.json` IS tracked; working copy is not.
+data/_intake/
 data/answer-bank.json
+data/*.bak-*
 data/answer-bank-audit.log
 data/answer-bank.json.lock
 data/gmail-cursor.json
