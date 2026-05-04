@@ -1239,8 +1239,8 @@ def discover_jobs(
     # human reviewing each posting before clicking; much weaker signal for
     # bot-detection heuristics. Greenhouse/Lever/etc. are public JSON APIs
     # and stay on the fast default.
-    rate_limiter.set_human_jitter("indeed.com", 20.0, 30.0)
-    rate_limiter.set_human_jitter("linkedin.com", 20.0, 30.0)
+    rate_limiter.set_human_jitter("indeed.com", 25.0, 30.0)
+    rate_limiter.set_human_jitter("linkedin.com", 25.0, 30.0)
     robots = RobotsCache(
         robots_cache_path, rate_limiter, DISCOVERY_USER_AGENT,
     )

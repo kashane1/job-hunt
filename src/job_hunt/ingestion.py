@@ -595,6 +595,12 @@ def fetch(
             error_code="timeout" if is_timeout else "network_error",
             url=url,
         ) from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise IngestionError(
+            f"Network error fetching {url}: {exc}",
+            error_code="timeout",
+            url=url,
+        ) from exc
     if len(raw) > max_bytes:
         raise IngestionError(
             f"Response exceeds {max_bytes} bytes",

@@ -47,10 +47,16 @@ Ashby's prefix:
 - Optional: `phone`, `website`, `current_company`
 
 ## Cover-letter handling
-- Check Ashby's standard document section for a cover-letter upload field.
-- If `bundle.cover_letter_available=true` and the field exists, upload `bundle.cover_letter_pdf_path`.
-- If the field is absent, skip without error and record `cover_letter_status=skipped_optional_slot_missing`.
-- If Ashby exposes only a text area, pause for manual review in v1 and record `cover_letter_status=text_area_not_supported`.
+- Most Ashby forms don't expose a separate cover-letter field; the application question textareas (e.g. "Why X?", "Tell us more") serve that purpose. Fill them with tailored text per memory rules (no JD references, no defensive caveats, lead with ai-company-os).
+- If a dedicated cover-letter slot exists, prefer text-area paste over file upload because `mcp__Claude_in_Chrome__file_upload` is currently blocked by the extension.
+- If only a file-upload slot is available, ask Kashane to drag the PDF from `data/generated/cover-letters/`.
+
+## Resume upload (manual)
+- `mcp__Claude_in_Chrome__file_upload` returns `Not allowed` on Ashby resume inputs. **Always ask Kashane to manually upload** `data/generated/resumes/Resume-from-indeed.pdf` via the "Upload File" button or drag-and-drop on the Resume slot.
+- Note: Ashby also offers an "Autofill from resume" button at the top of the form. Uploading there will prefill name/email/etc. but still requires Kashane's manual file action.
+
+## Per-company application caps
+Ashby surfaces inline "This job has application limits" notices on some boards (Vanta = 2 roles per 60 days). Read the inline notice during Step 2 and respect it. See `feedback_check_company_history.md`.
 
 ## Step 4: Custom questions
 Match `plan.fields` entries with `field_id` starting `custom_` by normalized question. Ashby's custom-question block is rendered below the standard prefix. Missing → `tier_downgrade`.

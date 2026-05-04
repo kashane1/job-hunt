@@ -54,10 +54,13 @@ Greenhouse ships a fixed prefix:
 - `current_company` / `current_title` — from profile.
 
 ## Cover-letter handling
-- Prefer the dedicated `cover_letter` file-upload field when Greenhouse exposes it.
-- If `bundle.cover_letter_available=true`, upload `bundle.cover_letter_pdf_path`.
+- Greenhouse cover-letter fields default to file-upload, but every form also exposes an **"Enter manually"** button that switches the slot to a textarea. Click it and paste the cover-letter text directly. This is the preferred path because `mcp__Claude_in_Chrome__file_upload` is currently blocked by the extension (returns `Not allowed`).
+- If `bundle.cover_letter_available=true` and you want to use the prepared PDF, ask Kashane to drag the file from `data/generated/cover-letters/` onto the Attach button.
 - If the field is absent on that posting, skip without error and record `cover_letter_status=skipped_optional_slot_missing`.
-- If Greenhouse renders only a text area for a cover letter, pause for manual review in v1 and record `cover_letter_status=text_area_not_supported`.
+
+## Resume upload (manual)
+- `mcp__Claude_in_Chrome__file_upload` returns `Not allowed` for the Greenhouse resume input. **Always ask Kashane to manually drag/drop or click-attach** `data/generated/resumes/Resume-from-indeed.pdf`.
+- Pause the flow with a clear "please upload the resume PDF, then say 'uploaded' to continue" message. Don't try to bypass.
 
 ## Step 4: Fill custom questions
 Each `plan.fields[N]` with `field_id` starting `custom_` maps to a Greenhouse custom question. Match by `normalized_question`. Missing field → `tier_downgrade`, escalate.
