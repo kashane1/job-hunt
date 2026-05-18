@@ -1,11 +1,11 @@
 # Profile Document Audit
 
-- Generated at: 2026-04-18T02:49:38+00:00
+- Generated at: 2026-05-17T19:49:49+00:00
 - Raw documents scanned: 16
 - Supported documents normalized: 16
-- Average quality: 61.9
-- Average quantity: 41.5
-- Average value: 57.6
+- Average quality: 63.8
+- Average quantity: 42.8
+- Average value: 58.1
 
 ## Highest-Value Documents
 ### Master Resume
@@ -18,8 +18,8 @@
 ### Accomplishment and Impact Bank
 - Path: profile/raw/accomplishments.md
 - Type: question_bank (explicit)
-- Scores: quality 82, quantity 50, value 80
-- Skill hits: ai, api, automation, aws, browser, data, javascript, kysely, mysql, php, platform, postgres
+- Scores: quality 82, quantity 51, value 80
+- Skill hits: ai, api, automation, aws, browser, data, git, javascript, kysely, mysql, php, platform
 - Suggestions: none
 
 ### question-examples
@@ -56,8 +56,8 @@
 ### Accomplishment and Impact Bank
 - Path: profile/raw/accomplishments.md
 - Type: question_bank
-- Metrics: 768 words, 2 bullets, 4 quantified phrases, 13 Q/A pairs
-- Scores: quality 82 (high), quantity 50 (low), value 80 (high)
+- Metrics: 876 words, 2 bullets, 4 quantified phrases, 13 Q/A pairs
+- Scores: quality 82 (high), quantity 51 (low), value 80 (high)
 - Highlights: [Fill in any additional quantified achievements] | [Fill in any leadership or initiative examples]
 - Suggestions: none
 
@@ -85,6 +85,22 @@
 - Highlights: Use existing `seat_map`, `price_level`, and `price_level_block` tables | Create template events (dummy events) with `event.tags` containing "template" tag | Store template tags in `seat_map.tags[]` column (genre, category, and sub-categories)
 - Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
 
+### ai-company-os Project Note
+- Path: profile/raw/ai-company-os.md
+- Type: project_note
+- Metrics: 567 words, 10 bullets, 0 quantified phrases, 0 Q/A pairs
+- Scores: quality 68 (medium), quantity 27 (low), value 58 (low)
+- Highlights: Public repo: github.com/kashane1/ai-company-os. | First commit 2026-03-27. Built intensively over roughly two months. | ~565 commits, conventional-commit history, CI on every change.
+- Suggestions: Add more quantified outcomes so achievements are easier to ground in applications.
+
+### Candidate Preferences
+- Path: profile/raw/preferences.md
+- Type: preferences
+- Metrics: 244 words, 10 bullets, 2 quantified phrases, 0 Q/A pairs
+- Scores: quality 72 (medium), quantity 31 (low), value 58 (low)
+- Highlights: US Citizen / Authorized to work in the United States: YES | Requires sponsorship: NO | Ask (what to put on applications): $140,000 base
+- Suggestions: none
+
 ### Seat Map Templates
 - Path: profile/raw/Seat Map Templates.txt
 - Type: project_note
@@ -109,27 +125,11 @@
 - Highlights: Past events only, or can we look at future events / current offers in metrics form? | If available for all events, should we add something to the event details page? Link to Offer Metrics or a small table? | What counts as “offer metrics”? What questions will this project answer?
 - Suggestions: Add YAML frontmatter so the pipeline can classify and reuse this document more reliably.
 
-### ai-company-os Project Note
-- Path: profile/raw/ai-company-os.md
-- Type: project_note
-- Metrics: 147 words, 6 bullets, 0 quantified phrases, 0 Q/A pairs
-- Scores: quality 57 (low), quantity 14 (low), value 54 (low)
-- Highlights: Built a local-first, policy-driven platform for AI-assisted product delivery with persistent workers, typed tasks, explicit approval gates, and dedicated engineering, iOS, and App Store lanes. | Designed the system so orchestration lives in the platform, runtime state lives outside source folders, and repo mutations happen through isolated worktrees instead of hidden prompt logic. | Defined clear ownership boundaries across platform policy, Codex execution, Postgres memory, Redis queueing, GitHub delivery, and optional external interfaces.
-- Suggestions: Add more quantified outcomes so achievements are easier to ground in applications.
-
-### Candidate Preferences
-- Path: profile/raw/preferences.md
-- Type: preferences
-- Metrics: 146 words, 10 bullets, 1 quantified phrases, 0 Q/A pairs
-- Scores: quality 63 (medium), quantity 26 (low), value 54 (low)
-- Highlights: US Citizen / Authorized to work in the United States: YES | Requires sponsorship: NO | Minimum base salary: $140,000
-- Suggestions: none
-
 ### Candidate Identity Card
 - Path: profile/raw/candidate-identity.md
 - Type: resume
-- Metrics: 110 words, 10 bullets, 0 quantified phrases, 0 Q/A pairs
-- Scores: quality 48 (low), quantity 21 (low), value 50 (low)
+- Metrics: 187 words, 10 bullets, 0 quantified phrases, 0 Q/A pairs
+- Scores: quality 57 (low), quantity 22 (low), value 50 (low)
 - Highlights: Email: ksakhakorn@gmail.com | Phone: (818) 282-3532 | LinkedIn: https://www.linkedin.com/in/kashanesakhakorn/
 - Suggestions: Add more quantified outcomes so achievements are easier to ground in applications.; Mention key technologies explicitly to make skill extraction less lossy.
 
