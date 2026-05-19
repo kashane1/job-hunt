@@ -241,6 +241,35 @@ def _sanitize_url_for_logging(url: str) -> str:
     ))
 
 
+# scheme://userinfo@host  ->  scheme://host  (drops embedded credentials)
+_USERINFO_RE = re.compile(r"(https?://)[^/?#\s@]+@([^\s/?#]+)", re.I)
+
+
+def _redact_failed_intake(text: str, url: str, canonical: str) -> str:
+    """Scrub raw URL/credentials from an intake ``.md`` before it lands in
+    ``_intake/failed/``.
+
+    The pending ``.md`` embeds the raw ``application_url`` in frontmatter and
+    a short-TTL token can be reflected into the fetched body. We replace the
+    exact raw ``url``/``canonical`` substrings (longest first) with their
+    :func:`_sanitize_url_for_logging` form, then strip any remaining
+    ``scheme://user:pass@`` userinfo as defense in depth. Targeted
+    exact-substring redaction — no fragile YAML re-parsing. (todo 027)
+    """
+    pairs = sorted(
+        (
+            (url, _sanitize_url_for_logging(url)),
+            (canonical, _sanitize_url_for_logging(canonical)),
+        ),
+        key=lambda p: len(p[0]),
+        reverse=True,  # longest raw first; canonical may prefix url
+    )
+    for raw, safe in pairs:
+        if raw:
+            text = text.replace(raw, safe)
+    return _USERINFO_RE.sub(r"\1\2", text)
+
+
 # =============================================================================
 # SSRF guards
 # =============================================================================
@@ -248,23 +277,24 @@ def _sanitize_url_for_logging(url: str) -> str:
 def _ip_is_disallowed(ip: ipaddress._BaseAddress) -> bool:
     """Check if an IP lives in a range we refuse to fetch.
 
-    IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`) get their embedded IPv4
-    checked explicitly — some Python versions report `is_private=False` for
-    the mapped form even though the underlying IPv4 is loopback/private.
+    IPv4-mapped IPv6 addresses (``::ffff:a.b.c.d``) are rejected
+    unconditionally — the embedded-IPv4 class is irrelevant, even a public
+    one. No legitimate job board is ever reached via a mapped-IPv6 literal;
+    the form only appears from explicit literals or unusual resolvers, and
+    it is a classic SSRF parser-differential bypass (one layer classifies
+    the v6 wrapper, another connects to the embedded v4). Blocking the whole
+    ``::ffff:0:0/96`` class is fail-closed and — unlike leaning on
+    ``IPv6Address.is_reserved`` / ``.is_private`` for the mapped form, whose
+    semantics shifted between CPython 3.11/3.12 point releases — deterministic
+    across interpreter versions. This check is first and explicit so the
+    posture does not silently depend on stdlib classification drift.
     """
-    if (
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        return True
+    return (
         ip.is_private or ip.is_loopback or ip.is_link_local
         or ip.is_reserved or ip.is_multicast or ip.is_unspecified
-    ):
-        return True
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        mapped = ip.ipv4_mapped
-        if (
-            mapped.is_private or mapped.is_loopback or mapped.is_link_local
-            or mapped.is_reserved or mapped.is_multicast or mapped.is_unspecified
-        ):
-            return True
-    return False
+    )
 
 
 def _validate_url_for_fetch(url: str) -> tuple[str, list[str]]:
@@ -1016,12 +1046,22 @@ def ingest_url(
         from .core import extract_lead
         lead = extract_lead(intake_path, output_dir)
     except Exception as exc:
-        # Phase A or B failed — move to failed/ with sanitized error context
+        # Phase A or B failed — persist to failed/ with sanitized context.
+        # The intake .md embeds the raw application_url in frontmatter (and a
+        # short-TTL token can be reflected into the fetched body), so it is
+        # NOT moved verbatim: the exact raw URL/canonical strings are scrubbed
+        # to their _sanitize_url_for_logging form before the failed copy is
+        # written, then the pending file is removed. The .err sidecar carries
+        # only already-sanitized fields. (todo 027)
         if intake_path.exists():
             ts = now_iso().replace(":", "").replace("-", "")[:15]
             failed_path = failed_dir / f"{ts}-{intake_hash}.md"
             try:
-                intake_path.replace(failed_path)
+                redacted = _redact_failed_intake(
+                    intake_path.read_text(encoding="utf-8"), url, canonical,
+                )
+                failed_path.write_text(redacted, encoding="utf-8")
+                intake_path.unlink()
                 failed_path.with_suffix(".err").write_text(
                     f"URL: {_sanitize_url_for_logging(url)}\n"
                     f"canonical: {_sanitize_url_for_logging(canonical)}\n"

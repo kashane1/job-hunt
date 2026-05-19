@@ -155,6 +155,45 @@ class SanitizeUrlTest(unittest.TestCase):
         self.assertNotIn("SECRET", out)
 
 
+class FailedIntakeRedactionTest(unittest.TestCase):
+    """todo 027: a Phase-B failure must not leave the raw URL (userinfo /
+    token query params) on disk in _intake/failed/ — neither the .md nor
+    the .err sidecar."""
+
+    _HTML = "<html><body><h1>Job</h1><p>A real description here.</p></body></html>"
+
+    def _fail_ingest(self, url: str):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir)
+            with patch("job_hunt.core.extract_lead", side_effect=RuntimeError("parse boom")):
+                with self.assertRaises(RuntimeError):
+                    ingest_url(url, out, html_override=self._HTML)
+            failed_dir = out / "_intake" / "failed"
+            md_files = list(failed_dir.glob("*.md"))
+            err_files = list(failed_dir.glob("*.err"))
+            self.assertEqual(len(md_files), 1, "expected one failed .md")
+            self.assertEqual(len(err_files), 1, "expected one .err sidecar")
+            pending = list((out / "_intake" / "pending").glob("*.md"))
+            self.assertEqual(pending, [], "pending intake must be removed")
+            return md_files[0].read_text(encoding="utf-8"), err_files[0].read_text(encoding="utf-8")
+
+    def test_userinfo_not_persisted(self) -> None:
+        md, err = self._fail_ingest("https://alice:s3cr3t@careers.example.com/jobs/1")
+        for blob in (md, err):
+            self.assertNotIn("s3cr3t", blob)
+            self.assertNotIn("alice:s3cr3t", blob)
+        # Sanitized host is retained so the failure is still triageable.
+        self.assertIn("careers.example.com", md)
+
+    def test_token_query_not_persisted(self) -> None:
+        md, err = self._fail_ingest(
+            "https://careers.example.com/jobs/1?token=SUPERSECRET&utm=x"
+        )
+        for blob in (md, err):
+            self.assertNotIn("SUPERSECRET", blob)
+        self.assertIn("careers.example.com", md)
+
+
 class WrapFetchedContentTest(unittest.TestCase):
     def test_wraps_with_nonce(self) -> None:
         wrapped = _wrap_fetched_content("hello")
@@ -205,21 +244,33 @@ class GenericHtmlFallbackTest(unittest.TestCase):
 class IngestUrlTest(unittest.TestCase):
     def test_linkedin_is_allowlisted_does_not_login_wall(self) -> None:
         # LinkedIn is now allowlisted in config/domain-allowlist.yaml; it
-        # proceeds past the hard-fail gate (and may fail further down the
-        # pipeline — the point is that login_wall no longer fires).
+        # proceeds past the hard-fail gate. fetch is mocked to a network
+        # failure so this is hermetic and the assertion deterministically
+        # proves the login_wall gate was bypassed (not coincidentally
+        # satisfied by a real network error).
+        net_fail = IngestionError(
+            "blocked in test", error_code="network_error",
+        )
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(IngestionError) as ctx:
-                ingest_url("https://linkedin.com/jobs/view/12345", Path(tmpdir))
+            with patch("job_hunt.ingestion.fetch", side_effect=net_fail):
+                with self.assertRaises(IngestionError) as ctx:
+                    ingest_url("https://linkedin.com/jobs/view/12345", Path(tmpdir))
             self.assertNotEqual(ctx.exception.error_code, "login_wall")
+            self.assertEqual(ctx.exception.error_code, "network_error")
 
     def test_indeed_is_allowlisted_does_not_login_wall(self) -> None:
         # Batch 4: Indeed is the lone entry in config/domain-allowlist.yaml.
-        # Ingestion now proceeds past the hard-fail gate (and fails further
-        # down the pipeline — the point is that login_wall no longer fires).
+        # Ingestion now proceeds past the hard-fail gate. fetch mocked for
+        # the same hermetic reason as the LinkedIn case above.
+        net_fail = IngestionError(
+            "blocked in test", error_code="network_error",
+        )
         with tempfile.TemporaryDirectory() as tmpdir:
-            with self.assertRaises(IngestionError) as ctx:
-                ingest_url("https://www.indeed.com/viewjob?jk=abc", Path(tmpdir))
+            with patch("job_hunt.ingestion.fetch", side_effect=net_fail):
+                with self.assertRaises(IngestionError) as ctx:
+                    ingest_url("https://www.indeed.com/viewjob?jk=abc", Path(tmpdir))
             self.assertNotEqual(ctx.exception.error_code, "login_wall")
+            self.assertEqual(ctx.exception.error_code, "network_error")
 
 
 class HardFailAllowlistTest(unittest.TestCase):

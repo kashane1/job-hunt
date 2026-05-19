@@ -1,9 +1,10 @@
 ---
-status: pending
-priority: p3
+status: complete
+priority: p1
 issue_id: "027"
 tags: [code-review, security, redaction, batch-2]
 dependencies: []
+re_ranked: "2026-05-18 p3->p1 — raw URL (userinfo/token) persisted on disk in a privacy-first repo"
 ---
 
 # _intake/failed/ leaks fetched content and full URL; no redaction applied
@@ -74,12 +75,14 @@ Option 1. Small, low-risk, closes a pattern-violation gap. Aligns batch 2 with b
 
 ## Acceptance Criteria
 
-- [ ] `_sanitize_url_for_logging` helper in `ingestion.py`
-- [ ] Applied to URL, canonical, and exception string in `.err` writer
-- [ ] Applied in any other log/error-write paths
-- [ ] `check-integrity` flags stale `failed/` entries (>7 days)
-- [ ] Test: ingest-url with `https://user:pass@host/` → `.err` file has no `user:pass`
-- [ ] Test: ingest-url with `?token=SECRET` → `.err` file has no `SECRET`
+- [x] `_sanitize_url_for_logging` helper in `ingestion.py` (pre-existing)
+- [x] Applied to URL, canonical, and exception string in `.err` writer (pre-existing)
+- [x] Applied in any other log/error-write paths — the failed `.md` is now
+      redacted via `_redact_failed_intake` instead of moved verbatim
+- [x] `check-integrity` flags stale `failed/` entries (>7 days) — pre-existing
+      `stale_intake_failed` (7-day threshold)
+- [x] Test: `https://user:pass@host/...` → failed `.md` AND `.err` have no `user:pass`
+- [x] Test: `?token=SECRET` → failed `.md` AND `.err` have no `SECRET`
 
 ## Work Log
 
@@ -90,3 +93,27 @@ Option 1. Small, low-risk, closes a pattern-violation gap. Aligns batch 2 with b
 **Actions:**
 - Flagged `_intake/failed/` as leaking URL credentials and tokens
 - Batch 1's `design-secret-handling` solution establishes the redact-at-boundary pattern to follow
+
+### 2026-05-18 - Resolved (audit P1)
+
+**By:** audit follow-up session
+
+**Findings:** The `.err` URL/canonical/error sanitization and the
+`stale_intake_failed` (>7d) check-integrity warning had already shipped
+since this todo was filed. The one remaining leak was the failed `.md`
+itself: `ingest_url` moved the pending intake **verbatim**, so its
+`application_url` frontmatter still held the raw URL (userinfo / token
+query params), and a reflected token could survive in the fetched body.
+
+**Actions:**
+- Added `_redact_failed_intake(text, url, canonical)` in `ingestion.py`:
+  exact-substring replace of raw `url`/`canonical` (longest-first) with
+  their `_sanitize_url_for_logging` form, then a `scheme://user:pass@`
+  userinfo strip (`_USERINFO_RE`) as defense in depth.
+- `ingest_url` now writes the redacted text to `failed/` and unlinks the
+  pending file, instead of `intake_path.replace(failed_path)`.
+- Added `FailedIntakeRedactionTest` (2 tests) proving neither the `.md`
+  nor the `.err` retains `user:pass` or a `token=` secret, while the
+  sanitized host is retained for triage.
+- Re-ranked p3→p1: a raw credentialed URL persisting on disk in a
+  privacy-first repo is a privacy leak, not a nit.

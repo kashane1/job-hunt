@@ -61,7 +61,7 @@ The fix makes the connect use a specific IP we already validated, while keeping 
 2. `_PinnedHTTPHandler` / `_PinnedHTTPSHandler` wire the pinned connection factory into a urllib opener by implementing `http_open` / `https_open` over `do_open(self._build_conn, req)`.
 3. `fetch()` calls `_validate_url_for_fetch(url)` to get the validated IP list, picks `ip_strs[0]` as the pin, builds a *fresh* opener for this single request via `_build_pinned_opener`, and sets `Connection: close` on the request so no pooled (host, port) socket can be reused across calls to bypass the pin.
 4. `_StrictRedirectHandler.redirect_request` calls `_validate_url_for_fetch(newurl)` on every hop and re-wraps any failure as `error_code="redirect_blocked"`, capped at 3 redirects — so a 302 to a metadata IP is rejected before any connect.
-5. `_ip_is_disallowed` separately closes the IPv4-mapped IPv6 bypass: some Python versions report `::ffff:127.0.0.1` as `is_private=False`, so we explicitly re-check the embedded IPv4.
+5. `_ip_is_disallowed` separately closes the IPv4-mapped IPv6 bypass by rejecting the entire `::ffff:0:0/96` class unconditionally and as the first check (see the 2026-05-18 hardening update below) — fail-closed and independent of CPython's per-version mapped-form classification.
 
 The pinned-connect:
 
@@ -90,20 +90,27 @@ The IPv4-mapped-IPv6 guard:
 
 ```python
 def _ip_is_disallowed(ip: ipaddress._BaseAddress) -> bool:
-    if (
+    # Reject the entire ::ffff:0:0/96 class unconditionally — public
+    # embedded IPv4 included. Checked first and explicitly so the posture
+    # does not depend on stdlib is_reserved/is_private drift.
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        return True
+    return (
         ip.is_private or ip.is_loopback or ip.is_link_local
         or ip.is_reserved or ip.is_multicast or ip.is_unspecified
-    ):
-        return True
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
-        mapped = ip.ipv4_mapped
-        if (
-            mapped.is_private or mapped.is_loopback or mapped.is_link_local
-            or mapped.is_reserved or mapped.is_multicast or mapped.is_unspecified
-        ):
-            return True
-    return False
+    )
 ```
+
+> **2026-05-18 hardening update.** The original guard *unwrapped* the
+> mapped address and allowed it through if the embedded IPv4 was public
+> (`::ffff:8.8.8.8` → allowed). That intent was wrong: it kept a
+> parser-differential bypass surface alive and made the verdict depend on
+> CPython's mapped-form `is_reserved`/`is_private` classification, which
+> changed between 3.11/3.12 point releases (on 3.12, `::ffff:8.8.8.8` is
+> `is_reserved=True`, so the old explicit branch was already dead code).
+> The guard now rejects **all** IPv4-mapped IPv6 unconditionally and
+> first — fail-closed and version-deterministic. No legitimate job board
+> resolves to a `::ffff:` literal, so nothing real is lost.
 
 TLS invariants held: `server_hostname=self.host`, `check_hostname=True`, `verify_mode=ssl.CERT_REQUIRED`, `Connection: close` on every request to prevent pool reuse bypassing the pin.
 
@@ -113,7 +120,7 @@ The IPv4-mapped-IPv6 branch is exercised by `Ipv4MappedIpv6Test` in [tests/test_
 
 - `test_mapped_loopback_disallowed` — `::ffff:127.0.0.1` is rejected
 - `test_mapped_private_disallowed` — `::ffff:10.0.0.1` is rejected
-- `test_mapped_public_allowed` — `::ffff:8.8.8.8` passes
+- `test_mapped_public_also_disallowed` — `::ffff:8.8.8.8` is **also** rejected (whole mapped class is fail-closed; see 2026-05-18 update above)
 
 The full 156-test batch-2 suite continues to pass, which is the regression guarantee that pinning + redirect revalidation didn't break any existing fetch, canonicalization, intake-lifecycle, or extract-lead behavior.
 
@@ -128,17 +135,17 @@ The full 156-test batch-2 suite continues to pass, which is the regression guara
 
    Dropping any one makes the other two worthless: no SNI → wrong cert presented; no hostname check → pin accepts any valid cert on that IP; pooled reuse → TOCTOU moves from DNS to the pool.
 
-3. **IPv4-mapped IPv6 gotcha.** `ipaddress.ip_address("::ffff:10.0.0.1").is_private` has returned `False` on older CPython (fixed in 3.11.4 / 3.12) and is still a footgun in mixed-version fleets. `getaddrinfo` with `AF_UNSPEC` will happily hand you v4-mapped v6 addresses on dual-stack boxes. Always normalize before the privacy check:
+3. **IPv4-mapped IPv6 gotcha.** `ipaddress.ip_address("::ffff:10.0.0.1").is_private` has returned `False` on older CPython, then `True`, and `::ffff:8.8.8.8` is `is_reserved=True` on 3.12 — the classification of mapped forms has churned across point releases and is a footgun in mixed-version fleets. `getaddrinfo` with `AF_UNSPEC` will hand you v4-mapped v6 addresses on dual-stack boxes. **Do not unwrap-and-allow** (route the embedded IPv4 through the normal public/private check) — that keeps a parser-differential bypass alive and makes the verdict version-dependent. For an egress allowlist where mapped literals have no legitimate use (SSRF guards, webhook targets), reject the whole class outright, as the first check, before any stdlib property is consulted:
 
    ```python
    ip = ipaddress.ip_address(addr)
-   if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-       ip = ip.ipv4_mapped
-   if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+   if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+       reject()  # whole ::ffff:0:0/96 class, public embedded IPv4 included
+   if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
        reject()
    ```
 
-   Same unwrap for `::` (unspecified) and `::1` (loopback-as-v6) — check the v4-mapped form and the v6 form.
+   Fail-closed beats clever here: a job-board fetcher never needs to reach a host expressed as `::ffff:a.b.c.d`, so blocking the class costs nothing and removes an entire bug family. (If you genuinely must support mapped public addresses — rare — unwrap *and* re-pin the connect to the embedded IPv4 so check and connect cannot diverge.)
 
 4. **Redirect re-validation.** Every 3xx hop is a fresh DNS lookup and a fresh SSRF surface. A 302 from `public.example` → `internal.corp` (or → `http://[::ffff:169.254.169.254]`) hits the same TOCTOU if you only validated the first hostname. Either (a) disable auto-redirects and re-enter the validate-resolve-pin pipeline per hop, or (b) install a redirect handler that runs the full guard — IP classification, v4-mapped unwrap, pin — on every `Location:` before following. Cap redirect depth (≤5) so a redirect loop can't exhaust the guard.
 
