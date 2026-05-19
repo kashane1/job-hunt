@@ -27,11 +27,18 @@ import dataclasses
 import hashlib
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Final, Literal
 
 from .analytics import STAGE_SEQUENCE
-from .confirmation import SENDER_ALLOWLIST, ParsedEmail
+from .confirmation import (
+    SENDER_ALLOWLIST,
+    ParsedEmail,
+    _dkim_pass,
+    _quarantine,
+    match_message,
+)
 from .tracking import (
     TERMINAL_STAGES,
     VALID_STAGES,
@@ -44,6 +51,7 @@ from .utils import (
     now_iso,
     read_json,
     repo_root,
+    write_json,
 )
 
 TRIAGE_ERROR_CODES: Final = frozenset({
@@ -77,7 +85,10 @@ STAGE_LADDER: Final[dict[str, int]] = {
 
 # Outcomes are not ladder-ranked; they may be reached from any non-terminal
 # stage (a real rejection/ghost can arrive at any point).
-OUTCOME_STAGES: Final = frozenset({"rejected", "withdrawn", "ghosted"})
+# Outcomes are not ladder-ranked (reachable from any non-terminal stage).
+# `withdrawn` is intentionally absent — no triage event/label/scan targets
+# it (it is a human-only manual transition).
+OUTCOME_STAGES: Final = frozenset({"rejected", "ghosted"})
 
 # confirmation.EventType → Model-B stage. interview→onsite is a deliberate
 # constant (Indeed/ATS "interview" emails rarely distinguish phone vs onsite;
@@ -110,15 +121,13 @@ class BridgeResult:
         "noop_terminal",
         "skipped_contention",
         "quarantined",
+        "noop_no_stage",
     ]
     lead_id: str | None
     from_stage: str | None
     to_stage: str | None
     event_id: str
     inferred_skip: bool = False
-
-    def to_dict(self) -> dict:
-        return dataclasses.asdict(self)
 
 
 def _status_path(data_root: Path, lead_id: str) -> Path:
@@ -192,8 +201,6 @@ def _bridge_to_stage(
                 status, target, note=note,
                 event_id=event_id, inferred_skip=inferred_skip,
             )
-            from .utils import write_json
-
             write_json(status_path, status)
             return BridgeResult(
                 "advanced", lead_id, current, target, event_id, inferred_skip
@@ -278,6 +285,8 @@ _NON_COMPANY_HOSTS: Final = frozenset({
 _MULTI_SUFFIXES: Final = frozenset({
     "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au",
     "co.jp", "co.nz", "com.br", "co.in", "com.sg", "com.mx", "co.za",
+    "co.il", "com.tr", "co.kr", "org.nz", "gov.sg", "com.cn", "co.id",
+    "com.hk", "com.tw", "com.ar", "co.th", "com.my", "com.ph", "ne.jp",
 })
 
 
@@ -297,23 +306,43 @@ def registrable_domain(host: str) -> str:
     return last2
 
 
-_DKIM_D_RE: Final = re.compile(
-    r"dkim=pass\b[^;]*?\bheader\.d=([A-Za-z0-9.-]+)", re.IGNORECASE,
+# One (status, header.d=) pair per `dkim=` token. We parse EVERY dkim result,
+# not just the first — an attacker appends a fake `dkim=pass header.d=victim`
+# after a real `dkim=fail`, so first-match is forgeable (todo 068).
+_DKIM_RESULT_RE: Final = re.compile(
+    r"\bdkim=(pass|fail|none|neutral|policy|permerror|temperror)\b"
+    r"(?:[^;]*?\bheader\.d=([A-Za-z0-9.-]+))?",
+    re.IGNORECASE,
 )
 
 
 def dkim_pass_domain(authentication_results: str) -> str | None:
-    """Return the DKIM ``header.d=`` signing domain ONLY when dkim=pass.
+    """Registrable signing domain of a *passing* DKIM result, fail-closed.
 
-    confirmation._dkim_pass checks the substring; trust binding additionally
-    needs the signing domain. ``From`` / display-name / body are never read.
+    Every ``dkim=`` result in ``Authentication-Results`` is parsed. A
+    registrable domain is returned only if it has a ``dkim=pass`` AND no
+    non-pass ``dkim=`` result for that same registrable domain (so a forged
+    ``dkim=pass header.d=victim`` appended after a real ``dkim=fail`` for
+    victim cannot win). ``From`` / display-name / body are never read.
+
+    NOTE: ``Authentication-Results`` is only trustworthy when stamped by a
+    trusted inbound verifier (the Gmail-API path). Raw ``.eml`` via
+    ``--inbox-file`` is author-controlled — which is why non-allowlisted
+    senders never auto-advance regardless of this value (see triage_inbox).
     """
     if not authentication_results:
         return None
-    m = _DKIM_D_RE.search(authentication_results)
-    if not m:
-        return None
-    return registrable_domain(m.group(1))
+    passed: set[str] = set()
+    failed: set[str] = set()
+    for status, domain in _DKIM_RESULT_RE.findall(authentication_results):
+        if not domain:
+            continue
+        reg = registrable_domain(domain)
+        (passed if status.lower() == "pass" else failed).add(reg)
+    candidates = passed - failed
+    if len(candidates) != 1:
+        return None  # zero, or an ambiguous/contradicted set → fail closed
+    return next(iter(candidates))
 
 
 RecruiterLabel = Literal[
@@ -360,6 +389,8 @@ def classify_recruiter_email(parsed: ParsedEmail) -> RecruiterClass:
 
 
 # A recruiter label that is NOT a forward funnel step has no Model-B stage.
+# Used by bridge_recruiter (the promotion primitive for the quarantine
+# review path, todo 070).
 _RECRUITER_LABEL_TO_STAGE: Final[dict[str, str]] = {
     "rejection": "rejected",
     "phone_screen": "phone_screen",
@@ -367,9 +398,6 @@ _RECRUITER_LABEL_TO_STAGE: Final[dict[str, str]] = {
     "offer": "offer",
     # assessment_request: intentionally absent — no current_stage change.
 }
-# Outcomes are the high-value spoofing targets: from a non-allowlisted (but
-# DKIM-domain-matched) sender they quarantine for human promotion.
-_OUTCOME_LABELS: Final = frozenset({"rejection", "offer"})
 
 
 @dataclass(frozen=True)
@@ -381,8 +409,6 @@ class CorrelationResult:
 
 @dataclass(frozen=True)
 class CorrelationIndex:
-    by_jk: dict[str, str]              # indeed_jk -> draft_id
-    by_posting_url: dict[str, str]    # posting_url -> draft_id
     by_company_domain: dict[str, tuple[str, ...]]  # eTLD+1 -> lead_ids
     company_token: dict[str, str]     # lead_id -> lowercased company core token
 
@@ -396,30 +422,9 @@ def _company_core_token(name: str) -> str:
 
 
 def build_correlation_index(data_root: Path | None = None) -> CorrelationIndex:
-    """One pass over plan/lead/company records (mirrors analytics'
-    load-once idiom — avoids the O(emails × drafts) re-glob)."""
+    """One pass over lead/company records (mirrors analytics' load-once
+    idiom — avoids an O(emails × leads) re-glob in the review path)."""
     data_root = data_root or (repo_root() / "data")
-    by_jk: dict[str, str] = {}
-    by_url: dict[str, str] = {}
-    apps = data_root / "applications"
-    if apps.is_dir():
-        for d in apps.iterdir():
-            if not d.is_dir() or d.name in ("batches", "_suspicious"):
-                continue
-            pp = d / "plan.json"
-            if not pp.exists():
-                continue
-            try:
-                plan = read_json(pp)
-            except Exception:
-                continue
-            keys = plan.get("correlation_keys", {}) or {}
-            did = plan.get("draft_id", d.name)
-            if keys.get("indeed_jk"):
-                by_jk[keys["indeed_jk"]] = did
-            if keys.get("posting_url"):
-                by_url[keys["posting_url"]] = did
-
     companies: dict[str, str] = {}  # company_id -> registrable domain
     cdir = data_root / "companies"
     if cdir.is_dir():
@@ -452,7 +457,6 @@ def build_correlation_index(data_root: Path | None = None) -> CorrelationIndex:
             if dom:
                 by_dom.setdefault(dom, []).append(lid)
     return CorrelationIndex(
-        by_jk=by_jk, by_posting_url=by_url,
         by_company_domain={k: tuple(v) for k, v in by_dom.items()},
         company_token=tokens,
     )
@@ -501,7 +505,7 @@ def bridge_recruiter(
         f"gmail:{parsed.message_id or '<no-id>'}:recruiter:{klass.label}".encode()
     ).hexdigest()
     if target is None:
-        return BridgeResult("noop_backward", lead_id, None, None, eid)
+        return BridgeResult("noop_no_stage", lead_id, None, None, eid)
     return _bridge_to_stage(
         lead_id=lead_id, target=target,
         note=f"triage:recruiter:{klass.label} ({klass.matched_rule})",
@@ -512,14 +516,6 @@ def bridge_recruiter(
 # =============================================================================
 # Phase 3 — inbox orchestrator, ghost-timeout scan
 # =============================================================================
-
-from datetime import UTC, datetime, timedelta  # noqa: E402
-
-from .confirmation import (  # noqa: E402
-    _dkim_pass,
-    _quarantine,
-    match_message,
-)
 
 GHOST_DAYS_DEFAULT: Final = 21
 
@@ -539,58 +535,73 @@ def triage_inbox(
     *,
     data_root: Path | None = None,
 ) -> dict:
-    """Classify + bridge a batch of inbound emails. Mirrors
-    confirmation.poll_confirmations' rollup shape. Redaction happens FIRST so
-    nothing unredacted is ever persisted/logged. Anti-spoof: an outcome
-    (rejection/offer) from a non-allowlisted sender is quarantined for human
-    promotion, never silently applied."""
+    """Classify + bridge a batch of inbound emails. Redaction happens FIRST
+    so nothing unredacted is ever persisted/logged.
+
+    Trust split (todo 068): ``Authentication-Results`` is only trustworthy
+    when stamped by a trusted inbound verifier. **Only allowlisted ATS
+    senders auto-advance** — via the confirmation-event path so Model A/B
+    dedup on the same ``event_id``. Every non-allowlisted email is
+    quarantined for human promotion (todo 070's triage-review), regardless
+    of DKIM-``d=`` match or classified label, because the header is
+    author-controlled on the raw-``.eml`` path and a forged ``dkim=pass
+    header.d=victim`` would otherwise march an unrelated lead forward.
+    """
     data_root = data_root or (repo_root() / "data")
     index = build_correlation_index(data_root)
     rollup: dict = {"advanced": 0, "quarantined": 0, "noop": 0, "results": []}
 
     for raw in parsed_emails:
         parsed = redact_email(raw)
-        klass = classify_recruiter_email(parsed)
         allowlisted = raw.sender in SENDER_ALLOWLIST and _dkim_pass(
             raw.authentication_results
         )
 
-        lead_id: str | None = None
         if allowlisted:
             drafts = match_message(raw, data_root=data_root)
-            if len(drafts) == 1:
-                lead_id = _lead_id_for_draft(data_root, drafts[0])
-        else:
-            cor = correlate_recruiter(raw, index)
-            lead_id = cor.lead_id if cor.decision == "match" else None
-
-        if klass.label == "unknown" or lead_id is None:
-            _quarantine(parsed, "triage_no_confident_classification_or_match",
-                        data_root=data_root)
-            rollup["quarantined"] += 1
-            rollup["results"].append({"message_id": parsed.message_id,
-                                      "outcome": "quarantined"})
+            lead_id = (
+                _lead_id_for_draft(data_root, drafts[0])
+                if len(drafts) == 1 else None
+            )
+            if lead_id is None:
+                _quarantine(parsed, "triage_allowlisted_no_single_draft",
+                            data_root=data_root)
+                rollup["quarantined"] += 1
+                rollup["results"].append({
+                    "message_id": parsed.message_id,
+                    "outcome": "quarantined",
+                    "reason": "allowlisted_no_single_draft",
+                })
+                continue
+            # Confirmation-event path: bridge_event uses raw.event_type and
+            # the SAME event_id formula as confirmation.update_status, so
+            # Model A and Model B stay idempotent against each other.
+            result = bridge_event(raw, lead_id=lead_id, data_root=data_root)
+            bucket = "advanced" if result.outcome == "advanced" else "noop"
+            rollup[bucket] += 1
+            rollup["results"].append({
+                "message_id": parsed.message_id,
+                "outcome": result.outcome,
+                "lead_id": lead_id,
+                "event_type": raw.event_type,
+                "to_stage": result.to_stage,
+            })
             continue
 
-        if klass.label in _OUTCOME_LABELS and not allowlisted:
-            _quarantine(parsed, "triage_non_allowlisted_outcome_needs_review",
-                        data_root=data_root)
-            rollup["quarantined"] += 1
-            rollup["results"].append({"message_id": parsed.message_id,
-                                      "outcome": "quarantined",
-                                      "reason": "non_allowlisted_outcome"})
-            continue
-
-        result = bridge_recruiter(parsed, klass, lead_id=lead_id,
-                                  data_root=data_root)
-        bucket = "advanced" if result.outcome == "advanced" else "noop"
-        rollup[bucket] += 1
+        # Non-allowlisted → NEVER auto-advance. Correlate/classify only to
+        # annotate the quarantine for the human/agent review path (todo 070).
+        cor = correlate_recruiter(raw, index)
+        klass = classify_recruiter_email(parsed)
+        _quarantine(parsed, "triage_non_allowlisted_needs_review",
+                    data_root=data_root)
+        rollup["quarantined"] += 1
         rollup["results"].append({
             "message_id": parsed.message_id,
-            "outcome": result.outcome,
-            "lead_id": lead_id,
+            "outcome": "quarantined",
+            "reason": "non_allowlisted",
             "label": klass.label,
-            "to_stage": result.to_stage,
+            "correlation": cor.decision,
+            "lead_id": cor.lead_id,
         })
     return rollup
 
@@ -653,7 +664,7 @@ def scan_ghost_timeouts(
         transitions = status.get("transitions", [])
         if transitions and transitions[-1].get("to_stage") == "ghosted":
             continue  # state-based idempotency
-        last_ts = (transitions[-1]["timestamp"] if transitions
+        last_ts = (transitions[-1].get("timestamp", "") if transitions
                    else status.get("updated_at", ""))
         if last_ts and last_ts > cutoff_iso:
             continue  # still fresh

@@ -3335,11 +3335,14 @@ def main(argv: list[str] | None = None) -> int:
             }, indent=2))
             return 2
         parsed_list = []
+        skipped_unparseable = 0
         for item in inbox:
             if isinstance(item, dict):
                 parsed_list.append(parse_email_dict(item))
             elif isinstance(item, str):
                 parsed_list.append(parse_email(Path(item).read_bytes()))
+            else:
+                skipped_unparseable += 1
 
         data_root = Path(args.data_root)
         if args.dry_run:
@@ -3361,6 +3364,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         rollup = triage_inbox(parsed_list, data_root=data_root)
+        rollup["skipped_unparseable"] = skipped_unparseable
         print(json.dumps({"status": "ok", **rollup}, indent=2))
         return 0
 

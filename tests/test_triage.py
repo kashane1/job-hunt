@@ -1,3 +1,6 @@
+"""Tests for inbound-email → lead-status triage (bridge, classifier,
+DKIM-bound correlation, ghost scan, anti-spoof, A↔B integrity)."""
+
 from __future__ import annotations
 
 import sys
@@ -56,13 +59,36 @@ def _status(root: Path, lead_id: str, stage: str, transitions=None) -> Path:
 
 
 class StageLadderConsistencyTest(unittest.TestCase):
-    def test_ladder_matches_analytics_sequence(self) -> None:
-        # The ladder must rank STAGE_SEQUENCE in the same order — one source
-        # of truth across triage/analytics/confirmation.
+    def test_ladder_derives_from_analytics_sequence(self) -> None:
         ranks = [STAGE_LADDER[s] for s in STAGE_SEQUENCE]
         self.assertEqual(ranks, sorted(ranks))
         self.assertEqual(STAGE_LADDER["not_applied"], 0)
         self.assertLess(STAGE_LADDER["applied"], STAGE_LADDER["offer"])
+
+    def test_confirmation_priority_agrees_with_tracking_ladder(self) -> None:
+        # The real cross-model risk: confirmation._PRIORITY (its hand-kept
+        # lifecycle ladder) drifting out of order with the tracking funnel
+        # ladder for the events that flow through BOTH. Assert no inversion:
+        # for every event pair whose tracking targets are ladder-ranked, the
+        # confirmation priority order must not contradict the ladder order.
+        from job_hunt.confirmation import _EVENT_TO_LIFECYCLE, _PRIORITY
+        from job_hunt.triage import _EVENT_TO_STAGE
+
+        events = [
+            e for e, s in _EVENT_TO_STAGE.items()
+            if s in STAGE_LADDER and e in _EVENT_TO_LIFECYCLE
+        ]
+        for a in events:
+            for b in events:
+                la, lb = STAGE_LADDER[_EVENT_TO_STAGE[a]], STAGE_LADDER[_EVENT_TO_STAGE[b]]
+                pa = _PRIORITY[_EVENT_TO_LIFECYCLE[a]]
+                pb = _PRIORITY[_EVENT_TO_LIFECYCLE[b]]
+                if la < lb:
+                    self.assertLessEqual(
+                        pa, pb,
+                        f"ladder says {a}<{b} but confirmation._PRIORITY "
+                        f"disagrees ({pa} vs {pb}) — cross-model drift",
+                    )
 
 
 class BridgeEventTest(unittest.TestCase):
@@ -311,7 +337,7 @@ class BridgeRecruiterTest(unittest.TestCase):
                 _rmail("", "take-home"), RecruiterClass("assessment_request", "take-home"),
                 lead_id="L1", data_root=root,
             )
-            self.assertEqual(r.outcome, "noop_backward")
+            self.assertEqual(r.outcome, "noop_no_stage")
             self.assertEqual(read_json(p)["current_stage"], "phone_screen")
 
     def test_phone_screen_advances(self) -> None:

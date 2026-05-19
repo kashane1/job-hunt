@@ -1,3 +1,5 @@
+"""Tests for the propose-only scoring calibration learning loop."""
+
 from __future__ import annotations
 
 import sys
