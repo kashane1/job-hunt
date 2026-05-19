@@ -58,10 +58,41 @@ python3 scripts/job_hunt.py calibrate-scoring
 
 Quarantined messages land in `data/applications/_suspicious/*.json`
 (redacted) and are counted by `check-integrity`
-(`quarantined_confirmations`). Review them by hand: a real
-rejection/offer from a recruiter on a non-allowlisted domain is the
-expected case here — promote it by running the manual
-`update-status` for that lead after you have verified the email.
+(`quarantined_confirmations`). A real rejection/offer from a recruiter on a
+non-allowlisted domain is the expected case here. Resolve it through the
+`triage-review-*` triad (agent-native parity with discovery `review-*`):
+
+```bash
+# 1. List quarantined entries, each with a re-derived {lead_id, stage}
+#    proposal (subject/body are NOT echoed — PII hygiene).
+python3 scripts/job_hunt.py triage-review-list
+
+# 2. Propose for one message (ZERO writes — inspect before applying).
+python3 scripts/job_hunt.py triage-review-promote <message_id>
+#    → {"status":"proposed","proposal":{lead_id,to_stage,matched_rule,...}}
+
+# 3. Apply. The proposal is derived from the SUBJECT only (the body is
+#    never persisted), so when correlation/classification is not
+#    confident, supply --lead / --stage explicitly after verifying the
+#    email in Gmail. --confirm is mandatory to write anything.
+python3 scripts/job_hunt.py triage-review-promote <message_id> --confirm
+python3 scripts/job_hunt.py triage-review-promote <message_id> \
+    --lead L1 --stage rejected --confirm
+
+# Not a real outcome (spam / mis-sent)? Dismiss with a mandatory reason.
+python3 scripts/job_hunt.py triage-review-dismiss <message_id> \
+    --reason "recruiter spam, not an outcome for any lead"
+```
+
+Promote bridges Model B through the same locked, idempotent
+`_bridge_to_stage` as `triage-inbox` (re-promoting is a `noop_duplicate`,
+never a double transition; contention keeps the file for a safe retry).
+Resolving an entry — promote *or* dismiss — deletes the quarantine file and
+appends the action to `data/applications/_suspicious/.audit.jsonl`, so
+`check-integrity.quarantined_confirmations` reflects only *unresolved*
+entries (the count no longer grows monotonically). The audit log is a
+dotted `.jsonl`, deliberately outside the `_suspicious/*.json` glob, so it
+never re-inflates the count.
 
 ## Divergence / replay
 

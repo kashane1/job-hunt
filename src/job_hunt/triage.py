@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -47,6 +48,7 @@ from .tracking import (
 from .utils import (
     FileLockContentionError,
     StructuredError,
+    ensure_dir,
     file_lock,
     now_iso,
     read_json,
@@ -62,6 +64,7 @@ TRIAGE_ERROR_CODES: Final = frozenset({
     "triage_unbridged",
     "triage_sender_unverified",
     "triage_invalid_input",
+    "triage_quarantine_not_found",
 })
 
 
@@ -686,3 +689,261 @@ def scan_ghost_timeouts(
         out.append({"lead_id": lead_id, "outcome": r.outcome,
                     "from_stage": r.from_stage})
     return out
+
+
+# =============================================================================
+# Phase 4 (todo 070) — quarantine review triad: list / promote / dismiss
+#
+# `confirmation._quarantine` stores sender/subject/message_id/auth-results but
+# NO lead_id and NO proposed stage (it quarantined *because* correlation was
+# not confident). This surface re-runs the pure `correlate_recruiter` +
+# `classify_recruiter_email` over the stored fields to PROPOSE
+# `{lead_id, to_stage, matched_rule}`; it applies only under an explicit
+# `confirm` (propose-by-default — outcomes are never silently bridged, per
+# AGENTS.md anti-spoof), then GCs the quarantine file so `check-integrity`
+# stops counting it (the monotonic-growth bug). Mirrors discovery's
+# `review-list/-promote/-dismiss` triad for agent-native parity.
+# =============================================================================
+
+# Quarantine filenames are `<safe_message_id>.json`, where safe_message_id is
+# this exact substitution (kept byte-identical to confirmation._quarantine so
+# a stored file is always addressable by its original Message-ID). `/` is in
+# the negated class → it becomes `_`, so a Message-ID can never introduce a
+# path separator; the resolved-parent fence below is defense-in-depth.
+_QUARANTINE_SAFE_RE: Final = re.compile(r"[^A-Za-z0-9_.-]")
+
+# Dotted .jsonl extension → NOT matched by check-integrity's
+# `_suspicious/*.json` glob, so the durable audit trail never re-inflates
+# `quarantined_confirmations` after an entry is resolved.
+_QUARANTINE_AUDIT_NAME: Final = ".audit.jsonl"
+
+
+def _suspicious_dir(data_root: Path) -> Path:
+    return data_root / "applications" / "_suspicious"
+
+
+def _quarantine_path(data_root: Path, message_id: str) -> Path:
+    """Resolve a quarantine file from a (untrusted) Message-ID, fail-closed
+    against path traversal — the same sanitization confirmation._quarantine
+    used to write it, plus a resolved-parent containment check."""
+    qdir = _suspicious_dir(data_root)
+    safe = _QUARANTINE_SAFE_RE.sub("_", message_id or "no_message_id")
+    path = (qdir / f"{safe}.json").resolve()
+    if path.parent != qdir.resolve():
+        raise TriageError(
+            f"Refusing out-of-quarantine path for message_id {message_id!r}",
+            error_code="triage_invalid_input",
+            remediation="message_id must address a file inside _suspicious/.",
+        )
+    return path
+
+
+def _parsed_from_quarantine(q: dict) -> ParsedEmail:
+    """Reconstruct a ParsedEmail from stored quarantine fields. ``body`` was
+    never persisted (privacy) → empty; re-redact the subject defensively
+    (confirmation-path quarantines are not pre-redacted)."""
+    return redact_email(ParsedEmail(
+        sender=str(q.get("sender", "")),
+        message_id=str(q.get("message_id", "")),
+        subject=str(q.get("subject", "")),
+        body="",
+        authentication_results=str(q.get("authentication_results", "")),
+        event_type="submitted",
+        posting_url=q.get("posting_url"),
+        indeed_jk=q.get("indeed_jk"),
+    ))
+
+
+def _derive_proposal(
+    q: dict, index: CorrelationIndex
+) -> dict:
+    """Best-effort {lead_id, to_stage, label, matched_rule, correlation}
+    re-derived from the stored (subject-only) fields. ``derivable`` is True
+    only when BOTH a lead and a stage resolve without human override."""
+    parsed = _parsed_from_quarantine(q)
+    cor = correlate_recruiter(parsed, index)
+    klass = classify_recruiter_email(parsed)
+    to_stage = _RECRUITER_LABEL_TO_STAGE.get(klass.label)
+    return {
+        "lead_id": cor.lead_id,
+        "to_stage": to_stage,
+        "label": klass.label,
+        "matched_rule": klass.matched_rule,
+        "correlation": cor.decision,
+        "derivable": cor.lead_id is not None and to_stage is not None,
+    }
+
+
+def list_triage_quarantine(data_root: Path | None = None) -> list[dict]:
+    """Enumerate `_suspicious/` triage entries with a re-derived promotion
+    proposal each (the agent/human reads this to decide promote vs dismiss).
+    Subject/body are intentionally NOT echoed (PII hygiene — `matched_rule`
+    is a fixed classifier phrase, safe to surface)."""
+    data_root = data_root or (repo_root() / "data")
+    qdir = _suspicious_dir(data_root)
+    out: list[dict] = []
+    if not qdir.is_dir():
+        return out
+    index = build_correlation_index(data_root)
+    for sp in sorted(qdir.glob("*.json")):
+        try:
+            q = read_json(sp)
+        except Exception:
+            continue
+        out.append({
+            "message_id": q.get("message_id", sp.stem),
+            "reason": q.get("reason", ""),
+            "sender": q.get("sender", ""),
+            "quarantined_at": q.get("quarantined_at", ""),
+            "proposal": _derive_proposal(q, index),
+        })
+    return out
+
+
+def _append_quarantine_audit(data_root: Path, record: dict) -> None:
+    qdir = _suspicious_dir(data_root)
+    ensure_dir(qdir)
+    audit = qdir / _QUARANTINE_AUDIT_NAME
+    line = json.dumps({**record, "ts": now_iso()}, sort_keys=True)
+    with file_lock(audit, check_mtime=False):
+        with audit.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+
+
+def promote_triage_quarantine(
+    data_root: Path,
+    message_id: str,
+    *,
+    lead_id_override: str | None = None,
+    stage_override: str | None = None,
+    confirm: bool = False,
+) -> dict:
+    """Propose (default) or, with ``confirm``, apply a quarantined outcome.
+
+    Re-derives `{lead_id, to_stage}` from the stored fields. Without
+    ``confirm`` this is ZERO-write: it returns the proposal so the
+    agent/human can inspect it (parity with `triage-inbox --dry-run`). With
+    ``confirm`` it requires a resolved lead AND stage (caller supplies
+    `--lead`/`--stage` when re-derivation is not confident), bridges Model B
+    via the shared locked `_bridge_to_stage`, deletes the quarantine file
+    (so `check-integrity` stops counting it), and writes an audit line.
+    """
+    path = _quarantine_path(data_root, message_id)
+    if not path.exists():
+        raise TriageError(
+            f"No quarantine entry for message_id {message_id!r}",
+            error_code="triage_quarantine_not_found",
+            remediation="Run triage-review-list to see resolvable entries.",
+        )
+    q = read_json(path)
+    index = build_correlation_index(data_root)
+    proposal = _derive_proposal(q, index)
+
+    resolved_lead = lead_id_override or proposal["lead_id"]
+    resolved_stage = stage_override or proposal["to_stage"]
+
+    if not confirm:
+        return {
+            "status": "proposed",
+            "applied": False,
+            "message_id": q.get("message_id", message_id),
+            "proposal": proposal,
+            "resolved_lead_id": resolved_lead,
+            "resolved_stage": resolved_stage,
+        }
+
+    if resolved_lead is None:
+        raise TriageError(
+            f"Cannot resolve a lead for message_id {message_id!r} "
+            f"(correlation={proposal['correlation']})",
+            error_code="triage_no_correlation",
+            remediation="Re-run with --lead <lead_id> after verifying the email.",
+        )
+    if resolved_stage is None:
+        raise TriageError(
+            f"Cannot resolve a stage for message_id {message_id!r} "
+            f"(label={proposal['label']})",
+            error_code="triage_low_confidence",
+            remediation="Re-run with --stage <stage> after verifying the email.",
+        )
+    if resolved_stage not in VALID_STAGES:
+        raise TriageError(
+            f"Invalid stage {resolved_stage!r}",
+            error_code="triage_invalid_input",
+            remediation=f"--stage must be one of {sorted(VALID_STAGES)}.",
+        )
+
+    # Deterministic event_id with a distinct `review_promote` discriminator so
+    # re-promoting is idempotent AND it never dedups against a later genuine
+    # allowlisted confirmation for the same lead.
+    eid = hashlib.sha256(
+        f"gmail:{q.get('message_id') or '<no-id>'}:review_promote:{resolved_stage}".encode()
+    ).hexdigest()
+    note_src = proposal["matched_rule"] or stage_override or "manual"
+    result = _bridge_to_stage(
+        lead_id=resolved_lead, target=resolved_stage,
+        note=f"triage-review-promote:{proposal['label']}({note_src})",
+        event_id=eid, data_root=data_root,
+    )
+    # Contention is the one non-terminal outcome — keep the file so a retry
+    # can still resolve it. Everything else (advanced / duplicate / terminal /
+    # backward) is a decided state: GC the file + record the audit trail.
+    if result.outcome != "skipped_contention":
+        path.unlink(missing_ok=True)
+        _append_quarantine_audit(data_root, {
+            "action": "promote",
+            "message_id": q.get("message_id", message_id),
+            "lead_id": resolved_lead,
+            "to_stage": resolved_stage,
+            "outcome": result.outcome,
+            "label": proposal["label"],
+            "overridden": bool(lead_id_override or stage_override),
+        })
+    return {
+        "status": "ok",
+        "applied": result.outcome != "skipped_contention",
+        "message_id": q.get("message_id", message_id),
+        "outcome": result.outcome,
+        "lead_id": resolved_lead,
+        "from_stage": result.from_stage,
+        "to_stage": resolved_stage,
+        "event_id": eid,
+        "inferred_skip": result.inferred_skip,
+    }
+
+
+def dismiss_triage_quarantine(
+    data_root: Path,
+    message_id: str,
+    *,
+    reason: str,
+) -> dict:
+    """Discard a quarantined entry with a mandatory audit reason. Deletes the
+    file (so `check-integrity` stops counting it) and appends the reason to
+    the audit log — discarding an outcome is a trust decision and must be
+    explainable after the fact (stricter than discovery's optional reason)."""
+    if not (reason or "").strip():
+        raise TriageError(
+            "Dismissing a quarantined outcome requires a --reason",
+            error_code="triage_invalid_input",
+            remediation="Re-run with --reason '<why this is not a real outcome>'.",
+        )
+    path = _quarantine_path(data_root, message_id)
+    if not path.exists():
+        raise TriageError(
+            f"No quarantine entry for message_id {message_id!r}",
+            error_code="triage_quarantine_not_found",
+            remediation="Run triage-review-list to see resolvable entries.",
+        )
+    q = read_json(path)
+    path.unlink(missing_ok=True)
+    _append_quarantine_audit(data_root, {
+        "action": "dismiss",
+        "message_id": q.get("message_id", message_id),
+        "reason": reason.strip(),
+    })
+    return {
+        "status": "ok",
+        "dismissed": True,
+        "message_id": q.get("message_id", message_id),
+    }

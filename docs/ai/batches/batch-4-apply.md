@@ -73,6 +73,6 @@ Per-attempt records under `data/applications/{draft_id}/attempts/{iso_ts}-{uuid8
 - `stale_in_progress_attempts`: any attempt with `status=in_progress` older than `stale_attempt_threshold_minutes`
 - `stale_inferred_bank_entries`: `source=inferred, reviewed=false` answer-bank entries older than 30 days
 - `orphan_checkpoints_dirs`: `data/applications/*/checkpoints/` without a sibling `plan.json` or `status.json`
-- `quarantined_confirmations`: count of `data/applications/_suspicious/*.json` (informational; clear after manual review)
+- `quarantined_confirmations`: count of *unresolved* `data/applications/_suspicious/*.json` (informational). Resolve via the `triage-review-list/-promote/-dismiss` triad — promote/dismiss delete the file and append to `_suspicious/.audit.jsonl` (a dotted `.jsonl`, outside the `*.json` glob), so the count reflects only the open queue and no longer grows monotonically.
 - `retention_overdue_drafts`: drafts past `apply_policy.retention_days` (default 365) — candidates for `prune-applications`
 - `playbook_missing_checkpoint_sequence`: any per-surface playbook referenced by `plan.surface` but missing the YAML frontmatter (Phase 9 hard-fail per the deepening doc)
