@@ -192,5 +192,149 @@ class AnalyticsHistoryTest(unittest.TestCase):
         ]), "t2")
 
 
+from job_hunt.triage import (  # noqa: E402
+    bridge_recruiter,
+    build_correlation_index,
+    classify_recruiter_email,
+    correlate_recruiter,
+    dkim_pass_domain,
+    redact_email,
+    registrable_domain,
+)
+
+
+def _rmail(subject: str, body: str, *, auth: str = "", mid: str = "r1") -> ParsedEmail:
+    return ParsedEmail(
+        sender="recruiting@acme.com", message_id=mid, subject=subject,
+        body=body, authentication_results=auth, event_type="submitted",
+        posting_url=None, indeed_jk=None,
+    )
+
+
+class ClassifierTest(unittest.TestCase):
+    def test_truth_table(self) -> None:
+        cases = {
+            "We're excited to offer you the role": "offer",
+            "Please complete the take-home coding challenge": "assessment_request",
+            "Let's schedule a quick chat with the recruiter — phone screen": "phone_screen",
+            "Invitation: onsite interview next round": "interview",
+            "We regret to inform you we are not moving forward": "rejection",
+            "Your account statement is ready": "unknown",
+        }
+        for body, expected in cases.items():
+            self.assertEqual(classify_recruiter_email(_rmail("", body)).label, expected)
+
+    def test_offer_beats_rejection_in_mixed_email(self) -> None:
+        c = classify_recruiter_email(_rmail("", "we regret... but your offer letter attached"))
+        self.assertEqual(c.label, "offer")
+
+    def test_matched_rule_recorded_for_audit(self) -> None:
+        c = classify_recruiter_email(_rmail("", "regret to inform"))
+        self.assertEqual(c.matched_rule, "regret to inform")
+
+
+class RedactionTest(unittest.TestCase):
+    def test_strips_pii_and_html_in_subject_and_body(self) -> None:
+        p = _rmail("ping me@x.com", "<p>call +1 (415) 555-1234</p> me@x.com")
+        r = redact_email(p)
+        for blob in (r.subject, r.body):
+            self.assertNotIn("me@x.com", blob)
+            self.assertNotIn("555-1234", blob)
+        self.assertNotIn("<p>", r.body)
+        # frozen dataclass not mutated in place
+        self.assertEqual(p.body, "<p>call +1 (415) 555-1234</p> me@x.com")
+
+    def test_body_size_bounded(self) -> None:
+        r = redact_email(_rmail("s", "x" * (300 * 1024)))
+        self.assertLessEqual(len(r.body), 256 * 1024)
+
+
+class RegistrableDomainTest(unittest.TestCase):
+    def test_lookalikes_do_not_reduce_to_company(self) -> None:
+        self.assertEqual(registrable_domain("jobs.stripe.com"), "stripe.com")
+        self.assertNotEqual(registrable_domain("stripe-careers.com"), "stripe.com")
+        self.assertEqual(registrable_domain("stripe.com.evil.net"), "evil.net")
+        self.assertEqual(registrable_domain("careers.foo.co.uk"), "foo.co.uk")
+
+    def test_dkim_domain_only_on_pass(self) -> None:
+        self.assertEqual(
+            dkim_pass_domain("spf=pass; dkim=pass header.d=acme.com"), "acme.com")
+        self.assertIsNone(dkim_pass_domain("dkim=fail header.d=acme.com"))
+        self.assertIsNone(dkim_pass_domain(""))
+
+
+class CorrelateRecruiterTest(unittest.TestCase):
+    def _index(self, tmp: Path):
+        (tmp / "companies").mkdir(parents=True)
+        write_json(tmp / "companies" / "c1.json", {
+            "company_id": "c1", "company_name": "Acme",
+            "source_urls": ["https://www.acme.com/about"],
+        })
+        (tmp / "leads").mkdir(parents=True)
+        write_json(tmp / "leads" / "L1.json", {
+            "lead_id": "L1", "company": "Acme Corp", "company_research_id": "c1",
+        })
+        return build_correlation_index(tmp)
+
+    def test_dkim_domain_match_resolves_single_lead(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            idx = self._index(Path(t))
+            e = _rmail("Acme update", "Hi from Acme recruiting",
+                       auth="dkim=pass header.d=acme.com")
+            r = correlate_recruiter(e, idx)
+            self.assertEqual((r.decision, r.lead_id), ("match", "L1"))
+
+    def test_spoofed_from_with_unrelated_dkim_is_unmatched(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            idx = self._index(Path(t))
+            # Attacker controls evil.com, name-drops Acme in the body.
+            e = _rmail("Acme: rejection", "regret to inform — Acme",
+                       auth="dkim=pass header.d=evil.com")
+            self.assertEqual(correlate_recruiter(e, idx).decision, "no_match")
+
+    def test_no_dkim_pass_is_sender_unverified(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            idx = self._index(Path(t))
+            self.assertEqual(
+                correlate_recruiter(_rmail("Acme", "Acme"), idx).decision,
+                "sender_unverified",
+            )
+
+
+class BridgeRecruiterTest(unittest.TestCase):
+    def test_assessment_request_does_not_change_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            p = _status(root, "L1", "phone_screen")
+            from job_hunt.triage import RecruiterClass
+            r = bridge_recruiter(
+                _rmail("", "take-home"), RecruiterClass("assessment_request", "take-home"),
+                lead_id="L1", data_root=root,
+            )
+            self.assertEqual(r.outcome, "noop_backward")
+            self.assertEqual(read_json(p)["current_stage"], "phone_screen")
+
+    def test_phone_screen_advances(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            _status(root, "L1", "applied")
+            from job_hunt.triage import RecruiterClass
+            r = bridge_recruiter(
+                _rmail("", "phone screen"), RecruiterClass("phone_screen", "phone screen"),
+                lead_id="L1", data_root=root,
+            )
+            self.assertEqual((r.outcome, r.to_stage), ("advanced", "phone_screen"))
+
+
+class TrustInvariantTest(unittest.TestCase):
+    def test_triage_module_has_no_llm_or_runtime_config(self) -> None:
+        src = (SRC / "job_hunt" / "triage.py").read_text(encoding="utf-8")
+        for forbidden in ("import openai", "import anthropic",
+                          "from openai", "from anthropic",
+                          "os.environ", "argparse"):
+            self.assertNotIn(forbidden, src,
+                             f"triage.py must stay pure/deterministic: {forbidden!r}")
+
+
 if __name__ == "__main__":
     unittest.main()
