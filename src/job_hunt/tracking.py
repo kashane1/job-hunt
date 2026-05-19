@@ -370,6 +370,7 @@ def check_integrity(data_root: Path) -> dict:
     quarantined_confirmations: list[dict] = []
     retention_overdue_drafts: list[dict] = []
     playbook_missing_checkpoint_sequence: list[dict] = []
+    unsanitized_checkpoint_screenshots: list[dict] = []
 
     apps_root = data_root / "applications"
     if apps_root.is_dir():
@@ -387,6 +388,23 @@ def check_integrity(data_root: Path) -> dict:
             # Orphan checkpoints/ dir without a plan.json or status.json
             if checkpoints_dir.is_dir() and not (plan_path.exists() or status_path.exists()):
                 orphan_checkpoints_dirs.append({"path": str(checkpoints_dir)})
+
+            # Checkpoint PNGs must carry the sanitized_at provenance tag —
+            # see screenshot_sanitizer (todo 045). A missing tag means a raw,
+            # PII-bearing screenshot was written without passing through the
+            # blur pass. Detection is stdlib-only (no Pillow import here).
+            if checkpoints_dir.is_dir():
+                from .screenshot_sanitizer import is_sanitized_png
+                for png_path in sorted(checkpoints_dir.glob("*.png")):
+                    try:
+                        png_bytes = png_path.read_bytes()
+                    except OSError:
+                        continue
+                    if not is_sanitized_png(png_bytes):
+                        unsanitized_checkpoint_screenshots.append({
+                            "draft_id": draft_dir.name,
+                            "path": str(png_path),
+                        })
 
             if attempts_dir.is_dir():
                 for ap in attempts_dir.glob("*.json"):
@@ -484,6 +502,7 @@ def check_integrity(data_root: Path) -> dict:
         "quarantined_confirmations": quarantined_confirmations,
         "retention_overdue_drafts": retention_overdue_drafts,
         "playbook_missing_checkpoint_sequence": playbook_missing_checkpoint_sequence,
+        "unsanitized_checkpoint_screenshots": unsanitized_checkpoint_screenshots,
     }
     # Quarantined confirmations are informational, not pass/fail.
     informational = {"unreferenced_companies", "quarantined_confirmations"}

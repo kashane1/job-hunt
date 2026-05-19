@@ -93,9 +93,11 @@ After all declared fields are filled, sleep `min(bundle.humanize.page_advance.po
 - If Indeed exposes only a text-area cover-letter prompt, pause for manual review in v1 and record `cover_letter_status=text_area_not_supported`.
 
 ## Step 5: Pre-submit screenshot
-- Screenshot the form area ONLY (exclude browser chrome, tabs, extension popups).
-- Run the post-capture PIL blur pass on regions matching address/phone/email regex.
-- Save to `data/applications/{draft_id}/checkpoints/pre_submit.png`.
+- Screenshot the form area ONLY (exclude browser chrome, tabs, extension popups). Write the **raw** capture to a temp path — never directly into `checkpoints/`.
+- Derive PII regions: run name/address/phone/email regex over `mcp__Claude_in_Chrome__get_page_text`; for each hit, get its pixel box via `read_page` / `find`.
+- Sanitize into the checkpoint path (Gaussian-blurs every region, stamps the `sanitized_at` tag):
+  `python3 scripts/job_hunt.py sanitize-screenshot --input /tmp/raw_pre_submit.png --output data/applications/{draft_id}/checkpoints/pre_submit.png --regions '[[l,t,r,b], ...]'`
+- NEVER write an unsanitized PNG into `checkpoints/` — `check-integrity` flags any checkpoint PNG missing `sanitized_at` (`unsanitized_checkpoint_screenshots`).
 - `checkpoint-update` to `ready_to_submit`.
 
 ## Step 6: Human submit gate (v4 — ALL tiers pause here)
@@ -116,7 +118,7 @@ The user reviews the form in their Chrome window and clicks Submit themselves. T
 
 ## Step 8: Confirmation capture
 If the poll succeeded:
-- Screenshot the post-submit page (cropped + PII-blurred per Step 5) → `checkpoints/post_submit.png`.
+- Screenshot the post-submit page to a temp path, then `sanitize-screenshot` it into `checkpoints/post_submit.png` (same region-derivation + sanitize as Step 5; never write the raw PNG into `checkpoints/`).
 - Update the current attempt file: `status=submitted_provisional, checkpoint=confirmation_captured`. Merge `correlation_keys.submitted_at=<now>` into `plan.json`.
 - Call: `record-attempt --draft-id X --attempt-file /tmp/…`. Full schema validation runs here; earlier `checkpoint-update` calls were lightweight.
 

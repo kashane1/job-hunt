@@ -1694,6 +1694,18 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--schema", required=True)
     verify.add_argument("--artifact", required=True)
 
+    sanitize_ss = subparsers.add_parser(
+        "sanitize-screenshot",
+        help="Blur PII regions in a checkpoint screenshot and stamp sanitized_at",
+    )
+    sanitize_ss.add_argument("--input", required=True, help="Path to the raw screenshot PNG")
+    sanitize_ss.add_argument("--output", required=True, help="Path to write the sanitized PNG")
+    sanitize_ss.add_argument(
+        "--regions",
+        default="[]",
+        help='JSON array of [left,top,right,bottom] pixel boxes for PII regions',
+    )
+
     # --- Tracking commands ---
     update_st = subparsers.add_parser("update-status", help="Advance an application to a new stage")
     update_st.add_argument("--lead", required=True, help="Path to lead JSON file")
@@ -1839,6 +1851,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Find patterns in terminal applications (rejected, ghosted, withdrawn)",
     )
     rej_parser.add_argument("--data-root", default="data")
+
+    # Learning loop: propose (never apply) scoring.yaml + evidence deltas
+    calib_parser = subparsers.add_parser(
+        "calibrate-scoring",
+        help=(
+            "Propose scoring.yaml + profile-evidence changes from outcome "
+            "analytics. Writes a reviewable proposal only — NEVER edits "
+            "scoring.yaml (apply changes by hand)."
+        ),
+    )
+    calib_parser.add_argument("--data-root", default="data")
+    calib_parser.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    calib_parser.add_argument("--scoring-config", default="config/scoring.yaml")
+    calib_parser.add_argument("--taxonomy", default="config/skills-taxonomy.yaml")
+    calib_parser.add_argument("--excluded", default="profile/skills-excluded.yaml")
+    calib_parser.add_argument("--out-dir", default="", help="Default: <data-root>/calibration")
 
     # ----- Batch 3: active job discovery -----
     disc_parser = subparsers.add_parser(
@@ -2259,6 +2287,44 @@ def main(argv: list[str] | None = None) -> int:
         verify_artifact(Path(args.schema), Path(args.artifact))
         return 0
 
+    if args.command == "sanitize-screenshot":
+        from .screenshot_sanitizer import (
+            BoundingBox,
+            ScreenshotSanitizerError,
+            sanitize,
+            sanitized_at_tag,
+        )
+
+        try:
+            raw_regions = json.loads(args.regions)
+            if not isinstance(raw_regions, list):
+                raise ScreenshotSanitizerError(
+                    "--regions must be a JSON array of [l,t,r,b] boxes",
+                    error_code="invalid_region",
+                )
+            regions = [BoundingBox.from_iterable(r) for r in raw_regions]
+            try:
+                image_bytes = Path(args.input).read_bytes()
+            except OSError as exc:
+                raise ScreenshotSanitizerError(
+                    f"Could not read input screenshot: {exc}",
+                    error_code="invalid_image",
+                ) from exc
+            out_bytes = sanitize(image_bytes, regions)
+            out_path = Path(args.output)
+            ensure_dir(out_path.parent)
+            out_path.write_bytes(out_bytes)
+        except ScreenshotSanitizerError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps({
+            "status": "ok",
+            "output_path": str(out_path),
+            "regions_count": len(regions),
+            "sanitized_at": sanitized_at_tag(out_bytes),
+        }, indent=2))
+        return 0
+
     # --- Tracking commands ---
     if args.command == "update-status":
         from .tracking import create_application_status, update_application_status
@@ -2523,6 +2589,22 @@ def main(argv: list[str] | None = None) -> int:
         from .analytics import report_rejection_patterns
 
         result = report_rejection_patterns(Path(args.data_root))
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "calibrate-scoring":
+        from .calibration import propose_calibration
+
+        profile_path = Path(args.profile)
+        profile = read_json(profile_path) if profile_path.exists() else {}
+        result = propose_calibration(
+            Path(args.data_root),
+            profile,
+            load_yaml_file(Path(args.scoring_config), {}),
+            taxonomy_path=Path(args.taxonomy),
+            excluded_path=Path(args.excluded),
+            out_dir=Path(args.out_dir) if args.out_dir else None,
+        )
         print(json.dumps(result, indent=2))
         return 0
 
