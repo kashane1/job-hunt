@@ -91,6 +91,33 @@ Option 1. Spike in the week before Phase 1a. Findings inform the "Artifact Shape
   fills the findings doc. Field-taxonomy probe is cross-referenced to
   `schemas/application-plan.schema.json` `fields[]` so the schema-churn
   go/no-go signal is unambiguous.
+- 2026-05-18: **Constrained live run** (operator present; Chrome connected
+  to the operator's *real* job-search Indeed account → read-only only;
+  Probe 5 anti-bot explicitly skipped to protect the real account).
+  - **Probe 4 (Gmail DSL): DONE.** `newer_than:`/`after:` accepted;
+    `since:` silently no-ops (not an error — worse). Cross-cutting: the
+    connected Gmail MCP is a **thread API (`search_threads`/`get_thread`)
+    with no `historyId`** → Phase 8's history-cursor design is not
+    implementable as written; must cursor via `nextPageToken` + date
+    window. Zero-result responses are `{}` (no `threads` key).
+  - **Probe 1: PARTIAL.** Read-only tool shapes captured
+    (`navigate` does not block on load; `get_page_text` is flat + keeps
+    `&nbsp;`; `read_page`/`find` are **ref-handle based and return NO
+    pixel bounding boxes**). Mutating tools deferred — not fabricated.
+  - **Probe 2: PARTIAL.** Employer-custom screening questions are
+    readable on the `viewjob` page itself (1/5 posting captured; all map
+    to existing enum). Standard modal fields unseen → schema-lock still
+    blocked.
+  - **Probes 3 & 5: deferred** (require entering the apply flow / a
+    disposable test account).
+  - **Plan-assumption breaks found (do not need the test account):**
+    (1) Gmail = thread API, no `historyId` (Phase 8). (2) `find`/`read_page`
+    return refs, not pixel boxes → the `sanitize-screenshot --regions`
+    coordinate source assumed by Phase 5 / todo 045 **does not exist** in
+    the probed Claude-in-Chrome surface; Phase 5 needs a geometry tool or
+    a full-frame-redaction strategy. Both recorded in the findings doc.
+  Remaining to close 046: disposable **test-account** run for Probes
+  1(mutating)/2(modal)/3/5.
 
 ## Resources
 

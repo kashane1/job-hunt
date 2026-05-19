@@ -1,11 +1,13 @@
 ---
-status: complete
+status: pending
 priority: p1
 issue_id: 045
 tags: [code-review, security, privacy, indeed-auto-apply]
-dependencies: []
+dependencies: ["046"]
 decided_at: 2026-04-17
 decision: option-1-pillow
+reopened_at: 2026-05-18
+reopen_reason: spike found no pixel-coordinate source for the blur regions
 ---
 
 # Screenshot PII hardening — DECIDED: Option 1 (Pillow + sanitizer module)
@@ -74,7 +76,41 @@ Option 1. Pillow is a reasonable first non-stdlib dep given the security value; 
 - Updated playbook: Phase 5 playbooks call `sanitize()` before writing checkpoint PNG
 - Test: fixture image with known PII regions → verify output has those regions blurred
 
-## Acceptance Criteria
+## REOPENED 2026-05-18 — the blur regions have no coordinate source
+
+The sanitizer *module* is done and correct (original 5 criteria below all
+hold). But todo 046's constrained live spike found that the
+Claude-in-Chrome tools the Phase 5 playbooks rely on to produce the
+`--regions '[[l,t,r,b],…]]'` argument — `find` / `read_page` — return
+**`ref` element handles, not pixel bounding boxes**. So `sanitize()` is
+fed by a contract with **no observed producer**: the playbook step
+"derive PII regions via `read_page`/`find`" cannot actually yield pixel
+boxes. Screenshot PII hardening is therefore **not end-to-end real** yet,
+which is why this P1 is reopened rather than left closed on a
+module-only basis (privacy is load-bearing per AGENTS.md — a sanitizer
+that never receives regions blurs nothing).
+
+Resolution options (decide after the 046 test-account run probes a
+geometry tool):
+1. **Geometry tool probe** — check whether Claude-in-Chrome exposes an
+   element-rect / `inspect` call that returns pixel coords for a `ref`
+   (not yet probed; mutating-tool session). If yes, the playbook derives
+   regions from that.
+2. **Full-frame redaction** — drop region-blur; blur/scale the entire
+   form screenshot (or stop screenshotting the filled form and rely on
+   the redacted `attempts/*.json` for the audit trail). Simpler, no
+   coordinate dependency, slightly less useful as a visual artifact.
+3. **Crop-only** — capture a tight element screenshot via a per-element
+   capture API (if one exists) so the frame *is* the region.
+
+Acceptance for the reopened scope:
+- [ ] Coordinate source decided (option 1/2/3) and recorded in the plan +
+  `docs/solutions/indeed-auto-apply-spike-findings.md`.
+- [ ] Phase 5 playbook step rewritten to the chosen source (no
+  `read_page`/`find`→bbox assumption).
+- [ ] If option 1: a probe-confirmed geometry tool name + response shape.
+
+## Acceptance Criteria (original module scope — still satisfied)
 
 - [x] `src/job_hunt/screenshot_sanitizer.py` exists with `sanitize(image_bytes, regions) -> bytes`
 - [x] `pyproject.toml` declares `Pillow>=10.0`
@@ -96,6 +132,14 @@ Option 1. Pillow is a reasonable first non-stdlib dep given the security value; 
   `unsanitized_checkpoint_screenshots` via `is_sanitized_png`;
   `tests/test_screenshot_sanitizer.py` includes the Pillow-gated
   pixel-comparison test. Suite 14/14 green. All criteria met → complete.
+- 2026-05-18: **REOPENED.** todo 046's constrained live spike observed
+  that `find`/`read_page` (the Phase 5 region-derivation source) return
+  `ref` handles, **not pixel bounding boxes** — so `sanitize()`'s
+  `regions` argument has no real producer. Module stays done; the
+  end-to-end privacy guarantee does not hold. Reopened as P1 (privacy is
+  load-bearing), `dependencies: [046]` (resolution needs the test-account
+  geometry-tool probe). See `docs/solutions/indeed-auto-apply-spike-findings.md`
+  §1 cross-cutting finding.
 
 ## Resources
 
