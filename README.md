@@ -240,11 +240,21 @@ python3 scripts/job_hunt.py triage-inbox --inbox-file inbox.json
 
 # Time-based: mark stale non-terminal leads as ghosted
 python3 scripts/job_hunt.py triage-ghosts --days 21 --dry-run
+
+# Resolve the quarantine: list, propose, then apply under --confirm
+python3 scripts/job_hunt.py triage-review-list
+python3 scripts/job_hunt.py triage-review-promote <message_id>            # propose only
+python3 scripts/job_hunt.py triage-review-promote <message_id> --confirm  # apply + GC
+python3 scripts/job_hunt.py triage-review-dismiss <message_id> --reason "recruiter spam"
 ```
 
 Triage is verification-bound and anti-spoof (see AGENTS.md): outcomes from
 non-allowlisted senders quarantine to `data/applications/_suspicious/` for
-human review rather than auto-applying. The operator/agent runbook is
+human review rather than auto-applying. The `triage-review-*` triad
+re-derives a `{lead_id, stage}` proposal from the quarantined message and
+applies it only under explicit `--confirm` (`--lead`/`--stage` override when
+re-derivation is not confident); resolving an entry GCs its file. The
+operator/agent runbook is
 [`docs/guides/inbound-email-triage.md`](docs/guides/inbound-email-triage.md).
 
 All three reports use sample-size gates: `confidence: insufficient_data`

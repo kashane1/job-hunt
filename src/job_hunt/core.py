@@ -1887,6 +1887,43 @@ def build_parser() -> argparse.ArgumentParser:
     tg_parser.add_argument("--days", type=int, default=21)
     tg_parser.add_argument("--dry-run", action="store_true")
 
+    # todo 070: quarantine review triad (mirrors discovery review-*).
+    trv_list = subparsers.add_parser(
+        "triage-review-list",
+        help="List quarantined triage outcomes awaiting human promotion",
+    )
+    trv_list.add_argument("--data-root", default="data")
+
+    trv_prom = subparsers.add_parser(
+        "triage-review-promote",
+        help=(
+            "Propose a quarantined outcome's {lead_id,stage}; with --confirm "
+            "bridge it to Model B and GC the quarantine file"
+        ),
+    )
+    trv_prom.add_argument("message_id")
+    trv_prom.add_argument("--data-root", default="data")
+    trv_prom.add_argument(
+        "--lead", default="",
+        help="Override the re-derived lead_id (required if correlation is not confident)",
+    )
+    trv_prom.add_argument(
+        "--stage", default="",
+        help="Override the re-derived stage (required if classification is not confident)",
+    )
+    trv_prom.add_argument(
+        "--confirm", action="store_true",
+        help="Apply the proposal. Without it the command only proposes (zero writes).",
+    )
+
+    trv_dis = subparsers.add_parser(
+        "triage-review-dismiss",
+        help="Discard a quarantined triage entry with a mandatory audit reason",
+    )
+    trv_dis.add_argument("message_id")
+    trv_dis.add_argument("--data-root", default="data")
+    trv_dis.add_argument("--reason", default="", help="Required audit reason for the dismissal")
+
     # ----- Batch 3: active job discovery -----
     disc_parser = subparsers.add_parser(
         "discover-jobs",
@@ -3378,6 +3415,44 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps({"status": "ok", "dry_run": args.dry_run,
                           "results": results}, indent=2))
+        return 0
+
+    if args.command == "triage-review-list":
+        from .triage import list_triage_quarantine
+
+        entries = list_triage_quarantine(Path(args.data_root))
+        print(json.dumps({"status": "ok", "entries": entries}, indent=2))
+        return 0
+
+    if args.command == "triage-review-promote":
+        from .triage import promote_triage_quarantine
+        from .utils import StructuredError
+
+        try:
+            result = promote_triage_quarantine(
+                Path(args.data_root), args.message_id,
+                lead_id_override=args.lead or None,
+                stage_override=args.stage or None,
+                confirm=args.confirm,
+            )
+        except StructuredError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "triage-review-dismiss":
+        from .triage import dismiss_triage_quarantine
+        from .utils import StructuredError
+
+        try:
+            result = dismiss_triage_quarantine(
+                Path(args.data_root), args.message_id, reason=args.reason,
+            )
+        except StructuredError as exc:
+            print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
+            return 2
+        print(json.dumps(result, indent=2))
         return 0
 
     # --- Batch 4 Phase 9: retention + cleanup ---

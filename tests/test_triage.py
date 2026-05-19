@@ -460,5 +460,228 @@ class TrustInvariantTest(unittest.TestCase):
                              f"triage.py must stay pure/deterministic: {forbidden!r}")
 
 
+from job_hunt.triage import (  # noqa: E402
+    TriageError,
+    dismiss_triage_quarantine,
+    list_triage_quarantine,
+    promote_triage_quarantine,
+)
+
+
+class TriageReviewQuarantineTest(unittest.TestCase):
+    """todo 070 — the quarantine→promote/dismiss path (agent-native parity
+    with discovery review-*, GC fixes the check-integrity growth bug)."""
+
+    def _seed(self, root: Path) -> None:
+        (root / "companies").mkdir(parents=True)
+        write_json(root / "companies" / "c1.json", {
+            "company_id": "c1", "company_name": "Acme",
+            "source_urls": ["https://acme.com/careers"],
+        })
+        (root / "leads").mkdir(parents=True)
+        write_json(root / "leads" / "L1.json", {
+            "lead_id": "L1", "company": "Acme Corp", "company_research_id": "c1",
+        })
+        _status(root, "L1", "applied")
+
+    def _quarantine(self, root: Path, *, subject: str, auth: str,
+                    sender: str = "recruiter@acme.com", mid: str = "rev1") -> str:
+        from job_hunt.confirmation import _quarantine as cq
+
+        # Subject-only re-derivation: the body is never persisted, so a
+        # derivable proposal needs the company token + signal IN THE SUBJECT.
+        cq(ParsedEmail(
+            sender=sender, message_id=mid, subject=subject, body="",
+            authentication_results=auth, event_type="submitted",
+            posting_url=None, indeed_jk=None,
+        ), "triage_non_allowlisted_needs_review", data_root=root)
+        return mid
+
+    def test_list_surfaces_derivable_proposal(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            self._quarantine(root, subject="Acme — we are not moving forward",
+                             auth="dkim=pass header.d=acme.com")
+            entries = list_triage_quarantine(root)
+            self.assertEqual(len(entries), 1)
+            prop = entries[0]["proposal"]
+            self.assertEqual(prop["lead_id"], "L1")
+            self.assertEqual(prop["to_stage"], "rejected")
+            self.assertTrue(prop["derivable"])
+            # PII hygiene: the raw subject is never echoed by list.
+            self.assertNotIn("subject", entries[0])
+
+    def test_promote_without_confirm_is_zero_write(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            mid = self._quarantine(
+                root, subject="Acme — we are not moving forward",
+                auth="dkim=pass header.d=acme.com")
+            res = promote_triage_quarantine(root, mid)
+            self.assertEqual(res["status"], "proposed")
+            self.assertFalse(res["applied"])
+            # Nothing written: status untouched, quarantine file still present.
+            self.assertEqual(
+                read_json(root / "applications" / "L1-status.json")["current_stage"],
+                "applied",
+            )
+            self.assertTrue(
+                (root / "applications" / "_suspicious" / f"{mid}.json").exists())
+
+    def test_promote_confirm_bridges_gcs_and_audits(self) -> None:
+        from job_hunt.tracking import check_integrity
+
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            mid = self._quarantine(
+                root, subject="Acme — we are not moving forward",
+                auth="dkim=pass header.d=acme.com")
+            qfile = root / "applications" / "_suspicious" / f"{mid}.json"
+            self.assertEqual(len(check_integrity(root)["quarantined_confirmations"]), 1)
+
+            res = promote_triage_quarantine(root, mid, confirm=True)
+            self.assertEqual((res["status"], res["outcome"]), ("ok", "advanced"))
+            self.assertEqual(
+                read_json(root / "applications" / "L1-status.json")["current_stage"],
+                "rejected",
+            )
+            # GC: file gone, check-integrity no longer counts it, audit written.
+            self.assertFalse(qfile.exists())
+            self.assertEqual(check_integrity(root)["quarantined_confirmations"], [])
+            audit = (root / "applications" / "_suspicious" / ".audit.jsonl")
+            self.assertIn('"action": "promote"', audit.read_text())
+            # Audit dotfile must NOT itself re-inflate the integrity count.
+            self.assertEqual(check_integrity(root)["quarantined_confirmations"], [])
+
+    def test_promote_confirm_idempotent_on_event_id(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            mid = self._quarantine(
+                root, subject="Acme — we are not moving forward",
+                auth="dkim=pass header.d=acme.com")
+            promote_triage_quarantine(root, mid, confirm=True)
+            # Re-create the same quarantine file and re-promote: the
+            # deterministic event_id makes the ledger write a noop_duplicate,
+            # not a second transition.
+            self._quarantine(
+                root, subject="Acme — we are not moving forward",
+                auth="dkim=pass header.d=acme.com")
+            res2 = promote_triage_quarantine(root, mid, confirm=True)
+            self.assertEqual(res2["outcome"], "noop_duplicate")
+            self.assertEqual(
+                len(read_json(root / "applications" / "L1-status.json")["transitions"]),
+                1,
+            )
+
+    def test_confirm_requires_lead_when_uncorrelated(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            # No DKIM pass → correlation sender_unverified → no lead.
+            mid = self._quarantine(root, subject="generic notice", auth="")
+            with self.assertRaises(TriageError) as cm:
+                promote_triage_quarantine(root, mid, confirm=True)
+            self.assertEqual(cm.exception.error_code, "triage_no_correlation")
+            self.assertTrue(
+                (root / "applications" / "_suspicious" / f"{mid}.json").exists())
+
+    def test_confirm_human_override_bridges(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            mid = self._quarantine(root, subject="opaque", auth="")
+            res = promote_triage_quarantine(
+                root, mid, lead_id_override="L1",
+                stage_override="phone_screen", confirm=True)
+            self.assertEqual((res["status"], res["outcome"]), ("ok", "advanced"))
+            self.assertEqual(
+                read_json(root / "applications" / "L1-status.json")["current_stage"],
+                "phone_screen",
+            )
+
+    def test_invalid_stage_override_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            mid = self._quarantine(root, subject="opaque", auth="")
+            with self.assertRaises(TriageError) as cm:
+                promote_triage_quarantine(
+                    root, mid, lead_id_override="L1",
+                    stage_override="not_a_stage", confirm=True)
+            self.assertEqual(cm.exception.error_code, "triage_invalid_input")
+
+    def test_not_found_and_path_traversal_contained(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            with self.assertRaises(TriageError) as cm:
+                promote_triage_quarantine(root, "no-such-id", confirm=True)
+            self.assertEqual(cm.exception.error_code, "triage_quarantine_not_found")
+            # `/` sanitizes to `_`, so traversal cannot escape _suspicious/.
+            with self.assertRaises(TriageError) as cm2:
+                promote_triage_quarantine(root, "../../evil", confirm=True)
+            self.assertIn(
+                cm2.exception.error_code,
+                {"triage_quarantine_not_found", "triage_invalid_input"},
+            )
+
+    def test_dismiss_requires_reason_then_gcs_with_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            mid = self._quarantine(root, subject="spam", auth="")
+            qfile = root / "applications" / "_suspicious" / f"{mid}.json"
+            with self.assertRaises(TriageError) as cm:
+                dismiss_triage_quarantine(root, mid, reason="  ")
+            self.assertEqual(cm.exception.error_code, "triage_invalid_input")
+            self.assertTrue(qfile.exists())  # blank reason did not delete
+
+            res = dismiss_triage_quarantine(root, mid, reason="recruiter spam")
+            self.assertTrue(res["dismissed"])
+            self.assertFalse(qfile.exists())
+            audit = (root / "applications" / "_suspicious" / ".audit.jsonl")
+            self.assertIn("recruiter spam", audit.read_text())
+
+    def test_cli_round_trip(self) -> None:
+        import io
+        import json
+        from contextlib import redirect_stdout
+
+        from job_hunt.core import main
+
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._seed(root)
+            mid = self._quarantine(
+                root, subject="Acme — we are not moving forward",
+                auth="dkim=pass header.d=acme.com")
+
+            def run(argv: list[str]) -> dict:
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    rc = main(argv)
+                return rc, json.loads(buf.getvalue())
+
+            rc, listed = run(["triage-review-list", "--data-root", str(root)])
+            self.assertEqual(rc, 0)
+            self.assertEqual(listed["entries"][0]["proposal"]["lead_id"], "L1")
+
+            rc, proposed = run([
+                "triage-review-promote", mid, "--data-root", str(root)])
+            self.assertEqual((rc, proposed["status"]), (0, "proposed"))
+
+            rc, applied = run([
+                "triage-review-promote", mid, "--data-root", str(root),
+                "--confirm"])
+            self.assertEqual((rc, applied["outcome"]), (0, "advanced"))
+
+            rc, listed2 = run(["triage-review-list", "--data-root", str(root)])
+            self.assertEqual(listed2["entries"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
