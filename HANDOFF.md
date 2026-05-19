@@ -33,6 +33,33 @@ seconds (that repo is ~2 months old). Fixed at the source.
   so they now travel with the repo. Other `profile/raw/` files remain
   local-only.
 
+## Repo health (2026-05-18)
+
+The test suite is **green**: `548 tests, OK`. Verify before any work:
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+```
+
+A 2026-05-18 audit found the suite had been left red (2 failures + 1
+error) — none were production bugs, but a red suite hides real
+regressions in a trust-first system. Fixed in this session (P0):
+
+- **Mapped-IPv6 SSRF spec.** `_ip_is_disallowed` now rejects the entire
+  `::ffff:0:0/96` class explicitly and first — fail-closed and
+  deterministic across CPython versions (was relying on version-dependent
+  `is_reserved`/`is_private`, and the explicit branch was dead code). See
+  the 2026-05-18 update in
+  `docs/solutions/security-issues/pin-validated-ip-to-close-dns-rebinding-and-mapped-ipv6-ssrf.md`.
+- **Anti-bot jitter** is now a single source of truth
+  (`discovery.install_anti_bot_jitter` + `ANTI_BOT_JITTER_*`); the test
+  asserts limiter behavior/envelope, not source text (was a brittle
+  source-string match that broke on a 25→30 retune).
+- **Two networked tests** (`test_discovery` LinkedIn allowlist,
+  `test_ingestion` LinkedIn/Indeed allowlist) are now hermetic — `fetch`
+  is mocked so they assert the allowlist-gate contract deterministically
+  instead of relying on a real network call.
+
 ## How to resume
 
 1. After ANY edit to `profile/raw/*`, regenerate the normalized profile:
@@ -48,6 +75,15 @@ seconds (that repo is ~2 months old). Fixed at the source.
 
 ## Next goals
 
+Audit roadmap (2026-05-18) — P0 done, working down P1 → P2:
+
+- **P1 (in progress this session):** screenshot PII sanitizer (todo 045,
+  decided/ready); redact `_intake/failed/` content+URL leak (todo 027,
+  re-ranked P3→P1 — it's a privacy leak on disk).
+- **P2:** close the learning loop with a human-approved
+  `calibrate-scoring` (analytics → proposed `scoring.yaml`/answer-bank
+  deltas, never auto-applied); prepare the Indeed MCP/form spike harness
+  (todo 046 — live execution requires Chrome + Indeed account).
 - Resume normal job-hunt operation (discovery/apply) via the `/apply-mode`
   and `/job-title-ledger` skills — those carry the operational playbooks.
 - If any application answer still points at ai-company-os, ensure it uses
