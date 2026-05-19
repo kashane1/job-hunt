@@ -432,15 +432,18 @@ class CareerCrawlerTest(unittest.TestCase):
 
     def test_linkedin_url_is_allowlisted(self) -> None:
         # LinkedIn is allowlisted in config/domain-allowlist.yaml; discovery no
-        # longer hard-fails on hard_fail_platform. The call may still raise for
-        # other reasons (robots, anti-bot) but not with hard_fail_platform.
-        try:
-            discover_company_careers(
-                "https://linkedin.com/jobs/",
-                self.limiter, self.robots, watchlist_company="LI",
-            )
-        except DiscoveryError as exc:
-            self.assertNotEqual(exc.error_code, "hard_fail_platform")
+        # longer hard-fails on hard_fail_platform. fetch is mocked so this is
+        # hermetic: the only thing exercised is the hard-fail gate at the top
+        # of discover_company_careers, which runs before any network call. If
+        # the gate still fired it would raise hard_fail_platform before fetch.
+        with self._patch_fetch(""):
+            try:
+                discover_company_careers(
+                    "https://linkedin.com/jobs/",
+                    self.limiter, self.robots, watchlist_company="LI",
+                )
+            except DiscoveryError as exc:
+                self.assertNotEqual(exc.error_code, "hard_fail_platform")
 
 
 class ReviewFileWriterTest(unittest.TestCase):

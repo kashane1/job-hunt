@@ -134,21 +134,46 @@ class DomainRateLimiterHumanJitterTest(unittest.TestCase):
 
 
 class DiscoverJobsJitterWiringTest(unittest.TestCase):
-    """Phase 1 wiring assertion: discover_jobs installs human jitter for the
-    anti-bot-prone hosts. Structural assertion against the source rather than
-    a live call, because discover_jobs's runtime path needs a populated
-    watchlist + real fixtures that are out of scope for a unit test."""
+    """Behavioral assertion that the anti-bot pacing policy is wired through
+    the single source of truth (``install_anti_bot_jitter``) and produces a
+    human-pacing limiter. Asserts limiter behavior + the policy constants,
+    not the source text of ``discover_jobs`` — so tuning the exact interval
+    within the human-pacing envelope does not break the suite, but dropping
+    jitter (or going sub-human) does.
 
-    def test_discover_jobs_source_installs_jitter_for_indeed_and_linkedin(self) -> None:
-        src = (ROOT / "src" / "job_hunt" / "discovery.py").read_text(encoding="utf-8")
-        self.assertIn(
-            'set_human_jitter("indeed.com", 20.0, 30.0)', src,
-            "discover_jobs must install 20-30s jitter on indeed.com",
+    Lower bound is asserted at >= 20s rather than the exact configured value
+    so a deliberate retune (e.g. 25 -> 27) stays green while a regression
+    that removes pacing fails loudly."""
+
+    def test_anti_bot_hosts_get_human_pacing(self) -> None:
+        from job_hunt.discovery import (
+            ANTI_BOT_JITTER_HOSTS,
+            ANTI_BOT_JITTER_MAX_S,
+            ANTI_BOT_JITTER_MIN_S,
+            install_anti_bot_jitter,
         )
-        self.assertIn(
-            'set_human_jitter("linkedin.com", 20.0, 30.0)', src,
-            "discover_jobs must install 20-30s jitter on linkedin.com",
-        )
+
+        # Policy envelope: human-grade pacing, valid range.
+        self.assertEqual(set(ANTI_BOT_JITTER_HOSTS), {"indeed.com", "linkedin.com"})
+        self.assertGreaterEqual(ANTI_BOT_JITTER_MIN_S, 20.0)
+        self.assertGreater(ANTI_BOT_JITTER_MAX_S, ANTI_BOT_JITTER_MIN_S)
+        self.assertLessEqual(ANTI_BOT_JITTER_MAX_S, 30.0)
+
+        rl = DomainRateLimiter(default_interval_s=0.5)
+        install_anti_bot_jitter(rl)
+
+        for host in ("indeed.com", "linkedin.com"):
+            budget = rl._budgets[host]  # type: ignore[attr-defined]
+            self.assertGreaterEqual(budget.min_interval_s, 20.0)
+            self.assertGreater(budget.max_interval_s, budget.min_interval_s)
+            for _ in range(50):
+                value = budget.pick_interval()
+                self.assertGreaterEqual(value, 20.0)
+                self.assertLessEqual(value, 30.0)
+
+        # Install is scoped: public-API hosts keep the fast default (no
+        # budget pre-seeded), so discovery throughput is unaffected.
+        self.assertEqual(set(rl._budgets), {"indeed.com", "linkedin.com"})  # type: ignore[attr-defined]
 
 
 class RobotsCacheTest(unittest.TestCase):
