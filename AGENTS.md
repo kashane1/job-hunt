@@ -35,6 +35,8 @@ Every application attempt records: approval-required + obtained, account-creatio
 
 Profile documents use YAML frontmatter (`document_type`, `title`, `tags`).
 
+**Schema versioning.** Long-lived state files (cursors, caches) carry `schema_version` as an integer `const` starting at `1` (e.g. `schemas/discovery-cursor.schema.json`). Per-run / rebuildable derived artifacts do not require versioning. Migrate via a one-shot script, or delete-and-rescan when the artifact is a rebuildable derived file. (Profile/content documents predate this and use a string `schema_version` — not retrofitted.)
+
 ## Safety Overrides
 
 If runtime configuration conflicts with these defaults, prefer the stricter option unless the user explicitly asked for looser behavior in the current session.

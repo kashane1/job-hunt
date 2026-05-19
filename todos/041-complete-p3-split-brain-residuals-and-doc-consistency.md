@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "041"
 tags: [code-review, batch-3, documentation, split-brain]
@@ -56,16 +56,38 @@ From split-brain audit + pattern-recognition + data-integrity:
 
 ## Acceptance Criteria
 
-- [ ] `test_discovery_user_agent_constant_single_sourced` in Phase 1 tests.
-- [ ] AGENTS.md (or plan §Notes) documents the schema_version integer-const convention.
-- [ ] Cursor `last_run_status` enum matches code: either `partial` removed, or code writes `partial` for budget-capped.
-- [ ] `discovered_via` JSON shape example shown in plan.
+- [x] `test_discovery_user_agent_constant_single_sourced` in Phase 1 tests.
+- [x] AGENTS.md (or plan §Notes) documents the schema_version integer-const convention.
+- [x] Cursor `last_run_status` enum matches code: either `partial` removed, or code writes `partial` for budget-capped.
+- [x] `discovered_via` JSON shape example shown in plan.
 
 ## Work Log
 
 ### 2026-04-16 - Post-deepen audit
 
 **By:** learnings-researcher (split-brain), pattern-recognition-specialist, data-integrity-guardian
+
+### 2026-05-18 - Reconciliation (3 of 4 were stale)
+
+Verified each item against current code rather than the (2026-04-16) prose:
+
+1. **Already done.** `test_discovery_user_agent_constant_single_sourced`
+   exists at `tests/test_discovery.py:509` — an AST-based (not grep)
+   single-sourcing assertion, stronger than the spec asked for.
+2. **Fixed now.** Added the schema-versioning convention to AGENTS.md
+   §Document Conventions (integer `const` from `1` for long-lived state
+   files; per-run/derived artifacts unversioned; profile/content docs
+   predate it and keep string `schema_version`, not retrofitted).
+3. **Already consistent (todo claim was stale).** `discovery.py:1161`
+   *does* write `last_run_status="partial"`; the cursor schema enum
+   includes `partial`. Code and schema match — no action needed.
+4. **Already satisfied by the durable artifact.** The `discovered_via`
+   JSON shape is defined in `schemas/lead.schema.json:51` (the
+   authoritative form). Adding a duplicate prose example to a >1k-line
+   historical plan doc is explicitly discouraged by AGENTS.md §"Files
+   agents should NOT read by default" and would only create drift risk.
+
+All criteria met → complete.
 
 ## Resources
 

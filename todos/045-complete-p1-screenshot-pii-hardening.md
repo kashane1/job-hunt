@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p1
 issue_id: 045
 tags: [code-review, security, privacy, indeed-auto-apply]
@@ -76,15 +76,26 @@ Option 1. Pillow is a reasonable first non-stdlib dep given the security value; 
 
 ## Acceptance Criteria
 
-- [ ] `src/job_hunt/screenshot_sanitizer.py` exists with `sanitize(image_bytes, regions) -> bytes`
-- [ ] `pyproject.toml` declares `Pillow>=10.0`
-- [ ] Per-surface playbooks (Phase 5) call the sanitizer before checkpoint write
-- [ ] Unit test: fixture image → blurred output verified via pixel-comparison on the blurred region
-- [ ] `check-integrity` surfaces any checkpoint PNG that doesn't carry a `sanitized_at` metadata tag
+- [x] `src/job_hunt/screenshot_sanitizer.py` exists with `sanitize(image_bytes, regions) -> bytes`
+- [x] `pyproject.toml` declares `Pillow>=10.0`
+- [x] Per-surface playbooks (Phase 5) call the sanitizer before checkpoint write
+- [x] Unit test: fixture image → blurred output verified via pixel-comparison on the blurred region
+- [x] `check-integrity` surfaces any checkpoint PNG that doesn't carry a `sanitized_at` metadata tag
 
 ## Work Log
 
 - 2026-04-17: Created from technical-review pass on indeed-auto-apply plan.
+- 2026-05-18: Reconciliation — verified the decision (Option 1, Pillow) was
+  fully implemented in a prior batch but the todo was never closed (stale
+  `ready` label). Confirmed against current code: `screenshot_sanitizer.py`
+  exposes `sanitize(image_bytes, regions) -> bytes` (Gaussian r=25, stamps
+  `sanitized_at` PNG text chunk; stdlib-only detection so check-integrity
+  needs no Pillow); `pyproject.toml` declares `Pillow>=10.0`;
+  indeed/linkedin/workday playbooks call `sanitize-screenshot` before
+  checkpoint write; `tracking.check_integrity` reports
+  `unsanitized_checkpoint_screenshots` via `is_sanitized_png`;
+  `tests/test_screenshot_sanitizer.py` includes the Pillow-gated
+  pixel-comparison test. Suite 14/14 green. All criteria met → complete.
 
 ## Resources
 
