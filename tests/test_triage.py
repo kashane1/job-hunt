@@ -326,6 +326,104 @@ class BridgeRecruiterTest(unittest.TestCase):
             self.assertEqual((r.outcome, r.to_stage), ("advanced", "phone_screen"))
 
 
+class GhostScanTest(unittest.TestCase):
+    def _stale_status(self, root: Path, lead_id: str, stage: str, ts: str):
+        d = root / "applications"
+        d.mkdir(parents=True, exist_ok=True)
+        write_json(d / f"{lead_id}-status.json", {
+            "lead_id": lead_id, "current_stage": stage,
+            "transitions": [{"from_stage": "applied", "to_stage": stage,
+                             "timestamp": ts}],
+            "created_at": ts, "updated_at": ts,
+        })
+
+    def test_stale_lead_ghosted_fresh_skipped(self) -> None:
+        from job_hunt.triage import scan_ghost_timeouts
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._stale_status(root, "OLD", "phone_screen", "2026-01-01T00:00:00+00:00")
+            self._stale_status(root, "NEW", "phone_screen", "2026-05-17T00:00:00+00:00")
+            res = scan_ghost_timeouts(data_root=root, days=21)
+            ghosted = {r["lead_id"]: r["outcome"] for r in res}
+            self.assertEqual(ghosted.get("OLD"), "advanced")
+            self.assertNotIn("NEW", ghosted)
+            self.assertEqual(
+                read_json(root / "applications" / "OLD-status.json")["current_stage"],
+                "ghosted",
+            )
+
+    def test_dry_run_writes_nothing(self) -> None:
+        from job_hunt.triage import scan_ghost_timeouts
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._stale_status(root, "OLD", "onsite", "2026-01-01T00:00:00+00:00")
+            res = scan_ghost_timeouts(data_root=root, days=21, dry_run=True)
+            self.assertEqual(res[0]["outcome"], "would_ghost")
+            self.assertEqual(
+                read_json(root / "applications" / "OLD-status.json")["current_stage"],
+                "onsite",
+            )
+
+    def test_terminal_and_already_ghosted_skipped(self) -> None:
+        from job_hunt.triage import scan_ghost_timeouts
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            self._stale_status(root, "REJ", "rejected", "2026-01-01T00:00:00+00:00")
+            self._stale_status(root, "GH", "ghosted", "2026-01-01T00:00:00+00:00")
+            self.assertEqual(scan_ghost_timeouts(data_root=root, days=21), [])
+
+
+class CheckIntegrityUnbridgedTest(unittest.TestCase):
+    def test_model_a_event_without_model_b_is_flagged(self) -> None:
+        from job_hunt.tracking import check_integrity
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            d = root / "applications" / "draft1"
+            d.mkdir(parents=True)
+            write_json(d / "plan.json", {"draft_id": "draft1", "lead_id": "L1"})
+            write_json(d / "status.json", {
+                "draft_id": "draft1", "lifecycle_state": "rejected",
+                "events": [{"event_id": "abc", "type": "rejected"}],
+            })
+            # No {L1}-status.json bridge → divergence.
+            report = check_integrity(root)
+            flagged = report["unbridged_confirmations"]
+            self.assertEqual(len(flagged), 1)
+            self.assertEqual(flagged[0]["event_id"], "abc")
+            self.assertTrue(report["summary"]["has_issues"])
+
+
+class TriageInboxAntiSpoofTest(unittest.TestCase):
+    def test_non_allowlisted_outcome_quarantined_not_applied(self) -> None:
+        from job_hunt.triage import triage_inbox
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            (root / "companies").mkdir(parents=True)
+            write_json(root / "companies" / "c1.json", {
+                "company_id": "c1", "company_name": "Acme",
+                "source_urls": ["https://acme.com"],
+            })
+            (root / "leads").mkdir(parents=True)
+            write_json(root / "leads" / "L1.json", {
+                "lead_id": "L1", "company": "Acme", "company_research_id": "c1",
+            })
+            _status(root, "L1", "applied")
+            # DKIM-domain-matched recruiter REJECTION from a non-allowlisted
+            # sender → must quarantine for human review, never auto-reject.
+            e = ParsedEmail(
+                sender="recruiter@acme.com", message_id="x1",
+                subject="Acme update", body="we regret to inform you — Acme",
+                authentication_results="dkim=pass header.d=acme.com",
+                event_type="submitted", posting_url=None, indeed_jk=None,
+            )
+            roll = triage_inbox([e], data_root=root)
+            self.assertEqual(roll["quarantined"], 1)
+            self.assertEqual(
+                read_json(root / "applications" / "L1-status.json")["current_stage"],
+                "applied",
+            )
+
+
 class TrustInvariantTest(unittest.TestCase):
     def test_triage_module_has_no_llm_or_runtime_config(self) -> None:
         src = (SRC / "job_hunt" / "triage.py").read_text(encoding="utf-8")

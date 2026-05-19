@@ -1868,6 +1868,25 @@ def build_parser() -> argparse.ArgumentParser:
     calib_parser.add_argument("--excluded", default="profile/skills-excluded.yaml")
     calib_parser.add_argument("--out-dir", default="", help="Default: <data-root>/calibration")
 
+    # Inbound email → lead-status triage (feeds calibrate-scoring)
+    ti_parser = subparsers.add_parser(
+        "triage-inbox",
+        help="Classify inbound recruiter/ATS email and advance lead status",
+    )
+    ti_parser.add_argument("--inbox-file", default="", help="JSON list of Gmail messages")
+    ti_parser.add_argument("--data-root", default="data")
+    ti_parser.add_argument("--window-days", type=int, default=14)
+    ti_parser.add_argument("--dry-run", action="store_true", help="Classify only; zero writes")
+    ti_parser.add_argument("--emit-query", action="store_true", help="Print Gmail query and exit")
+
+    tg_parser = subparsers.add_parser(
+        "triage-ghosts",
+        help="Mark stale non-terminal leads as ghosted (time-based scan)",
+    )
+    tg_parser.add_argument("--data-root", default="data")
+    tg_parser.add_argument("--days", type=int, default=21)
+    tg_parser.add_argument("--dry-run", action="store_true")
+
     # ----- Batch 3: active job discovery -----
     disc_parser = subparsers.add_parser(
         "discover-jobs",
@@ -3279,6 +3298,82 @@ def main(argv: list[str] | None = None) -> int:
                 parsed_list.append(parse_email(Path(item).read_bytes()))
         rollup = poll_confirmations(parsed_list, data_root=Path(args.data_root))
         print(json.dumps({"status": "ok", **rollup}, indent=2))
+        return 0
+
+    if args.command == "triage-inbox":
+        from .confirmation import gmail_search_query, parse_email, parse_email_dict
+        from .triage import (
+            build_correlation_index,
+            classify_recruiter_email,
+            correlate_recruiter,
+            redact_email,
+            triage_inbox,
+        )
+
+        if args.emit_query:
+            print(json.dumps({
+                "status": "ok",
+                "gmail_query": gmail_search_query(
+                    {"gmail_query_window_days": args.window_days}
+                ),
+            }, indent=2))
+            return 0
+
+        if not args.inbox_file:
+            print(json.dumps({
+                "status": "error",
+                "error_code": "triage_invalid_input",
+                "message": "--inbox-file is required unless --emit-query",
+            }, indent=2))
+            return 2
+        inbox = read_json(Path(args.inbox_file))
+        if not isinstance(inbox, list):
+            print(json.dumps({
+                "status": "error",
+                "error_code": "triage_invalid_input",
+                "message": "inbox-file must be a JSON list",
+            }, indent=2))
+            return 2
+        parsed_list = []
+        for item in inbox:
+            if isinstance(item, dict):
+                parsed_list.append(parse_email_dict(item))
+            elif isinstance(item, str):
+                parsed_list.append(parse_email(Path(item).read_bytes()))
+
+        data_root = Path(args.data_root)
+        if args.dry_run:
+            index = build_correlation_index(data_root)
+            preview = []
+            for raw in parsed_list:
+                red = redact_email(raw)
+                klass = classify_recruiter_email(red)
+                cor = correlate_recruiter(raw, index)
+                preview.append({
+                    "message_id": red.message_id,
+                    "label": klass.label,
+                    "matched_rule": klass.matched_rule,
+                    "correlation": cor.decision,
+                    "lead_id": cor.lead_id,
+                })
+            print(json.dumps({"status": "ok", "dry_run": True,
+                              "results": preview}, indent=2))
+            return 0
+
+        rollup = triage_inbox(parsed_list, data_root=data_root)
+        print(json.dumps({"status": "ok", **rollup}, indent=2))
+        return 0
+
+    if args.command == "triage-ghosts":
+        from .triage import scan_ghost_timeouts
+
+        results = scan_ghost_timeouts(
+            data_root=Path(args.data_root),
+            days=args.days,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps({"status": "ok", "dry_run": args.dry_run,
+                          "results": results}, indent=2))
         return 0
 
     # --- Batch 4 Phase 9: retention + cleanup ---

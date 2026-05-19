@@ -401,6 +401,12 @@ def check_integrity(data_root: Path) -> dict:
     retention_overdue_drafts: list[dict] = []
     playbook_missing_checkpoint_sequence: list[dict] = []
     unsanitized_checkpoint_screenshots: list[dict] = []
+    # Model-A confirmation events whose outcome never reached Model B
+    # (the {lead_id}-status.json calibrate-scoring reads). Detects A↔B
+    # divergence (e.g. a crash between the two writes) so `triage-inbox`
+    # can replay — see the inbound-email-triage plan, invariant 5.
+    unbridged_confirmations: list[dict] = []
+    _BRIDGED_EVENT_TYPES = {"rejected", "interview", "offer", "ghosted"}
 
     apps_root = data_root / "applications"
     if apps_root.is_dir():
@@ -435,6 +441,39 @@ def check_integrity(data_root: Path) -> dict:
                             "draft_id": draft_dir.name,
                             "path": str(png_path),
                         })
+
+            # A↔B divergence: a Model-A outcome event with no matching
+            # Model-B transition event_id (resolved draft → plan.lead_id →
+            # {lead_id}-status.json). Replayable via `triage-inbox`.
+            if status_path.exists() and plan_path.exists():
+                try:
+                    model_a = read_json(status_path)
+                    plan = read_json(plan_path)
+                except (json.JSONDecodeError, KeyError):
+                    model_a = plan = None
+                if model_a and plan:
+                    lid = plan.get("lead_id")
+                    b_path = data_root / "applications" / f"{lid}-status.json"
+                    b_event_ids: set[str] = set()
+                    if lid and b_path.exists():
+                        try:
+                            b_event_ids = {
+                                t.get("event_id")
+                                for t in read_json(b_path).get("transitions", [])
+                                if t.get("event_id")
+                            }
+                        except (json.JSONDecodeError, KeyError):
+                            b_event_ids = set()
+                    for ev in model_a.get("events", []):
+                        if (ev.get("type") in _BRIDGED_EVENT_TYPES
+                                and ev.get("event_id")
+                                and ev["event_id"] not in b_event_ids):
+                            unbridged_confirmations.append({
+                                "draft_id": draft_dir.name,
+                                "lead_id": lid,
+                                "event_id": ev["event_id"],
+                                "type": ev.get("type"),
+                            })
 
             if attempts_dir.is_dir():
                 for ap in attempts_dir.glob("*.json"):
@@ -533,6 +572,7 @@ def check_integrity(data_root: Path) -> dict:
         "retention_overdue_drafts": retention_overdue_drafts,
         "playbook_missing_checkpoint_sequence": playbook_missing_checkpoint_sequence,
         "unsanitized_checkpoint_screenshots": unsanitized_checkpoint_screenshots,
+        "unbridged_confirmations": unbridged_confirmations,
     }
     # Quarantined confirmations are informational, not pass/fail.
     informational = {"unreferenced_companies", "quarantined_confirmations"}

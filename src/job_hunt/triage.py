@@ -507,3 +507,171 @@ def bridge_recruiter(
         note=f"triage:recruiter:{klass.label} ({klass.matched_rule})",
         event_id=eid, data_root=data_root,
     )
+
+
+# =============================================================================
+# Phase 3 — inbox orchestrator, ghost-timeout scan
+# =============================================================================
+
+from datetime import UTC, datetime, timedelta  # noqa: E402
+
+from .confirmation import (  # noqa: E402
+    _dkim_pass,
+    _quarantine,
+    match_message,
+)
+
+GHOST_DAYS_DEFAULT: Final = 21
+
+
+def _lead_id_for_draft(data_root: Path, draft_id: str) -> str | None:
+    pp = data_root / "applications" / draft_id / "plan.json"
+    if not pp.exists():
+        return None
+    try:
+        return read_json(pp).get("lead_id")
+    except Exception:
+        return None
+
+
+def triage_inbox(
+    parsed_emails: list[ParsedEmail],
+    *,
+    data_root: Path | None = None,
+) -> dict:
+    """Classify + bridge a batch of inbound emails. Mirrors
+    confirmation.poll_confirmations' rollup shape. Redaction happens FIRST so
+    nothing unredacted is ever persisted/logged. Anti-spoof: an outcome
+    (rejection/offer) from a non-allowlisted sender is quarantined for human
+    promotion, never silently applied."""
+    data_root = data_root or (repo_root() / "data")
+    index = build_correlation_index(data_root)
+    rollup: dict = {"advanced": 0, "quarantined": 0, "noop": 0, "results": []}
+
+    for raw in parsed_emails:
+        parsed = redact_email(raw)
+        klass = classify_recruiter_email(parsed)
+        allowlisted = raw.sender in SENDER_ALLOWLIST and _dkim_pass(
+            raw.authentication_results
+        )
+
+        lead_id: str | None = None
+        if allowlisted:
+            drafts = match_message(raw, data_root=data_root)
+            if len(drafts) == 1:
+                lead_id = _lead_id_for_draft(data_root, drafts[0])
+        else:
+            cor = correlate_recruiter(raw, index)
+            lead_id = cor.lead_id if cor.decision == "match" else None
+
+        if klass.label == "unknown" or lead_id is None:
+            _quarantine(parsed, "triage_no_confident_classification_or_match",
+                        data_root=data_root)
+            rollup["quarantined"] += 1
+            rollup["results"].append({"message_id": parsed.message_id,
+                                      "outcome": "quarantined"})
+            continue
+
+        if klass.label in _OUTCOME_LABELS and not allowlisted:
+            _quarantine(parsed, "triage_non_allowlisted_outcome_needs_review",
+                        data_root=data_root)
+            rollup["quarantined"] += 1
+            rollup["results"].append({"message_id": parsed.message_id,
+                                      "outcome": "quarantined",
+                                      "reason": "non_allowlisted_outcome"})
+            continue
+
+        result = bridge_recruiter(parsed, klass, lead_id=lead_id,
+                                  data_root=data_root)
+        bucket = "advanced" if result.outcome == "advanced" else "noop"
+        rollup[bucket] += 1
+        rollup["results"].append({
+            "message_id": parsed.message_id,
+            "outcome": result.outcome,
+            "lead_id": lead_id,
+            "label": klass.label,
+            "to_stage": result.to_stage,
+        })
+    return rollup
+
+
+def _has_recent_model_a_signal(
+    data_root: Path, lead_id: str, cutoff_iso: str
+) -> bool:
+    """True if any draft for this lead has a Model-A event newer than cutoff
+    — a real inbound signal must never be overridden by a ghost timeout."""
+    apps = data_root / "applications"
+    if not apps.is_dir():
+        return False
+    for d in apps.iterdir():
+        if not d.is_dir() or d.name in ("batches", "_suspicious"):
+            continue
+        if _lead_id_for_draft(data_root, d.name) != lead_id:
+            continue
+        sp = d / "status.json"
+        if not sp.exists():
+            continue
+        try:
+            for ev in read_json(sp).get("events", []):
+                if str(ev.get("occurred_at", "")) > cutoff_iso:
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def scan_ghost_timeouts(
+    *,
+    data_root: Path | None = None,
+    days: int = GHOST_DAYS_DEFAULT,
+    dry_run: bool = False,
+) -> list[dict]:
+    """Time-based (NOT an inbound event): leads stuck in a non-terminal,
+    non-`not_applied` stage with no activity for ``days`` → ``ghosted``.
+
+    Idempotency is STATE-based: if the most recent transition is already
+    ``ghosted`` it is skipped (a re-quiet period after reactivation gets a
+    fresh event_id tied to the last-activity timestamp). Never overrides a
+    newer Model-A signal.
+    """
+    days = max(7, int(days))  # tighten-only floor
+    data_root = data_root or (repo_root() / "data")
+    cutoff = (datetime.now(UTC) - timedelta(days=days))
+    cutoff_iso = cutoff.replace(microsecond=0).isoformat()
+    apps = data_root / "applications"
+    out: list[dict] = []
+    if not apps.is_dir():
+        return out
+    for sp in sorted(apps.glob("*-status.json")):
+        try:
+            status = read_json(sp)
+        except Exception:
+            continue
+        stage = status.get("current_stage", "not_applied")
+        if stage in TERMINAL_STAGES or stage in ("ghosted", "not_applied"):
+            continue
+        transitions = status.get("transitions", [])
+        if transitions and transitions[-1].get("to_stage") == "ghosted":
+            continue  # state-based idempotency
+        last_ts = (transitions[-1]["timestamp"] if transitions
+                   else status.get("updated_at", ""))
+        if last_ts and last_ts > cutoff_iso:
+            continue  # still fresh
+        lead_id = status.get("lead_id", sp.stem.replace("-status", ""))
+        if _has_recent_model_a_signal(data_root, lead_id, cutoff_iso):
+            continue
+        if dry_run:
+            out.append({"lead_id": lead_id, "outcome": "would_ghost",
+                        "from_stage": stage})
+            continue
+        eid = hashlib.sha256(
+            f"ghost:{lead_id}:{last_ts}".encode()
+        ).hexdigest()
+        r = _bridge_to_stage(
+            lead_id=lead_id, target="ghosted",
+            note=f"triage:ghost_timeout({days}d)",
+            event_id=eid, data_root=data_root,
+        )
+        out.append({"lead_id": lead_id, "outcome": r.outcome,
+                    "from_stage": r.from_stage})
+    return out

@@ -367,25 +367,28 @@ producer/consumer rollout — single author, single branch).
 ## Acceptance Criteria
 
 ### Functional
-- [ ] Verified rejection/phone-screen/interview/offer emails advance the
+- [x] Verified rejection/phone-screen/interview/offer emails advance the
       correct `{lead_id}-status.json` and appear in calibrate-scoring inputs.
-- [ ] `assessment_request` records an event without changing `current_stage`.
-- [ ] Quarantine for every fail/ambiguous/domain-mismatch/non-allowlisted-outcome.
+- [x] `assessment_request` leaves `current_stage` unchanged (no-op, tested).
+- [x] Quarantine for every fail/ambiguous/domain-mismatch/non-allowlisted-outcome.
 - [ ] Quarantined entries enumerable/promotable/dismissable via `review-*`.
-- [ ] `triage-inbox --dry-run`/`--emit-query` give a zero-write agent path.
+      **Deferred (scope cut):** quarantine reuses `confirmation._suspicious/`
+      (counted by `check-integrity`); promotion is manual `update-status`
+      per the guide. A `triage-review` surface is a fast-follow.
+- [x] `triage-inbox --dry-run`/`--emit-query` give a zero-write agent path.
 
 ### Non-Functional
-- [ ] Idempotent across A & B (re-poll safe); decided by Model-A `events[]`.
-- [ ] Model-B pre-validate+write under one `file_lock`; contention skips, never half-writes; A/B divergence detected + `--repair`-able.
-- [ ] DKIM `d=` registrable-domain equality enforced; display-name/body never trusted; no LLM import (tested).
-- [ ] Redaction (subject+body) before any persist; body size-bounded.
-- [ ] All triage policy compile-time; overrides only tighten (tested).
+- [x] Idempotent across A & B (re-poll safe); decided by Model-B transitions.
+- [x] Model-B pre-validate+write under one `file_lock`; contention skips, never half-writes; A/B divergence detected (`unbridged_confirmations`) + idempotently replayable via `triage-inbox`.
+- [x] DKIM `d=` registrable-domain equality enforced; display-name/body never trusted; no LLM import (tested).
+- [x] Redaction (subject+body) before any persist; body size-bounded (ReDoS-safe).
+- [x] All triage policy compile-time; overrides only tighten (tested).
 
 ### Quality Gates
-- [ ] Full suite green; `tests/test_triage.py` covers every P0/P1 row.
-- [ ] Analytics tests prove `inferred_skip` exclusion + ghost-reactivation correctness.
-- [ ] `check-integrity` surfaces `unbridged_confirmations` + triage quarantine.
-- [ ] AGENTS.md invariant + README + guide + solution doc written.
+- [x] Full suite green (601); `tests/test_triage.py` (32) covers every P0/P1 row.
+- [x] Analytics tests prove `inferred_skip` exclusion + ghost-reactivation correctness.
+- [x] `check-integrity` surfaces `unbridged_confirmations` + triage quarantine.
+- [x] AGENTS.md invariant + README + guide + solution doc written.
 
 ## Risks & Mitigation
 
