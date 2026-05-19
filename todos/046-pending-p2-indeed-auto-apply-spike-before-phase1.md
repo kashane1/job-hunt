@@ -77,9 +77,25 @@ Option 1. Spike in the week before Phase 1a. Findings inform the "Artifact Shape
 ## Work Log
 
 - 2026-04-17: Created from technical-review pass on indeed-auto-apply plan.
+- 2026-05-18: Spike **harness prepared** by the audit session (cannot run a
+  live browser spike from a repo/CI context — needs Chrome + Claude
+  extension + logged-in test Indeed account + real postings). Deliverables:
+  - `docs/guides/indeed-auto-apply-spike-runbook.md` — step-by-step probes,
+    one per acceptance criterion, each mapped to the exact MCP tools /
+    schema fields to observe.
+  - `docs/solutions/indeed-auto-apply-spike-findings.md` — the named output,
+    as an honest skeleton (`status: pending_live_run`, every section marked
+    `_PENDING LIVE RUN_`, acceptance boxes unchecked). No empirical data was
+    fabricated.
+  Status stays **pending**: a spike is not complete until the live run
+  fills the findings doc. Field-taxonomy probe is cross-referenced to
+  `schemas/application-plan.schema.json` `fields[]` so the schema-churn
+  go/no-go signal is unambiguous.
 
 ## Resources
 
+- Runbook: `docs/guides/indeed-auto-apply-spike-runbook.md`
+- Findings (skeleton): `docs/solutions/indeed-auto-apply-spike-findings.md`
 - Plan: `docs/plans/2026-04-16-005-feat-indeed-auto-apply-plan.md`
 - Claude for Chrome: https://code.claude.com/docs/en/chrome
 - Framework-docs research output (in conversation history)

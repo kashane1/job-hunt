@@ -69,6 +69,13 @@ MAX_LISTING_DECOMPRESSED_BYTES: Final = 20_000_000
 MAX_WATCHLIST_COMPANIES: Final = 200
 FETCH_CHAIN_TIMEOUT_S: Final = 20
 
+# Anti-bot pacing policy — single source of truth (asserted behaviorally by
+# tests, never by source-string match). Hosts here get human-like inter-request
+# pacing instead of the fast public-API default.
+ANTI_BOT_JITTER_HOSTS: Final = ("indeed.com", "linkedin.com")
+ANTI_BOT_JITTER_MIN_S: Final = 25.0
+ANTI_BOT_JITTER_MAX_S: Final = 30.0
+
 COMPANY_NAME_RE: Final = re.compile(r"^[A-Za-z0-9 ._-]{1,64}$")
 ENTRY_ID_RE: Final = re.compile(r"^[a-f0-9]{16}$")
 
@@ -97,6 +104,31 @@ class DiscoveryError(StructuredError):
     """Structured error for discovery-specific failures."""
 
     ALLOWED_ERROR_CODES = DISCOVERY_ERROR_CODES
+
+
+# =============================================================================
+# Anti-bot pacing
+# =============================================================================
+
+def install_anti_bot_jitter(rate_limiter: DomainRateLimiter) -> None:
+    """Install human-like inter-request pacing on anti-bot-prone hosts.
+
+    Single source of truth for the pacing policy so callers and tests both
+    go through it (tests assert the resulting limiter *behavior*, not the
+    source text of ``discover_jobs``).
+
+    The pacing was raised from the 3-7s default after Kashane's 2026-04-18
+    session hit 403s late in the day even though the chrome-UA fix unblocked
+    earlier runs: Indeed's edge accumulates session-level signals and
+    escalates once the per-hour request count crosses an internal threshold.
+    25-30s matches a human reviewing each posting before clicking — a much
+    weaker signal for bot-detection heuristics. Greenhouse/Lever/etc. are
+    public JSON APIs and stay on the fast default.
+    """
+    for host in ANTI_BOT_JITTER_HOSTS:
+        rate_limiter.set_human_jitter(
+            host, ANTI_BOT_JITTER_MIN_S, ANTI_BOT_JITTER_MAX_S,
+        )
 
 
 # =============================================================================
@@ -1231,16 +1263,7 @@ def discover_jobs(
         )
 
     rate_limiter = DomainRateLimiter(default_interval_s=0.5)
-    # Anti-bot-prone hosts get human-like pacing: 20-30s randomized between
-    # requests. Was 3-7s, raised after Kashane's 2026-04-18 session hit 403s
-    # late in the day even though the chrome-UA fix unblocked earlier runs —
-    # Indeed's edge accumulates session-level signals and escalates once the
-    # per-hour request count crosses an internal threshold. 20-30s matches a
-    # human reviewing each posting before clicking; much weaker signal for
-    # bot-detection heuristics. Greenhouse/Lever/etc. are public JSON APIs
-    # and stay on the fast default.
-    rate_limiter.set_human_jitter("indeed.com", 25.0, 30.0)
-    rate_limiter.set_human_jitter("linkedin.com", 25.0, 30.0)
+    install_anti_bot_jitter(rate_limiter)
     robots = RobotsCache(
         robots_cache_path, rate_limiter, DISCOVERY_USER_AGENT,
     )

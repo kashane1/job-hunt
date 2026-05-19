@@ -70,7 +70,9 @@ For each page, fill known fields from `plan.fields`. Click "Save and Continue". 
 After all steps reach the "Review" page: `checkpoint-update` to `fields_filled`.
 
 ## Step 5: Pre-submit screenshot (Review page)
-The Review page is the last before Submit. Cropped + PII-blurred screenshot → `checkpoints/pre_submit.png`. `checkpoint-update` to `ready_to_submit`.
+The Review page is the last before Submit. Screenshot the form area to a temp path, derive PII regions (name/address/phone/email regex over `get_page_text` → pixel boxes via `read_page`/`find`), then sanitize into the checkpoint path:
+`python3 scripts/job_hunt.py sanitize-screenshot --input /tmp/raw_pre_submit.png --output data/applications/{draft_id}/checkpoints/pre_submit.png --regions '[[l,t,r,b], ...]'`
+Never write an unsanitized PNG into `checkpoints/` — `check-integrity` flags any missing the `sanitized_at` tag. Then `checkpoint-update` to `ready_to_submit`.
 
 ## Step 6: Human submit gate
 Standard payload. Always tier_2 for Workday.

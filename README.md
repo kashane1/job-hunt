@@ -212,7 +212,40 @@ python3 scripts/job_hunt.py analyze-skills-gap
 
 # Rejection pattern analysis — stage drop-offs, industry patterns, missing-skill correlations
 python3 scripts/job_hunt.py analyze-rejections
+
+# Learning loop — propose scoring.yaml + profile-evidence changes from outcomes.
+# Writes a reviewable proposal to data/calibration/; NEVER edits scoring.yaml.
+python3 scripts/job_hunt.py calibrate-scoring
 ```
+
+`calibrate-scoring` closes the loop between outcomes and selection criteria.
+It is propose-only by design (see AGENTS.md): a human reads the proposal and
+edits `config/scoring.yaml` by hand. Proposals are sample-size gated — no
+evidence, no proposal.
+
+### Inbound email → status triage (feeds the learning loop)
+
+`calibrate-scoring` is only as good as the outcomes recorded in the ledger.
+Triage classifies inbound recruiter/ATS email and advances the matched
+lead's status automatically, so the loop is fed without manual
+`update-status`:
+
+```bash
+# Print the Gmail search query the agent should fetch with (no fetch here)
+python3 scripts/job_hunt.py triage-inbox --emit-query --window-days 14
+
+# Classify a fetched batch (JSON list of Gmail messages) — dry-run first
+python3 scripts/job_hunt.py triage-inbox --inbox-file inbox.json --dry-run
+python3 scripts/job_hunt.py triage-inbox --inbox-file inbox.json
+
+# Time-based: mark stale non-terminal leads as ghosted
+python3 scripts/job_hunt.py triage-ghosts --days 21 --dry-run
+```
+
+Triage is verification-bound and anti-spoof (see AGENTS.md): outcomes from
+non-allowlisted senders quarantine to `data/applications/_suspicious/` for
+human review rather than auto-applying. The operator/agent runbook is
+[`docs/guides/inbound-email-triage.md`](docs/guides/inbound-email-triage.md).
 
 All three reports use sample-size gates: `confidence: insufficient_data`
 (<10 items), `low` (10-29), `ok` (30+). Ingest more leads before trusting

@@ -181,10 +181,15 @@ class Ipv4MappedIpv6Test(unittest.TestCase):
         mapped = ipaddress.ip_address("::ffff:10.0.0.1")
         self.assertTrue(_ip_is_disallowed(mapped))
 
-    def test_mapped_public_allowed(self) -> None:
-        # 8.8.8.8 is a public Google DNS IP
+    def test_mapped_public_also_disallowed(self) -> None:
+        # Even a public embedded IPv4 (8.8.8.8) is rejected when wrapped in
+        # IPv4-mapped IPv6 form. The whole ::ffff:0:0/96 class is blocked
+        # fail-closed: no real job board is reached via a mapped literal, and
+        # the mapped form is an SSRF parser-differential bypass vector. This
+        # also makes the guard deterministic across CPython versions, whose
+        # is_reserved/is_private semantics for mapped forms have drifted.
         mapped = ipaddress.ip_address("::ffff:8.8.8.8")
-        self.assertFalse(_ip_is_disallowed(mapped))
+        self.assertTrue(_ip_is_disallowed(mapped))
 
 
 if __name__ == "__main__":

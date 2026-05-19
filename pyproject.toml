@@ -4,6 +4,13 @@ version = "0.2.0"
 description = "Agent-first, file-backed job hunt operating repo"
 readme = "README.md"
 requires-python = ">=3.11"
+# Pillow is the one non-stdlib install-time dependency (decided in todo
+# 045): it powers screenshot PII blurring before checkpoint write. The
+# stdlib-only posture holds everywhere else; sanitized_at *detection* in
+# check-integrity is stdlib-only and does not import Pillow.
+dependencies = [
+    "Pillow>=10.0",
+]
 
 [project.optional-dependencies]
 # PDF export support via `pip install 'job-hunt[pdf]'`.

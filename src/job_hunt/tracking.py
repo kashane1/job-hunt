@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .utils import ensure_dir, now_iso, read_json, write_json
+from .utils import ensure_dir, file_lock, now_iso, read_json, write_json
 
 VALID_STAGES = [
     "not_applied",
@@ -49,45 +49,75 @@ def create_application_status(lead_id: str, output_dir: Path) -> dict:
     return status
 
 
+def _apply_transition_locked(
+    status: dict,
+    new_stage: str,
+    note: str = "",
+    *,
+    event_id: str = "",
+    inferred_skip: bool = False,
+) -> dict:
+    """Pure in-memory mutation: append the transition + set current_stage.
+
+    NO validation, NO I/O — the caller owns both (and the file lock). The
+    optional ``event_id`` / ``inferred_skip`` fields are written only when
+    set, so the manual ``update-status`` path produces a byte-identical
+    transition shape to before this refactor (back-compat). ``inferred_skip``
+    marks a >1-stage jump injected by triage so analytics excludes it from
+    funnel learning.
+    """
+    ts = now_iso()
+    transition = {
+        "from_stage": status["current_stage"],
+        "to_stage": new_stage,
+        "timestamp": ts,
+        "note": note,
+    }
+    if event_id:
+        transition["event_id"] = event_id
+    if inferred_skip:
+        transition["inferred_skip"] = True
+    status["transitions"].append(transition)
+    status["current_stage"] = new_stage
+    status["updated_at"] = ts
+    if new_stage in TERMINAL_STAGES | SEMI_TERMINAL_STAGES:
+        status.setdefault("follow_up", {})["suppress_follow_up"] = True
+    return status
+
+
 def update_application_status(status_path: Path, new_stage: str, note: str = "") -> dict:
-    """Advance an application to a new stage.
+    """Advance an application to a new stage (manual / CLI path).
 
     Validates:
     (a) new_stage is in VALID_STAGES
     (b) current stage is not in TERMINAL_STAGES
     (c) not a no-op (same stage)
+
+    The read-modify-write runs under ``file_lock`` (``check_mtime=False``,
+    matching confirmation.py) so a concurrent triage bridge cannot clobber
+    a manual transition. Triage holds its own lock and calls
+    ``_apply_transition_locked`` directly — never this function — so the
+    lock is acquired exactly once per write.
     """
     if new_stage not in VALID_STAGES:
         raise ValueError(f"Invalid stage: {new_stage!r}. Valid stages: {VALID_STAGES}")
 
-    status = read_json(status_path)
-    current = status["current_stage"]
+    with file_lock(status_path, check_mtime=False):
+        status = read_json(status_path)
+        current = status["current_stage"]
 
-    if current in TERMINAL_STAGES:
-        raise ValueError(
-            f"Cannot transition from terminal stage {current!r}. "
-            f"Terminal stages: {sorted(TERMINAL_STAGES)}"
-        )
+        if current in TERMINAL_STAGES:
+            raise ValueError(
+                f"Cannot transition from terminal stage {current!r}. "
+                f"Terminal stages: {sorted(TERMINAL_STAGES)}"
+            )
 
-    if current == new_stage:
-        raise ValueError(f"No-op transition: already in stage {current!r}")
+        if current == new_stage:
+            raise ValueError(f"No-op transition: already in stage {current!r}")
 
-    ts = now_iso()
-    status["transitions"].append({
-        "from_stage": current,
-        "to_stage": new_stage,
-        "timestamp": ts,
-        "note": note,
-    })
-    status["current_stage"] = new_stage
-    status["updated_at"] = ts
-
-    # Terminal and semi-terminal stages suppress follow-ups.
-    if new_stage in TERMINAL_STAGES | SEMI_TERMINAL_STAGES:
-        status.setdefault("follow_up", {})["suppress_follow_up"] = True
-
-    write_json(status_path, status)
-    return status
+        _apply_transition_locked(status, new_stage, note)
+        write_json(status_path, status)
+        return status
 
 
 def list_applications(status_dir: Path, stage_filter: str = "", since: str = "") -> list[dict]:
@@ -370,6 +400,13 @@ def check_integrity(data_root: Path) -> dict:
     quarantined_confirmations: list[dict] = []
     retention_overdue_drafts: list[dict] = []
     playbook_missing_checkpoint_sequence: list[dict] = []
+    unsanitized_checkpoint_screenshots: list[dict] = []
+    # Model-A confirmation events whose outcome never reached Model B
+    # (the {lead_id}-status.json calibrate-scoring reads). Detects A↔B
+    # divergence (e.g. a crash between the two writes) so `triage-inbox`
+    # can replay — see the inbound-email-triage plan, invariant 5.
+    unbridged_confirmations: list[dict] = []
+    _BRIDGED_EVENT_TYPES = {"rejected", "interview", "offer", "ghosted"}
 
     apps_root = data_root / "applications"
     if apps_root.is_dir():
@@ -387,6 +424,56 @@ def check_integrity(data_root: Path) -> dict:
             # Orphan checkpoints/ dir without a plan.json or status.json
             if checkpoints_dir.is_dir() and not (plan_path.exists() or status_path.exists()):
                 orphan_checkpoints_dirs.append({"path": str(checkpoints_dir)})
+
+            # Checkpoint PNGs must carry the sanitized_at provenance tag —
+            # see screenshot_sanitizer (todo 045). A missing tag means a raw,
+            # PII-bearing screenshot was written without passing through the
+            # blur pass. Detection is stdlib-only (no Pillow import here).
+            if checkpoints_dir.is_dir():
+                from .screenshot_sanitizer import is_sanitized_png
+                for png_path in sorted(checkpoints_dir.glob("*.png")):
+                    try:
+                        png_bytes = png_path.read_bytes()
+                    except OSError:
+                        continue
+                    if not is_sanitized_png(png_bytes):
+                        unsanitized_checkpoint_screenshots.append({
+                            "draft_id": draft_dir.name,
+                            "path": str(png_path),
+                        })
+
+            # A↔B divergence: a Model-A outcome event with no matching
+            # Model-B transition event_id (resolved draft → plan.lead_id →
+            # {lead_id}-status.json). Replayable via `triage-inbox`.
+            if status_path.exists() and plan_path.exists():
+                try:
+                    model_a = read_json(status_path)
+                    plan = read_json(plan_path)
+                except (json.JSONDecodeError, KeyError):
+                    model_a = plan = None
+                if model_a and plan:
+                    lid = plan.get("lead_id")
+                    b_path = data_root / "applications" / f"{lid}-status.json"
+                    b_event_ids: set[str] = set()
+                    if lid and b_path.exists():
+                        try:
+                            b_event_ids = {
+                                t.get("event_id")
+                                for t in read_json(b_path).get("transitions", [])
+                                if t.get("event_id")
+                            }
+                        except (json.JSONDecodeError, KeyError):
+                            b_event_ids = set()
+                    for ev in model_a.get("events", []):
+                        if (ev.get("type") in _BRIDGED_EVENT_TYPES
+                                and ev.get("event_id")
+                                and ev["event_id"] not in b_event_ids):
+                            unbridged_confirmations.append({
+                                "draft_id": draft_dir.name,
+                                "lead_id": lid,
+                                "event_id": ev["event_id"],
+                                "type": ev.get("type"),
+                            })
 
             if attempts_dir.is_dir():
                 for ap in attempts_dir.glob("*.json"):
@@ -484,6 +571,8 @@ def check_integrity(data_root: Path) -> dict:
         "quarantined_confirmations": quarantined_confirmations,
         "retention_overdue_drafts": retention_overdue_drafts,
         "playbook_missing_checkpoint_sequence": playbook_missing_checkpoint_sequence,
+        "unsanitized_checkpoint_screenshots": unsanitized_checkpoint_screenshots,
+        "unbridged_confirmations": unbridged_confirmations,
     }
     # Quarantined confirmations are informational, not pass/fail.
     informational = {"unreferenced_companies", "quarantined_confirmations"}
