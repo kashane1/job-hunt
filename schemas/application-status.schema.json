@@ -49,7 +49,9 @@
                      "onsite", "offer", "accepted", "rejected", "withdrawn", "ghosted"]
           },
           "timestamp": { "type": "string" },
-          "note": { "type": "string" }
+          "note": { "type": "string" },
+          "event_id": { "type": "string" },
+          "inferred_skip": { "type": "boolean" }
         }
       }
     },

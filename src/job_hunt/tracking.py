@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .utils import ensure_dir, now_iso, read_json, write_json
+from .utils import ensure_dir, file_lock, now_iso, read_json, write_json
 
 VALID_STAGES = [
     "not_applied",
@@ -49,45 +49,75 @@ def create_application_status(lead_id: str, output_dir: Path) -> dict:
     return status
 
 
+def _apply_transition_locked(
+    status: dict,
+    new_stage: str,
+    note: str = "",
+    *,
+    event_id: str = "",
+    inferred_skip: bool = False,
+) -> dict:
+    """Pure in-memory mutation: append the transition + set current_stage.
+
+    NO validation, NO I/O — the caller owns both (and the file lock). The
+    optional ``event_id`` / ``inferred_skip`` fields are written only when
+    set, so the manual ``update-status`` path produces a byte-identical
+    transition shape to before this refactor (back-compat). ``inferred_skip``
+    marks a >1-stage jump injected by triage so analytics excludes it from
+    funnel learning.
+    """
+    ts = now_iso()
+    transition = {
+        "from_stage": status["current_stage"],
+        "to_stage": new_stage,
+        "timestamp": ts,
+        "note": note,
+    }
+    if event_id:
+        transition["event_id"] = event_id
+    if inferred_skip:
+        transition["inferred_skip"] = True
+    status["transitions"].append(transition)
+    status["current_stage"] = new_stage
+    status["updated_at"] = ts
+    if new_stage in TERMINAL_STAGES | SEMI_TERMINAL_STAGES:
+        status.setdefault("follow_up", {})["suppress_follow_up"] = True
+    return status
+
+
 def update_application_status(status_path: Path, new_stage: str, note: str = "") -> dict:
-    """Advance an application to a new stage.
+    """Advance an application to a new stage (manual / CLI path).
 
     Validates:
     (a) new_stage is in VALID_STAGES
     (b) current stage is not in TERMINAL_STAGES
     (c) not a no-op (same stage)
+
+    The read-modify-write runs under ``file_lock`` (``check_mtime=False``,
+    matching confirmation.py) so a concurrent triage bridge cannot clobber
+    a manual transition. Triage holds its own lock and calls
+    ``_apply_transition_locked`` directly — never this function — so the
+    lock is acquired exactly once per write.
     """
     if new_stage not in VALID_STAGES:
         raise ValueError(f"Invalid stage: {new_stage!r}. Valid stages: {VALID_STAGES}")
 
-    status = read_json(status_path)
-    current = status["current_stage"]
+    with file_lock(status_path, check_mtime=False):
+        status = read_json(status_path)
+        current = status["current_stage"]
 
-    if current in TERMINAL_STAGES:
-        raise ValueError(
-            f"Cannot transition from terminal stage {current!r}. "
-            f"Terminal stages: {sorted(TERMINAL_STAGES)}"
-        )
+        if current in TERMINAL_STAGES:
+            raise ValueError(
+                f"Cannot transition from terminal stage {current!r}. "
+                f"Terminal stages: {sorted(TERMINAL_STAGES)}"
+            )
 
-    if current == new_stage:
-        raise ValueError(f"No-op transition: already in stage {current!r}")
+        if current == new_stage:
+            raise ValueError(f"No-op transition: already in stage {current!r}")
 
-    ts = now_iso()
-    status["transitions"].append({
-        "from_stage": current,
-        "to_stage": new_stage,
-        "timestamp": ts,
-        "note": note,
-    })
-    status["current_stage"] = new_stage
-    status["updated_at"] = ts
-
-    # Terminal and semi-terminal stages suppress follow-ups.
-    if new_stage in TERMINAL_STAGES | SEMI_TERMINAL_STAGES:
-        status.setdefault("follow_up", {})["suppress_follow_up"] = True
-
-    write_json(status_path, status)
-    return status
+        _apply_transition_locked(status, new_stage, note)
+        write_json(status_path, status)
+        return status
 
 
 def list_applications(status_dir: Path, stage_filter: str = "", since: str = "") -> list[dict]:

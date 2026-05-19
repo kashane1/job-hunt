@@ -69,8 +69,15 @@ class AggregatedRow(TypedDict):
 
 
 def _applied_date(transitions: list[dict]) -> str | None:
-    """Find the timestamp of the first transition to 'applied'."""
+    """Find the timestamp of the first transition to 'applied'.
+
+    Skips ``inferred_skip`` transitions: a triage-injected >1-stage jump
+    (e.g. an offer email landing on an `applied` lead) must not be read as
+    funnel signal — see triage.py / the email-triage plan.
+    """
     for t in transitions:
+        if t.get("inferred_skip"):
+            continue
         if t.get("to_stage") == "applied":
             return t.get("timestamp")
     return None
@@ -231,7 +238,13 @@ def _stage_conversions(rows: list[AggregatedRow]) -> dict[str, dict]:
     """
     reached_counts: dict[str, int] = {s: 0 for s in STAGE_SEQUENCE}
     for r in rows:
-        reached_stages = {t.get("to_stage") for t in r.get("transitions", [])}
+        # inferred_skip transitions are triage-injected >1-stage jumps; they
+        # must not inflate stage-to-stage conversion rates.
+        reached_stages = {
+            t.get("to_stage")
+            for t in r.get("transitions", [])
+            if not t.get("inferred_skip")
+        }
         for s in STAGE_SEQUENCE:
             if s in reached_stages:
                 reached_counts[s] += 1
@@ -438,14 +451,45 @@ MIN_TERMINAL_FOR_REJECTION: Final = 10
 
 
 def _last_non_terminal_stage(transitions: list[dict]) -> str:
-    """Walk transitions to find the last stage before a terminal transition."""
+    """Walk transitions to find the last stage before a terminal transition.
+
+    Skips ``inferred_skip`` transitions so a triage-injected jump cannot
+    mis-attribute the drop-off stage.
+    """
     last_live = "applied"
     for t in transitions:
+        if t.get("inferred_skip"):
+            continue
         to_stage = t.get("to_stage", "")
         if to_stage in TERMINAL_STAGES:
             return last_live
         last_live = to_stage
     return last_live
+
+
+def _terminal_outcome(row: AggregatedRow) -> str | None:
+    """The terminal outcome a lead actually reached, from transition HISTORY
+    (not just ``current_stage``).
+
+    ``tracking`` lets a ``ghosted`` lead reactivate (semi-terminal), so a
+    ghost that later moves to ``onsite`` would vanish from the ghost bucket
+    if we filtered on ``current_stage`` alone — silently starving
+    calibrate-scoring of a real outcome. Returns the LAST terminal-ish stage
+    ever entered; falls back to ``current_stage`` when it is terminal; else
+    ``None``. For non-reactivated leads this equals ``current_stage``, so
+    existing behavior is unchanged.
+    """
+    last_terminal: str | None = None
+    for t in row.get("transitions", []):
+        if t.get("inferred_skip"):
+            continue
+        to_stage = t.get("to_stage", "")
+        if to_stage in TERMINAL_STAGES:
+            last_terminal = to_stage
+    if last_terminal is not None:
+        return last_terminal
+    cur = row.get("current_stage", "")
+    return cur if cur in TERMINAL_STAGES else None
 
 
 def report_rejection_patterns(data_root: Path) -> dict:
@@ -455,7 +499,11 @@ def report_rejection_patterns(data_root: Path) -> dict:
     Observations are factual (percentages, top-N); no prescriptive advice.
     """
     rows, missing_refs = build_aggregator(data_root)
-    terminal = [r for r in rows if r["current_stage"] in TERMINAL_STAGES]
+    # History-aware: a ghosted→reactivated lead still counts as a ghost
+    # outcome (current_stage alone would lose it). _terminal_outcome == the
+    # last terminal stage ever entered, == current_stage for the common
+    # non-reactivated case.
+    terminal = [r for r in rows if _terminal_outcome(r) is not None]
     if len(terminal) < MIN_TERMINAL_FOR_REJECTION:
         return {
             "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
@@ -468,9 +516,9 @@ def report_rejection_patterns(data_root: Path) -> dict:
             "missing_refs": missing_refs,
         }
 
-    rejected = [r for r in terminal if r["current_stage"] == "rejected"]
-    ghosted = [r for r in terminal if r["current_stage"] == "ghosted"]
-    withdrawn = [r for r in terminal if r["current_stage"] == "withdrawn"]
+    rejected = [r for r in terminal if _terminal_outcome(r) == "rejected"]
+    ghosted = [r for r in terminal if _terminal_outcome(r) == "ghosted"]
+    withdrawn = [r for r in terminal if _terminal_outcome(r) == "withdrawn"]
 
     drop_off: Counter[str] = Counter()
     for r in rejected:
