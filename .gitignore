@@ -23,6 +23,7 @@ data/applications/
 data/leads/
 data/runs/
 data/discovery/
+data/calibration/
 docs/reports/*-report.md
 examples/results/
 

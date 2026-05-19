@@ -212,7 +212,16 @@ python3 scripts/job_hunt.py analyze-skills-gap
 
 # Rejection pattern analysis — stage drop-offs, industry patterns, missing-skill correlations
 python3 scripts/job_hunt.py analyze-rejections
+
+# Learning loop — propose scoring.yaml + profile-evidence changes from outcomes.
+# Writes a reviewable proposal to data/calibration/; NEVER edits scoring.yaml.
+python3 scripts/job_hunt.py calibrate-scoring
 ```
+
+`calibrate-scoring` closes the loop between outcomes and selection criteria.
+It is propose-only by design (see AGENTS.md): a human reads the proposal and
+edits `config/scoring.yaml` by hand. Proposals are sample-size gated — no
+evidence, no proposal.
 
 All three reports use sample-size gates: `confidence: insufficient_data`
 (<10 items), `low` (10-29), `ok` (30+). Ingest more leads before trusting
