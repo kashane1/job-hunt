@@ -1,0 +1,31 @@
+{
+  "offset": 0,
+  "limit": 100,
+  "totalFound": 2,
+  "content": [
+    {
+      "id": "743999000000111111",
+      "uuid": "11111111-1111-1111-1111-111111111111",
+      "name": "Senior Platform Engineer",
+      "refNumber": "REF-001",
+      "company": { "identifier": "exampleco", "name": "ExampleCo" },
+      "location": { "city": "Remote", "region": "", "country": "us", "remote": true },
+      "typeOfEmployment": { "label": "Full-time" },
+      "experienceLevel": { "id": "mid_senior_level", "label": "Mid-Senior Level" },
+      "ref": "https://api.smartrecruiters.com/v1/companies/exampleco/postings/743999000000111111",
+      "releasedDate": "2026-04-18T00:00:00.000Z"
+    },
+    {
+      "id": "743999000000222222",
+      "uuid": "22222222-2222-2222-2222-222222222222",
+      "name": "Staff Backend Engineer",
+      "refNumber": "REF-002",
+      "company": { "identifier": "exampleco", "name": "ExampleCo" },
+      "location": { "city": "Austin", "region": "TX", "country": "us", "remote": false },
+      "typeOfEmployment": { "label": "Full-time" },
+      "experienceLevel": { "id": "director", "label": "Director" },
+      "ref": "https://api.smartrecruiters.com/v1/companies/exampleco/postings/743999000000222222",
+      "releasedDate": "2026-04-17T00:00:00.000Z"
+    }
+  ]
+}

@@ -19,8 +19,9 @@ via the same canonical path as `ingest-url`.
    template stays tracked.
 
 2. Add companies. Each entry needs at least ONE discovery source field:
-   `greenhouse`, `lever`, `ashby`, `workable`, `careers_url`,
-   `indeed_search_url`, or `usajobs_search_profile`.
+   `greenhouse`, `lever`, `ashby`, `workable`, `smartrecruiters`,
+   `recruitee`, `personio`, `careers_url`, `indeed_search_url`,
+   `remotive_search`, or `usajobs_search_profile`.
 
    ```yaml
    companies:
@@ -54,6 +55,52 @@ via the same canonical path as `ingest-url`.
    ```bash
    python3 scripts/job_hunt.py watchlist-validate
    ```
+
+## Discovery source categories
+
+Sources are not all equally authoritative. Every lead records a
+`primary_source` with an `authority` and a `precedence` (single-sourced from
+`src/job_hunt/source_provenance.py`). When the same canonical posting URL is
+seen from multiple feeds, the higher-precedence observation wins; every
+observation is still retained in `observed_sources[]` for audit.
+
+| Category | Precedence | Sources | Watchlist field |
+|----------|-----------|---------|-----------------|
+| Public ATS API (`system_of_record`) | `ats_public` | `greenhouse`, `lever`, `ashby`, `workable`, `smartrecruiters`, `recruitee`, `personio` | the ATS company slug / subdomain |
+| Government API (`system_of_record`) | `government_api` | `usajobs` | `usajobs_search_profile` |
+| Board search (`derived`) | `board_search` | `careers`, `indeed_search` | `careers_url` / `indeed_search_url` |
+| Aggregator (`derived`) | `aggregator` | `remotive` | `remotive_search` |
+
+ATS-slug examples:
+
+```yaml
+companies:
+  - name: "SmartRecruitersCo"
+    smartrecruiters: "SmartRecruitersCo"   # api.smartrecruiters.com/v1/companies/<id>/postings
+  - name: "RecruiteeCo"
+    recruitee: "recruiteeco"               # <id>.recruitee.com/api/offers/
+  - name: "PersonioCo"
+    personio: "personioco"                 # <id>.jobs.personio.com/xml (then .de fallback)
+  - name: "Remotive remote search"
+    remotive_search: "platform engineer"   # remotive.com/api/remote-jobs?search=...
+```
+
+Notes:
+
+- **SmartRecruiters / Recruitee** are public, unauthenticated JSON APIs.
+  SmartRecruiters paginates (offset/limit, bounded); Recruitee surfaces only
+  `status: published` offers.
+- **Personio** is a public XML feed. The parser deterministically refuses any
+  feed carrying a `DOCTYPE`/`ENTITY` declaration (`error_code:
+  xml_entity_blocked`) before parsing — an XML entity-expansion guard
+  analogous to the existing decompression-bomb guard. The `.com` feed is
+  tried first, falling back to `.de` only on a miss.
+- **Remotive** is a Phase 3 aggregator: lower authority than direct ATS
+  feeds. Like `indeed_search`, one watchlist entry models one saved query
+  (a virtual company); the real employer is preserved on each lead.
+- Single-URL `ingest-url` of a `remotive.com` posting is handled by the
+  generic JSON-LD fallback (no dedicated detail endpoint exists); the other
+  new sources have dedicated `ingest-url` fetchers.
 
 ## Filter semantics
 

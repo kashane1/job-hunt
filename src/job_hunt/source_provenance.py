@@ -60,12 +60,40 @@ SOURCE_DEFINITIONS: Final[dict[str, DiscoverySourceDefinition]] = {
         authority="system_of_record",
         precedence="ats_public",
     ),
+    "smartrecruiters": DiscoverySourceDefinition(
+        provider="smartrecruiters",
+        runtime_source="smartrecruiters",
+        discovered_via_source="smartrecruiters_public_api",
+        authority="system_of_record",
+        precedence="ats_public",
+    ),
+    "recruitee": DiscoverySourceDefinition(
+        provider="recruitee",
+        runtime_source="recruitee",
+        discovered_via_source="recruitee_public_api",
+        authority="system_of_record",
+        precedence="ats_public",
+    ),
+    "personio": DiscoverySourceDefinition(
+        provider="personio",
+        runtime_source="personio",
+        discovered_via_source="personio_public_api",
+        authority="system_of_record",
+        precedence="ats_public",
+    ),
     "usajobs": DiscoverySourceDefinition(
         provider="usajobs",
         runtime_source="usajobs",
         discovered_via_source="usajobs_api",
         authority="system_of_record",
         precedence="government_api",
+    ),
+    "remotive": DiscoverySourceDefinition(
+        provider="remotive",
+        runtime_source="remotive",
+        discovered_via_source="remotive_api",
+        authority="derived",
+        precedence="aggregator",
     ),
 }
 

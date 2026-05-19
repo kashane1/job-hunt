@@ -5,14 +5,23 @@ supported_sources:
   - indeed_search
   - ashby
   - workable
+  - smartrecruiters
+  - recruitee
+  - personio
   - usajobs
+  - remotive
 company_site_ats_keywords:
   - greenhouse
   - lever
   - workday
   - ashby
   - workable
+  - smartrecruiters
+  - recruitee
+  - personio
 discovery_notes:
   - discovery source catalog should match runtime-supported source tokens exactly
+  - "supported_sources order mirrors source_provenance.DISCOVERY_SOURCE_TOKENS"
+  - "remotive is a Phase 3 aggregator (authority=derived, precedence=aggregator)"
   - capture one normalized lead format regardless of origin
   - reuse tabs when possible during discovery

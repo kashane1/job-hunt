@@ -60,8 +60,8 @@ logger = logging.getLogger(__name__)
 INGESTION_ERROR_CODES: Final = frozenset({
     "login_wall", "scheme_blocked", "private_ip_blocked", "redirect_blocked",
     "rate_limited", "timeout", "not_found", "response_too_large",
-    "decompression_bomb", "dns_failed", "http_error", "network_error",
-    "invalid_url", "unexpected",
+    "decompression_bomb", "xml_entity_blocked", "dns_failed", "http_error",
+    "network_error", "invalid_url", "unexpected",
 })
 
 
@@ -101,6 +101,15 @@ ASHBY_URL_RE = re.compile(
 )
 WORKABLE_URL_RE = re.compile(
     r"https?://(?P<subdomain>[^./]+)\.workable\.com/jobs/(?P<job_id>\d+)"
+)
+SMARTRECRUITERS_URL_RE = re.compile(
+    r"https?://(?:jobs|careers)\.smartrecruiters\.com/(?P<company>[^/]+)/(?P<job_id>\d+)"
+)
+RECRUITEE_URL_RE = re.compile(
+    r"https?://(?P<subdomain>[^./]+)\.recruitee\.com/o/(?P<slug>[^/?#]+)"
+)
+PERSONIO_URL_RE = re.compile(
+    r"https?://(?P<company>[^./]+)\.jobs\.personio\.(?:com|de)/job/(?P<job_id>\d+)"
 )
 
 # Sites that require login and cannot be reliably scraped. We refuse politely
@@ -747,6 +756,45 @@ def _fetch_workable(url: str) -> dict:
     return payload
 
 
+def _fetch_smartrecruiters(company: str, job_id: str) -> dict:
+    from .discovery_providers.smartrecruiters import fetch_smartrecruiters_job
+
+    payload = fetch_smartrecruiters_job(company, job_id)
+    if payload is None:
+        raise IngestionError(
+            f"SmartRecruiters job not found for company={company!r} job_id={job_id!r}",
+            error_code="not_found",
+            url=f"https://jobs.smartrecruiters.com/{company}/{job_id}",
+        )
+    return payload
+
+
+def _fetch_recruitee(url: str) -> dict:
+    from .discovery_providers.recruitee import fetch_recruitee_job
+
+    payload = fetch_recruitee_job(url)
+    if payload is None:
+        raise IngestionError(
+            f"Recruitee job not found for url={url!r}",
+            error_code="not_found",
+            url=url,
+        )
+    return payload
+
+
+def _fetch_personio(url: str) -> dict:
+    from .discovery_providers.personio import fetch_personio_job
+
+    payload = fetch_personio_job(url)
+    if payload is None:
+        raise IngestionError(
+            f"Personio job not found for url={url!r}",
+            error_code="not_found",
+            url=url,
+        )
+    return payload
+
+
 _INDEED_VIEWJOB_URL_RE = re.compile(r"https?://(?:www\.)?indeed\.com/viewjob")
 
 # Canonical JSON-LD block extractor — tolerates attribute reordering,
@@ -1022,6 +1070,12 @@ def ingest_url(
                 fetched = _fetch_ashby(m["company"], m["job_id"])
             elif WORKABLE_URL_RE.match(url):
                 fetched = _fetch_workable(url)
+            elif m := SMARTRECRUITERS_URL_RE.match(url):
+                fetched = _fetch_smartrecruiters(m["company"], m["job_id"])
+            elif RECRUITEE_URL_RE.match(url):
+                fetched = _fetch_recruitee(url)
+            elif PERSONIO_URL_RE.match(url):
+                fetched = _fetch_personio(url)
             elif _INDEED_VIEWJOB_URL_RE.match(url):
                 fetched = _fetch_indeed_viewjob(url)
             else:

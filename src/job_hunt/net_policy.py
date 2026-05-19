@@ -85,6 +85,7 @@ KNOWN_SHARED_DOMAINS: Final = frozenset({
     "recruitee.com",
     "personio.de",
     "personio.com",
+    "remotive.com",
 })
 
 

@@ -63,6 +63,7 @@ HTTPS_URL_RE: Final = re.compile(r"^https://")
 
 MAX_COMPANIES: Final = 200
 MAX_NOTES_LEN: Final = 1000
+MAX_REMOTIVE_SEARCH_LEN: Final = 200
 
 _FORBIDDEN_INPUT_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 
@@ -114,8 +115,12 @@ class WatchlistEntry:
     lever: str = ""
     ashby: str = ""
     workable: str = ""
+    smartrecruiters: str = ""
+    recruitee: str = ""
+    personio: str = ""
     careers_url: str = ""
     indeed_search_url: str = ""
+    remotive_search: str = ""
     usajobs_search_profile: str = ""
     usajobs_profile: USAJobsSearchProfile | None = None
     notes: str = ""
@@ -126,8 +131,12 @@ class WatchlistEntry:
             or self.lever
             or self.ashby
             or self.workable
+            or self.smartrecruiters
+            or self.recruitee
+            or self.personio
             or self.careers_url
             or self.indeed_search_url
+            or self.remotive_search
             or self.usajobs_search_profile
         )
 
@@ -176,8 +185,12 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
     lever = raw.get("lever", "") or ""
     ashby = raw.get("ashby", "") or ""
     workable = raw.get("workable", "") or ""
+    smartrecruiters = raw.get("smartrecruiters", "") or ""
+    recruitee = raw.get("recruitee", "") or ""
+    personio = raw.get("personio", "") or ""
     careers_url = raw.get("careers_url", "") or ""
     indeed_search_url = raw.get("indeed_search_url", "") or ""
+    remotive_search = raw.get("remotive_search", "") or ""
     usajobs_search_profile = raw.get("usajobs_search_profile", "") or ""
     notes = raw.get("notes", "") or ""
 
@@ -189,6 +202,18 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
         raise WatchlistValidationError(f"invalid ashby slug: {ashby!r}")
     if workable and not ATS_SLUG_RE.match(workable):
         raise WatchlistValidationError(f"invalid workable subdomain: {workable!r}")
+    if smartrecruiters and not ATS_SLUG_RE.match(smartrecruiters):
+        raise WatchlistValidationError(
+            f"invalid smartrecruiters company identifier: {smartrecruiters!r}"
+        )
+    if recruitee and not ATS_SLUG_RE.match(recruitee):
+        raise WatchlistValidationError(
+            f"invalid recruitee company identifier: {recruitee!r}"
+        )
+    if personio and not ATS_SLUG_RE.match(personio):
+        raise WatchlistValidationError(
+            f"invalid personio company identifier: {personio!r}"
+        )
     if careers_url and not HTTPS_URL_RE.match(careers_url):
         raise WatchlistValidationError(
             f"careers_url must be https://: {careers_url!r}"
@@ -206,6 +231,16 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
             raise WatchlistValidationError(
                 f"indeed_search_url must target indeed.com: {indeed_search_url!r}"
             )
+    if remotive_search:
+        if _FORBIDDEN_INPUT_CHARS_RE.search(remotive_search):
+            raise WatchlistValidationError(
+                f"control character in remotive_search: {remotive_search!r}"
+            )
+        if len(remotive_search) > MAX_REMOTIVE_SEARCH_LEN:
+            raise WatchlistValidationError(
+                f"remotive_search too long ({len(remotive_search)} > "
+                f"{MAX_REMOTIVE_SEARCH_LEN})"
+            )
     if usajobs_search_profile and not ATS_SLUG_RE.match(usajobs_search_profile):
         raise WatchlistValidationError(
             f"invalid usajobs_search_profile: {usajobs_search_profile!r}"
@@ -220,8 +255,12 @@ def _validate_entry(raw: dict) -> WatchlistEntry:
         lever=lever,
         ashby=ashby,
         workable=workable,
+        smartrecruiters=smartrecruiters,
+        recruitee=recruitee,
+        personio=personio,
         careers_url=careers_url,
         indeed_search_url=indeed_search_url,
+        remotive_search=remotive_search,
         usajobs_search_profile=usajobs_search_profile,
         notes=notes,
     )
@@ -374,10 +413,18 @@ def watchlist_to_dict(wl: Watchlist) -> dict:
             entry["ashby"] = c.ashby
         if c.workable:
             entry["workable"] = c.workable
+        if c.smartrecruiters:
+            entry["smartrecruiters"] = c.smartrecruiters
+        if c.recruitee:
+            entry["recruitee"] = c.recruitee
+        if c.personio:
+            entry["personio"] = c.personio
         if c.careers_url:
             entry["careers_url"] = c.careers_url
         if c.indeed_search_url:
             entry["indeed_search_url"] = c.indeed_search_url
+        if c.remotive_search:
+            entry["remotive_search"] = c.remotive_search
         if c.usajobs_search_profile:
             entry["usajobs_search_profile"] = c.usajobs_search_profile
         if c.notes:

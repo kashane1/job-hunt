@@ -1,0 +1,38 @@
+{
+  "offers": [
+    {
+      "id": 901001,
+      "slug": "senior-platform-engineer",
+      "title": "Senior Platform Engineer",
+      "status": "published",
+      "description": "<p>Build platform systems.</p>",
+      "requirements": "<p>5+ years experience.</p>",
+      "location": "Remote",
+      "city": "Amsterdam",
+      "country_code": "nl",
+      "department": "Engineering",
+      "employment_type_code": "fulltime",
+      "remote": true,
+      "created_at": "2026-04-15T00:00:00.000Z",
+      "published_at": "2026-04-18T00:00:00.000Z",
+      "careers_url": "https://exampleco.recruitee.com/o/senior-platform-engineer",
+      "careers_apply_url": "https://exampleco.recruitee.com/o/senior-platform-engineer/c/new",
+      "url": "https://exampleco.recruitee.com/api/offers/901001"
+    },
+    {
+      "id": 901002,
+      "slug": "backend-engineer-draft",
+      "title": "Backend Engineer (draft)",
+      "status": "draft",
+      "description": "<p>Should not surface.</p>",
+      "location": "Berlin",
+      "city": "Berlin",
+      "country_code": "de",
+      "department": "Engineering",
+      "employment_type_code": "fulltime",
+      "remote": false,
+      "published_at": "",
+      "careers_url": "https://exampleco.recruitee.com/o/backend-engineer-draft"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<workzag-jobs>
+  <position>
+    <id>1000001</id>
+    <subcompany>ExampleCo GmbH</subcompany>
+    <office>Munich</office>
+    <department>Engineering</department>
+    <recruitingCategory>Tech</recruitingCategory>
+    <name>Senior Platform Engineer</name>
+    <employmentType>permanent</employmentType>
+    <seniority>senior</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>3-5</yearsOfExperience>
+    <createdAt>2026-04-18</createdAt>
+    <jobDescriptions>
+      <jobDescription>
+        <name>About the role</name>
+        <value><![CDATA[<p>Build platform systems.</p>]]></value>
+      </jobDescription>
+      <jobDescription>
+        <name>Requirements</name>
+        <value><![CDATA[<p>5+ years experience.</p>]]></value>
+      </jobDescription>
+    </jobDescriptions>
+  </position>
+  <position>
+    <id>1000002</id>
+    <subcompany>ExampleCo GmbH</subcompany>
+    <office>Remote</office>
+    <department>Engineering</department>
+    <recruitingCategory>Tech</recruitingCategory>
+    <name>Backend Engineer</name>
+    <employmentType>permanent</employmentType>
+    <seniority>intermediate</seniority>
+    <schedule>full-time</schedule>
+    <yearsOfExperience>2-4</yearsOfExperience>
+    <createdAt>2026-04-17</createdAt>
+    <jobDescriptions>
+      <jobDescription>
+        <name>About the role</name>
+        <value><![CDATA[<p>Build APIs.</p>]]></value>
+      </jobDescription>
+    </jobDescriptions>
+  </position>
+</workzag-jobs>

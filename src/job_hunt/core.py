@@ -1937,7 +1937,7 @@ def build_parser() -> argparse.ArgumentParser:
     disc_parser.add_argument(
         "--sources",
         default="",
-        help="Comma-separated: greenhouse,lever,careers,indeed_search,ashby,workable,usajobs",
+        help="Comma-separated: greenhouse,lever,careers,indeed_search,ashby,workable,smartrecruiters,recruitee,personio,usajobs,remotive",
     )
     disc_parser.add_argument("--dry-run", action="store_true")
     disc_parser.add_argument("--no-score", action="store_true")

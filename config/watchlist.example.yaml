@@ -5,8 +5,8 @@
 # names, which are PII-adjacent).
 #
 # Each entry needs at least ONE of greenhouse / lever / ashby / workable /
-# careers_url / indeed_search_url / usajobs_search_profile — otherwise it's
-# skipped with a warning.
+# smartrecruiters / recruitee / personio / careers_url / indeed_search_url /
+# usajobs_search_profile — otherwise it's skipped with a warning.
 
 companies:
   - name: "ExampleCo"
@@ -18,12 +18,22 @@ companies:
   - name: "AnotherCorp"
     lever: "anothercorp"
     workable: "anothercorp"
+    smartrecruiters: "AnotherCorp"
+  - name: "RecruiteeCo"
+    recruitee: "recruiteeco"
+    notes: "public Recruitee offers API"
+  - name: "PersonioCo"
+    personio: "personioco"
+    notes: "public Personio XML feed (.com then .de fallback)"
   - name: "ThirdCo"
     careers_url: "https://thirdco.com/jobs"
     notes: "generic crawl only"
   - name: "Indeed platform search"
     indeed_search_url: "https://www.indeed.com/jobs?q=senior+platform+engineer&l=Remote&radius=0"
     notes: "batch 4 — one virtual company per saved Indeed search"
+  - name: "Remotive remote search"
+    remotive_search: "platform engineer"
+    notes: "Phase 3 aggregator — one virtual company per saved Remotive query"
   - name: "USAJOBS federal remote"
     usajobs_search_profile: "federal_remote_platform"
     notes: "uses local API credentials plus a named profile below"
