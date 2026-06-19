@@ -567,6 +567,32 @@ COVER_LETTER_MIN_LANE_SCORE: Final = 0.15
 COVER_LETTER_MIN_LANE_MARGIN: Final = 0.05
 COVER_LETTER_LANE_TIE_TOLERANCE: Final = 0.001
 
+# Title-signal weight. The role title is the most authoritative lane signal, but
+# in a plain keyword bag a title token ("backend") carries no more weight than a
+# body keyword, so an internal-tooling/operator-facing backend posting can let
+# product keywords out-score the platform lane. Add a bounded boost to the lane a
+# title clearly names. Word-boundary matched on the lowercased title; multiple
+# categories can boost (e.g. "ML Infrastructure" boosts both ai and platform, and
+# the jaccard decides). "ops"/"operations" is deliberately NOT a product signal —
+# it names a team, not a product/frontend role, and is the main confound.
+COVER_LETTER_TITLE_SIGNAL_BOOST: Final = 0.20
+_TITLE_LANE_SIGNALS: Final[dict[str, tuple[str, ...]]] = {
+    COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS: (
+        "backend", "platform", "infrastructure", "infra", "sre",
+        "site reliability", "reliability engineer", "systems engineer",
+        "devops", "data platform", "data engineer", "database", "distributed",
+    ),
+    COVER_LETTER_LANE_AI_ENGINEER: (
+        "ai", "ml", "machine learning", "llm", "applied ai", "ai engineer",
+        "ml engineer", "research engineer",
+    ),
+    COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER: (
+        "product", "frontend", "front end", "front-end", "full stack",
+        "full-stack", "fullstack", "react", "ui engineer", "ux", "mobile",
+        "ios", "android", "design engineer", "growth",
+    ),
+}
+
 # Stale-name denylist per plan §5. Whole-word boundary + case-insensitive match,
 # with an escape hatch when the name equals the target company.
 STALE_COMPANY_DENYLIST: Final[frozenset[str]] = frozenset({"SpaceX", "Kadince"})
@@ -901,7 +927,12 @@ def choose_cover_letter_lane(
 
     # Score all lanes regardless of explicit mode (cheap + useful for rationale).
     lead_keywords = _lead_keyword_tokens(lead)
-    scores = _score_all_lanes(lead_keywords)
+    title = lead.get("title", "") or ""
+    scores = _score_all_lanes(lead_keywords, title)
+    title_boosts = _title_lane_boosts(title)
+    title_note = (
+        f"; title signal boosts {sorted(title_boosts)}" if title_boosts else ""
+    )
 
     if explicit_lane is not None:
         if explicit_lane not in COVER_LETTER_LANE_SPECS:
@@ -946,24 +977,42 @@ def choose_cover_letter_lane(
             ),
         })
 
-    rationale = f"auto-selected by lane scoring ({_format_scores(scores)})"
+    rationale = f"auto-selected by lane scoring ({_format_scores(scores)}{title_note})"
     return winner, "auto", rationale, warnings
 
 
-def _score_all_lanes(lead_keywords: set[str]) -> dict[str, float]:
-    """Compute the lane_score = 0.7 * jaccard + 0.3 * phrase_boost for each lane.
+def _title_lane_boosts(title: str) -> dict[str, float]:
+    """Per-lane boost from authoritative title signals (see _TITLE_LANE_SIGNALS).
 
-    Mirrors select_accomplishments_for_variant. Phrase boost checks a joined
-    keyword-bag string for phrase presence.
+    Presence-based, not count-based: a lane is boosted by a flat
+    COVER_LETTER_TITLE_SIGNAL_BOOST if the title contains any of its signals.
+    """
+    low = (title or "").lower()
+    boosts: dict[str, float] = {}
+    for lane_id, signals in _TITLE_LANE_SIGNALS.items():
+        if any(re.search(rf"\b{re.escape(sig)}\b", low) for sig in signals):
+            boosts[lane_id] = COVER_LETTER_TITLE_SIGNAL_BOOST
+    return boosts
+
+
+def _score_all_lanes(lead_keywords: set[str], title: str = "") -> dict[str, float]:
+    """Compute the lane score for each lane, clamped to [0, 1].
+
+    Base score = 0.7 * jaccard + 0.3 * phrase_boost (mirrors
+    select_accomplishments_for_variant). A bounded title-signal boost is then
+    added so the role title — the most authoritative signal — is not diluted by a
+    body-keyword bag. `title` defaults to "" (no boost) for keyword-only callers.
     """
     keyword_text = " ".join(sorted(lead_keywords))
+    title_boosts = _title_lane_boosts(title)
     scores: dict[str, float] = {}
     for lane_id, spec in COVER_LETTER_LANE_SPECS.items():
         lane_tokens = set(spec.preferred_keywords)
         jaccard = _jaccard(lane_tokens, lead_keywords)
         phrase_hits = sum(1 for phrase in spec.preferred_phrases if phrase.lower() in keyword_text.lower())
         phrase_boost = min(phrase_hits / max(len(spec.preferred_phrases), 1), 1.0)
-        scores[lane_id] = 0.7 * jaccard + 0.3 * phrase_boost
+        base = 0.7 * jaccard + 0.3 * phrase_boost
+        scores[lane_id] = min(base + title_boosts.get(lane_id, 0.0), 1.0)
     return scores
 
 

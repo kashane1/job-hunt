@@ -34,6 +34,7 @@ from job_hunt.generation import (
     _humanize_dashes,
     _resolve_candidate_name,
     _score_all_lanes,
+    _title_lane_boosts,
     _unsafe_prose_reason,
     approved_claims_as_highlights,
     choose_cover_letter_lane,
@@ -201,6 +202,95 @@ class CoverLetterLaneSelectionTest(unittest.TestCase):
             self.assertLessEqual(score, 1.0)
         winner = max(scores, key=scores.get)
         self.assertEqual(winner, COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS)
+
+
+def _lead(title: str, keywords: list[str]) -> dict:
+    """Sanitized lead fixture: a title plus a normalized keyword bag. No real
+    company names; mirrors the shape discovery produces."""
+    return {
+        "lead_id": "acme-x",
+        "company": "Acme",
+        "title": title,
+        "normalized_requirements": {"required": [], "preferred": [], "keywords": keywords},
+    }
+
+
+class CoverLetterLaneTitleSignalTest(unittest.TestCase):
+    """Retune: an authoritative title signal must not be diluted by a body
+    keyword bag, while genuine product/frontend postings still pick product."""
+
+    def _lane(self, lead: dict) -> tuple[str, list[str]]:
+        lane_id, _src, _rat, warnings = choose_cover_letter_lane(lead, _sample_profile())
+        return lane_id, [w["code"] for w in warnings]
+
+    def test_backend_ops_with_operator_ui_picks_platform(self) -> None:
+        # The regression case: a backend role whose body is full of
+        # operator-facing/internal-UI/ops wording. Title must win for platform.
+        lead = _lead("Backend Engineer, Ops", [
+            "internal", "tooling", "operator", "operations", "ops", "ui",
+            "workflow", "customer", "retool", "backend", "infrastructure", "api",
+        ])
+        lane, _ = self._lane(lead)
+        self.assertEqual(lane, COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS)
+
+    def test_ml_infrastructure_picks_platform_not_product(self) -> None:
+        lead = _lead("ML Infrastructure Engineer, Safeguards", [
+            "ml", "infrastructure", "distributed", "systems", "production",
+            "kubernetes", "data", "pipelines", "tools",
+        ])
+        lane, _ = self._lane(lead)
+        self.assertIn(lane, (COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS, COVER_LETTER_LANE_AI_ENGINEER))
+        self.assertNotEqual(lane, COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER)
+
+    def test_software_engineer_backend_picks_platform(self) -> None:
+        lead = _lead("Software Engineer, Backend", [
+            "backend", "typescript", "scalable", "infrastructure", "web", "api",
+        ])
+        lane, _ = self._lane(lead)
+        self.assertEqual(lane, COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS)
+
+    def test_genuine_fullstack_product_picks_product(self) -> None:
+        lead = _lead("Full Stack Product Engineer", [
+            "product", "user", "customer", "experience", "frontend", "react",
+            "workflow", "impact",
+        ])
+        lane, _ = self._lane(lead)
+        self.assertEqual(lane, COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER)
+
+    def test_frontend_react_picks_product(self) -> None:
+        lead = _lead("Frontend Engineer", [
+            "react", "frontend", "ui", "typescript", "components", "user",
+        ])
+        lane, _ = self._lane(lead)
+        self.assertEqual(lane, COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER)
+
+    def test_ops_in_title_is_not_a_product_signal(self) -> None:
+        # "ops"/"operations" must not boost product — it names a team, not a role.
+        boosts = _title_lane_boosts("Backend Engineer, Ops")
+        self.assertIn(COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS, boosts)
+        self.assertNotIn(COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER, boosts)
+
+    def test_title_boost_absent_without_signal(self) -> None:
+        # A generic title yields no boost; selection falls back to body keywords.
+        self.assertEqual(_title_lane_boosts("Software Engineer"), {})
+
+    def test_close_call_is_deterministic_and_explainable(self) -> None:
+        # Same input -> same winner + rationale mentions the title boost.
+        lead = _lead("Backend Engineer, Ops", ["internal", "ops", "ui", "backend"])
+        a = choose_cover_letter_lane(lead, _sample_profile())
+        b = choose_cover_letter_lane(lead, _sample_profile())
+        self.assertEqual(a[0], b[0])
+        self.assertEqual(a[2], b[2])
+        self.assertIn("title signal", a[2])
+
+    def test_title_boost_keeps_scores_clamped(self) -> None:
+        scores = _score_all_lanes(
+            {"backend", "platform", "infrastructure", "internal", "tools"},
+            title="Backend Platform Infrastructure Engineer",
+        )
+        for s in scores.values():
+            self.assertLessEqual(s, 1.0)
+            self.assertGreaterEqual(s, 0.0)
 
 
 class CoverLetterEvidenceSelectionTest(unittest.TestCase):
