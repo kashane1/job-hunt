@@ -143,6 +143,38 @@ class CheckLanesTest(unittest.TestCase):
         report = check_lanes(reg, _bank([]), root)
         self.assertIn("no_resume_path", _codes(report))
 
+    def test_private_status_missing_file_is_info_not_error(self) -> None:
+        # A private-status lane whose resume is absent (clean checkout) must NOT
+        # error or warn resume_source_missing — absence is by design.
+        root = self._root_with([])
+        reg = _registry([{
+            "id": "platform_backend", "title_patterns": [],
+            "resume_path": "profile/resumes/platform-backend.md",
+            "review_status": "needs_user_review",
+        }], default="platform_backend")
+        report = check_lanes(reg, _bank([]), root)
+        codes = _codes(report)
+        self.assertIn("private_lane", codes)
+        self.assertNotIn("resume_source_missing", codes)
+        self.assertNotIn("ready_but_missing_resume", codes)
+        self.assertEqual([f for f in report["findings"] if f["level"] == "error"], [])
+
+    def test_private_status_local_file_present_reports_counts(self) -> None:
+        root = self._root_with(["profile/resumes/platform-backend.md"])
+        reg = _registry([{
+            "id": "platform_backend", "title_patterns": [],
+            "resume_path": "profile/resumes/platform-backend.md",
+            "review_status": "ready_local",
+        }], default="platform_backend")
+        bank = _bank([{"claim_id": "a", "review_status": "approved", "allowed_lanes": ["platform_backend"]}])
+        report = check_lanes(reg, bank, root)
+        lane = report["lanes"][0]
+        self.assertTrue(lane["resume_exists"])
+        self.assertEqual(lane["approved_claims"], 1)
+        # ready_local + present file + approved claim -> ready computed True.
+        self.assertTrue(lane["ready"])
+        self.assertEqual([f for f in report["findings"] if f["level"] == "error"], [])
+
 
 class LoadClaimsBankTest(unittest.TestCase):
     def test_absent_returns_none(self) -> None:

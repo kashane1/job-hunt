@@ -38,8 +38,8 @@
           },
           "review_status": {
             "type": "string",
-            "enum": ["missing", "draft", "ready"],
-            "description": "Authoring state. Optional; absent is treated as 'draft'. A lane marked 'ready' must have its resume file present AND at least one approved claim allowed for it (enforced by profile-doctor)."
+            "enum": ["missing", "draft", "draft_private", "needs_user_review", "ready_local", "ready"],
+            "description": "Authoring state. Optional; absent is treated as 'draft'. 'ready' = resume is committed to the repo and must have its file present AND >=1 approved claim (profile-doctor errors otherwise). The 'private' states (draft_private, needs_user_review, ready_local) describe a resume authored locally but intentionally gitignored, so a clean checkout will not have the file; profile-doctor reports these as info, never an error."
           },
           "notes": { "type": "string" }
         }

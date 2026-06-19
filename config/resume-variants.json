@@ -68,7 +68,8 @@
         "staff"
       ],
       "resume_path": "profile/resumes/platform-backend.md",
-      "notes": "Use for infra/platform/backend roles. Author the resume file before relying on this lane in a live run."
+      "review_status": "needs_user_review",
+      "notes": "Resume authored locally (gitignored) from profile/raw + claims bank; first AI draft awaiting user review of NEEDS_USER_REVIEW markers and needs_user_review claims before it is ready_local."
     },
     {
       "id": "fullstack_product",

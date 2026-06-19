@@ -22,6 +22,10 @@ DEFAULT_CLAIMS_REL: Final = "profile/claims/claims-bank.json"
 EXAMPLE_CLAIMS_REL: Final = "profile/claims/claims-bank.example.json"
 TEMPLATES_DIR_REL: Final = "profile/resumes/templates"
 
+# Statuses describing a resume authored locally but intentionally gitignored.
+# A clean checkout will not have the file, so its absence is never an error.
+PRIVATE_STATUSES: Final = frozenset({"draft_private", "needs_user_review", "ready_local"})
+
 
 def _finding(level: str, code: str, message: str) -> dict:
     return {"level": level, "code": code, "message": message}
@@ -136,6 +140,7 @@ def check_lanes(registry: dict, claims_bank: dict | None, root: Path) -> dict:
             findings.append(_finding("error", "no_resume_path",
                                      f"lane '{vid}' has no resume_path"))
 
+        is_private = review_status in PRIVATE_STATUSES
         if review_status == "ready":
             if not resume_exists:
                 findings.append(_finding(
@@ -145,6 +150,13 @@ def check_lanes(registry: dict, claims_bank: dict | None, root: Path) -> dict:
                 findings.append(_finding(
                     "error", "ready_but_no_claims",
                     f"lane '{vid}' is marked ready but has no approved claims"))
+        elif is_private:
+            # Resume is authored locally but gitignored; absence on a clean
+            # checkout is by design, so this is informational, never blocking.
+            findings.append(_finding(
+                "info", "private_lane",
+                f"lane '{vid}' is {review_status}; resume is local-only "
+                f"(present here: {resume_exists}, approved_claims={approved_count})"))
         elif not resume_exists:
             # Expected during authoring; surface so it is visible, not blocking.
             findings.append(_finding(
@@ -165,7 +177,7 @@ def check_lanes(registry: dict, claims_bank: dict | None, root: Path) -> dict:
             "review_status": review_status,
             "approved_claims": approved_count,
             "template_exists": template_exists,
-            "ready": review_status == "ready" and resume_exists and approved_count > 0,
+            "ready": review_status in ("ready", "ready_local") and resume_exists and approved_count > 0,
         })
 
     # Fallback/default behavior must be explicit and resolvable.

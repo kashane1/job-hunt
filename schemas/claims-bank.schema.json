@@ -44,8 +44,8 @@
           },
           "review_status": {
             "type": "string",
-            "enum": ["approved", "draft", "rejected"],
-            "description": "Only 'approved' claims may be used in generated materials."
+            "enum": ["approved", "draft", "needs_user_review", "rejected"],
+            "description": "Only 'approved' claims may be used in generated materials. 'needs_user_review' = sourced from raw material but a metric/attribution needs the user's confirmation before use."
           },
           "fabrication_risk": {
             "type": "string",
