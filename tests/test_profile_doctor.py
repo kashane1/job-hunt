@@ -11,9 +11,12 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+import subprocess
+
 from job_hunt.profile_doctor import (
     approved_claims_by_lane,
     check_lanes,
+    check_no_private_tracked,
     is_private_path,
     load_claims_bank,
     template_filename,
@@ -45,6 +48,10 @@ class IsPrivatePathTest(unittest.TestCase):
             "data/applications/y/plan.json",
             "docs/reports/foo-report.md",
             "docs/reports/capability-audit-2026-06-18.md",
+            # Generated profile reports are normalized-profile output (PII).
+            "docs/reports/profile-document-audit.md",
+            "docs/reports/profile-completeness.md",
+            "docs/reports/profile-anything.md",
         ]:
             self.assertTrue(is_private_path(p), p)
 
@@ -58,8 +65,42 @@ class IsPrivatePathTest(unittest.TestCase):
             "schemas/claims-bank.schema.json",
             "examples/profile/raw/resume.md",
             "docs/guides/profile-and-resume-privacy.md",
+            # docs/reports scaffolding + non-profile reports stay public.
+            "docs/reports/README.md",
+            "docs/reports/copilot-level-1.5-report-2026-06-18.md",
         ]:
             self.assertFalse(is_private_path(p), p)
+
+
+class CheckNoPrivateTrackedTest(unittest.TestCase):
+    def _git(self, root: Path, *args: str) -> None:
+        subprocess.run(["git", "-C", str(root), *args], check=True,
+                       capture_output=True, text=True)
+
+    def test_tracked_profile_report_is_flagged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            self._git(root, "init", "-q")
+            self._git(root, "config", "user.email", "t@example.com")
+            self._git(root, "config", "user.name", "Test")
+            # A public scaffolding file and a private generated profile report.
+            (root / "docs" / "reports").mkdir(parents=True)
+            (root / "docs" / "reports" / "README.md").write_text("public\n", encoding="utf-8")
+            (root / "docs" / "reports" / "profile-document-audit.md").write_text(
+                "generated report\n", encoding="utf-8",
+            )
+            self._git(root, "add", "docs/reports/README.md",
+                      "docs/reports/profile-document-audit.md")
+            self._git(root, "commit", "-qm", "seed")
+
+            findings = check_no_private_tracked(root)
+            messages = " ".join(f["message"] for f in findings)
+            codes = {f["code"] for f in findings}
+            self.assertIn("private_tracked", codes)
+            self.assertIn("profile-document-audit.md", messages)
+            # README must NOT be flagged.
+            self.assertNotIn("README.md", messages)
+            self.assertTrue(all(f["level"] == "error" for f in findings))
 
 
 class ApprovedClaimsTest(unittest.TestCase):

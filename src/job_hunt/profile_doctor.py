@@ -89,9 +89,18 @@ def is_private_path(rel_path: str) -> bool:
     # Real claims bank: profile/claims/*.json, except the sanitized example.
     if p.startswith("profile/claims/") and p.endswith(".json"):
         return p != EXAMPLE_CLAIMS_REL
-    # Internal audit / generated reports.
-    if p.startswith("docs/reports/") and (p.endswith("-report.md") or "-audit-" in p):
-        return True
+    # Generated profile reports + internal audit reports under docs/reports/.
+    # `profile-*.md` files (profile-document-audit.md, profile-completeness.md, …)
+    # are normalized-profile output and carry PII/private source references. The
+    # tracked README scaffolding stays public.
+    if p.startswith("docs/reports/"):
+        name = p[len("docs/reports/"):]
+        if name == "README.md":
+            return False
+        if name.startswith("profile-") and name.endswith(".md"):
+            return True
+        if p.endswith("-report.md") or "-audit-" in p:
+            return True
     return False
 
 

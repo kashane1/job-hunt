@@ -44,6 +44,11 @@ profile/claims/*.json
 # Keep them local; never push.
 docs/reports/*-audit-*.md
 
+# Generated profile reports (profile-document-audit.md, profile-completeness.md,
+# …) are normalized-profile output and carry PII/private source references.
+# Regenerated locally by `normalize-profile`; keep them local. README stays tracked.
+docs/reports/profile-*.md
+
 # Watchlist contains user-supplied target-company names (PII-adjacent).
 # Track config/watchlist.example.yaml as the template.
 config/watchlist.yaml
