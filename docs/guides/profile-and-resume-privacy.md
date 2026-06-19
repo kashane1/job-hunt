@@ -91,3 +91,55 @@ git commit -m "chore(privacy): stop tracking <path>"
 Note this does **not** remove the file from past history. If the content is
 sensitive and the repo was ever shared/public, scrub history separately
 (`git filter-repo`) and rotate anything exposed.
+
+## Git history exposure — assessment 2026-06-19
+
+`git rm --cached` (commit `8eb122c`) stopped tracking the generated profile
+reports, but their blobs — plus two private intake files untracked earlier —
+remain in **pushed** history. Assessment found exactly four private files ever
+committed, all introduced by commits already on the `origin/main` remote
+(see `git remote -v`):
+
+| Path (no contents) | Notes |
+| --- | --- |
+| `docs/reports/profile-document-audit.md` | normalized-profile report, PII-bearing |
+| `docs/reports/profile-completeness.md` | normalized-profile report |
+| `profile/raw/accomplishments.md` | private intake |
+| `profile/raw/ai-company-os.md` | private intake |
+
+What was **not** leaked (gitignore held from the start): the real claims bank
+(`profile/claims/claims-bank.json`), real resume lanes
+(`profile/resumes/*.md`), the normalized profile, and any `data/` packets.
+
+**Decision: history was NOT rewritten from the automated context.** A remote
+exists, the affected commits are confirmed pushed, the remote's visibility
+(public vs private) was not checked (no remote calls were made), and neither
+`git filter-repo` nor BFG is installed. Rewriting pushed history needs a
+force-update of a shared remote and is inherently incomplete (GitHub retains
+unreachable objects via PRs/forks/caches; existing clones keep the data).
+
+### User-driven remediation runbook (run only when you decide)
+
+1. **Check remote visibility first.** On the host, confirm whether the `origin`
+   repo is private or public. If private with no outside collaborators/forks,
+   the exposure is limited and a rewrite may be optional.
+2. **If you choose to scrub**, install the tool and rewrite exactly these paths:
+   ```bash
+   pip install git-filter-repo
+   git filter-repo --invert-paths \
+     --path docs/reports/profile-document-audit.md \
+     --path docs/reports/profile-completeness.md \
+     --path profile/raw/accomplishments.md \
+     --path profile/raw/ai-company-os.md
+   ```
+3. **Force-update the remote** (coordinate with anyone who has cloned/forked):
+   `git push --force-with-lease origin main` (and any other affected branches).
+4. **Ask GitHub Support** to garbage-collect unreachable objects if the repo was
+   public, since rewrites do not purge cached blobs reachable via old SHAs.
+5. **Verify**: `git log --all -- <paths>` is empty and
+   `git rev-list --objects --all | grep -E 'profile-(document-audit|completeness)\.md|profile/raw/(accomplishments|ai-company-os)\.md'`
+   returns nothing.
+
+The exposed data is personal contact/career detail (already on a resume), not
+credentials — there are no secrets to rotate. Treat the rewrite as explicit,
+human-approved history surgery, never an autonomous step.
