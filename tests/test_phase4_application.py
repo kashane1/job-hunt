@@ -355,6 +355,63 @@ class PreparePipelineTest(unittest.TestCase):
             status = read_json(result.draft_dir / "status.json")
             self.assertEqual(status["generated_content_ids"], ["resume-1", "cover-1"])
 
+    def test_prepare_records_empty_coherence_when_lanes_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])), \
+                 patch("job_hunt.application._routed_resume_variant", return_value="platform_backend"), \
+                 patch("job_hunt.application._build_resume_asset_ref", return_value={
+                     "content_id": "resume-1", "available": True,
+                     "preferred_upload_kind": "pdf", "pdf_export_status": "ready",
+                 }), \
+                 patch("job_hunt.application._build_cover_letter_asset_ref", return_value={
+                     "content_id": "cover-1", "available": True,
+                     "generation_status": "generated",
+                     "lane_id": "platform_internal_tools",
+                     "preferred_upload_kind": "pdf", "pdf_export_status": "ready",
+                 }):
+                result = prepare_application(
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications", data_root=data_root,
+                )
+            plan = read_json(result.draft_dir / "plan.json")
+            self.assertEqual(plan["coherence_warnings"], [])
+            self.assertNotIn("coherence_warnings", plan["handoff_context"])
+
+    def test_prepare_flags_cover_letter_lane_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])), \
+                 patch("job_hunt.application._routed_resume_variant", return_value="platform_backend"), \
+                 patch("job_hunt.application._build_resume_asset_ref", return_value={
+                     "content_id": "resume-1", "available": True,
+                     "preferred_upload_kind": "pdf", "pdf_export_status": "ready",
+                 }), \
+                 patch("job_hunt.application._build_cover_letter_asset_ref", return_value={
+                     "content_id": "cover-1", "available": True,
+                     "generation_status": "generated",
+                     "lane_id": "product_minded_engineer",
+                     "preferred_upload_kind": "pdf", "pdf_export_status": "ready",
+                 }):
+                result = prepare_application(
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications", data_root=data_root,
+                )
+            plan = read_json(result.draft_dir / "plan.json")
+            codes = [w["code"] for w in plan["coherence_warnings"]]
+            self.assertIn("cover_letter_lane_mismatch", codes)
+            # Surfaced in handoff metadata for the human reviewer...
+            self.assertIn("cover_letter_lane_mismatch",
+                          [w["code"] for w in plan["handoff_context"]["coherence_warnings"]])
+            # ...without changing the human-submit invariant.
+            self.assertTrue(plan["requires_human_submit"])
+            # Detail carries only lane IDs, no private content.
+            detail = plan["coherence_warnings"][0]["detail"]
+            self.assertNotIn("Kashane", detail)
+            self.assertNotIn("@", detail)
+
     def test_prepare_cover_letter_pdf_failure_is_nonfatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             data_root = Path(tmp)

@@ -30,6 +30,7 @@ from job_hunt.generation import (
     NEEDS_USER_REVIEW_NAME,
     RESUME_LANE_TO_COVER_LETTER_LANE,
     CoverLetterLaneSpec,
+    check_packet_lane_coherence,
     _CoverLetterError,
     _humanize_dashes,
     _resolve_candidate_name,
@@ -291,6 +292,55 @@ class CoverLetterLaneTitleSignalTest(unittest.TestCase):
         for s in scores.values():
             self.assertLessEqual(s, 1.0)
             self.assertGreaterEqual(s, 0.0)
+
+
+class PacketLaneCoherenceTest(unittest.TestCase):
+    """check_packet_lane_coherence: resume variant vs cover-letter lane."""
+
+    def test_matching_platform_pair_is_coherent(self) -> None:
+        self.assertIsNone(
+            check_packet_lane_coherence("platform_backend", "platform_internal_tools")
+        )
+
+    def test_platform_resume_with_product_letter_mismatches(self) -> None:
+        w = check_packet_lane_coherence("platform_backend", "product_minded_engineer")
+        self.assertIsNotNone(w)
+        self.assertEqual(w["code"], "cover_letter_lane_mismatch")
+        self.assertEqual(w["severity"], "warning")
+        # Only lane IDs in the detail — no private content.
+        self.assertIn("platform_internal_tools", w["detail"])
+        self.assertIn("product_minded_engineer", w["detail"])
+
+    def test_product_resume_with_product_letter_is_coherent(self) -> None:
+        self.assertIsNone(
+            check_packet_lane_coherence("fullstack_product", "product_minded_engineer")
+        )
+
+    def test_generalist_resume_is_lane_agnostic(self) -> None:
+        # generalist_swe has no dedicated cover lane -> any lane is coherent.
+        self.assertIsNone(
+            check_packet_lane_coherence("generalist_swe", "product_minded_engineer")
+        )
+
+    def test_unknown_resume_variant_warns(self) -> None:
+        w = check_packet_lane_coherence("brand_new_variant", "platform_internal_tools")
+        self.assertEqual(w["code"], "cover_letter_lane_unknown_variant")
+
+    def test_unknown_cover_lane_warns(self) -> None:
+        w = check_packet_lane_coherence("platform_backend", "bogus_lane")
+        self.assertEqual(w["code"], "cover_letter_lane_unknown")
+
+    def test_missing_routed_variant_warns(self) -> None:
+        w = check_packet_lane_coherence(None, "platform_internal_tools")
+        self.assertEqual(w["code"], "cover_letter_lane_unverified")
+
+    def test_no_cover_letter_is_coherent(self) -> None:
+        # No cover letter generated -> nothing to verify.
+        self.assertIsNone(check_packet_lane_coherence("platform_backend", None))
+
+    def test_mapping_pairs_are_all_self_coherent(self) -> None:
+        for variant, lane in RESUME_LANE_TO_COVER_LETTER_LANE.items():
+            self.assertIsNone(check_packet_lane_coherence(variant, lane), variant)
 
 
 class CoverLetterEvidenceSelectionTest(unittest.TestCase):

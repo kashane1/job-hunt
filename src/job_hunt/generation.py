@@ -562,6 +562,63 @@ RESUME_LANE_TO_COVER_LETTER_LANE: Final[dict[str, str]] = {
     "fullstack_product": COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER,
 }
 
+# Resume variants with no dedicated cover-letter lane: any lane is acceptable, so
+# coherence is satisfied by definition. generalist_swe falls back to auto lane
+# selection at generation time, so its cover letter may land in any lane.
+COVER_LETTER_LANE_AGNOSTIC_RESUME_VARIANTS: Final[frozenset[str]] = frozenset(
+    {"generalist_swe"}
+)
+
+
+def check_packet_lane_coherence(
+    resume_variant: str | None, cover_letter_lane: str | None
+) -> dict | None:
+    """Assert a packet's resume variant and cover-letter lane are coherent.
+
+    Returns None when coherent, else a warning dict {code, severity, detail}
+    carrying only lane IDs (never private content). Codes:
+      - cover_letter_lane_unknown: the cover-letter lane is not a known lane
+      - cover_letter_lane_unverified: no routed resume variant to check against
+      - cover_letter_lane_unknown_variant: resume variant has no lane mapping
+      - cover_letter_lane_mismatch: variant expects a different cover-letter lane
+
+    Conservative by design: an unknown variant or lane warns rather than silently
+    passing. A lane-agnostic variant (generalist_swe) is always coherent.
+    """
+    if not cover_letter_lane:
+        return None  # no cover letter / lane to verify
+    if cover_letter_lane not in COVER_LETTER_LANE_SPECS:
+        return {
+            "code": "cover_letter_lane_unknown",
+            "severity": "warning",
+            "detail": f"cover-letter lane {cover_letter_lane!r} is not a known lane",
+        }
+    if not resume_variant:
+        return {
+            "code": "cover_letter_lane_unverified",
+            "severity": "warning",
+            "detail": "no routed resume variant available to verify cover-letter lane",
+        }
+    if resume_variant in COVER_LETTER_LANE_AGNOSTIC_RESUME_VARIANTS:
+        return None
+    expected = RESUME_LANE_TO_COVER_LETTER_LANE.get(resume_variant)
+    if expected is None:
+        return {
+            "code": "cover_letter_lane_unknown_variant",
+            "severity": "warning",
+            "detail": f"resume variant {resume_variant!r} has no known cover-letter lane mapping",
+        }
+    if cover_letter_lane != expected:
+        return {
+            "code": "cover_letter_lane_mismatch",
+            "severity": "warning",
+            "detail": (
+                f"resume variant {resume_variant!r} expects cover-letter lane "
+                f"{expected!r} but packet cover letter is {cover_letter_lane!r}"
+            ),
+        }
+    return None
+
 # Confidence thresholds per plan §2.
 COVER_LETTER_MIN_LANE_SCORE: Final = 0.15
 COVER_LETTER_MIN_LANE_MARGIN: Final = 0.05

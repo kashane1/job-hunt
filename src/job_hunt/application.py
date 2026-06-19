@@ -600,6 +600,17 @@ def _build_resume_asset_ref(lead_id: str, data_root: Path) -> dict:
     }
 
 
+def _routed_resume_variant(lead: dict) -> str | None:
+    """Return the lead's routed resume variant id, or None if unroutable."""
+    from .resume_registry import RegistryError, load_registry, route_lead
+
+    try:
+        decision = route_lead(lead, load_registry())
+    except (RegistryError, KeyError, ValueError, OSError):
+        return None
+    return decision.get("selected_variant_id")
+
+
 def _cover_letter_lane_for_routed_resume(lead: dict) -> str | None:
     """Map the lead's routed resume variant to a cover-letter lane, or None.
 
@@ -609,13 +620,8 @@ def _cover_letter_lane_for_routed_resume(lead: dict) -> str | None:
     the generator fall back to auto lane selection.
     """
     from .generation import RESUME_LANE_TO_COVER_LETTER_LANE
-    from .resume_registry import RegistryError, load_registry, route_lead
 
-    try:
-        decision = route_lead(lead, load_registry())
-    except (RegistryError, KeyError, ValueError, OSError):
-        return None
-    return RESUME_LANE_TO_COVER_LETTER_LANE.get(decision.get("selected_variant_id"))
+    return RESUME_LANE_TO_COVER_LETTER_LANE.get(_routed_resume_variant(lead))
 
 
 def _build_cover_letter_asset_ref(lead: dict, candidate_profile: dict, data_root: Path) -> dict:
@@ -652,6 +658,8 @@ def _build_cover_letter_asset_ref(lead: dict, candidate_profile: dict, data_root
         "content_id": record.get("content_id"),
         "available": True,
         "generation_status": "generated",
+        # Lane the letter was actually framed in — used for packet coherence.
+        "lane_id": record.get("lane_id"),
         "preferred_upload_kind": "pdf",
         "pdf_export_status": _pdf_export_status(record),
     }
@@ -906,6 +914,19 @@ def prepare_application(
         if ref.get("content_id")
     ]
 
+    # Packet coherence: the cover-letter lane must match the routed resume lane.
+    # Normally guaranteed because the cover letter is generated from the routed
+    # variant; this is a defense-in-depth assertion so a future wiring/scoring
+    # change can't silently reintroduce a resume/cover-letter lane mismatch. Only
+    # lane IDs (non-private) are recorded.
+    from .generation import check_packet_lane_coherence
+
+    coherence_warning = check_packet_lane_coherence(
+        _routed_resume_variant(lead),
+        generated_asset_refs["cover_letter"].get("lane_id"),
+    )
+    coherence_warnings = [coherence_warning] if coherence_warning else []
+
     # Tier + rationale
     tier, rationale = _compute_tier(
         ats_status=ats_status,
@@ -915,6 +936,10 @@ def prepare_application(
 
     routing_snapshot = _routing_snapshot(lead, posting_url, target)
     handoff_context = _handoff_context(target.handoff_kind, fields)
+    if coherence_warnings:
+        # Surface lane mismatches in the handoff metadata so a human reviewer
+        # sees them before submit. Does not change the human-submit invariant.
+        handoff_context["coherence_warnings"] = coherence_warnings
 
     plan = {
         "schema_version": 1,
@@ -946,6 +971,7 @@ def prepare_application(
         },
         "generated_asset_refs": generated_asset_refs,
         "cover_letter_policy": resolve_cover_letter_policy(surface),
+        "coherence_warnings": coherence_warnings,
         "prepared_at": now_iso(),
     }
     humanize_override = _extract_humanize_override(runtime_policy)
