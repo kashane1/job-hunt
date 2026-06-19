@@ -552,6 +552,16 @@ COVER_LETTER_LANE_PRIORITY: Final[tuple[str, ...]] = (
     COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER,
 )
 
+# Map a routed resume variant to the cover-letter lane that should frame the
+# packet, so a packet's cover letter never contradicts its resume (e.g. a
+# platform_backend resume paired with a product-framed letter). generalist_swe
+# has no dedicated cover lane; it maps to None so the caller falls back to auto.
+RESUME_LANE_TO_COVER_LETTER_LANE: Final[dict[str, str]] = {
+    "platform_backend": COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS,
+    "ai_engineer": COVER_LETTER_LANE_AI_ENGINEER,
+    "fullstack_product": COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER,
+}
+
 # Confidence thresholds per plan §2.
 COVER_LETTER_MIN_LANE_SCORE: Final = 0.15
 COVER_LETTER_MIN_LANE_MARGIN: Final = 0.05
@@ -658,6 +668,18 @@ def _unsafe_prose_reason(text: str, denylist: tuple[str, ...]) -> str | None:
         if phrase in low:
             return f"denylisted_phrase:{phrase}"
     return None
+
+
+def _humanize_dashes(text: str) -> str:
+    """Strip em/en dashes from generated prose (human-voice rule).
+
+    Approved-claim bodies may legitimately contain em/en dashes; they read as an
+    AI-tell in a cover letter, so normalize at render time rather than dropping
+    otherwise-good claims. Numeric-range en-dashes (e.g. "2019-2022") collapse to
+    a hyphen; every other em/en dash becomes a comma separator.
+    """
+    text = re.sub(r"(?<=\d)\s*–\s*(?=\d)", "-", text)
+    return re.sub(r"\s*[—–]\s*", ", ", text)
 
 
 def approved_claims_as_highlights(
@@ -1294,15 +1316,18 @@ def render_cover_letter_markdown(
         f"Thank you for your consideration."
     )
 
-    return (
+    # No em/en dashes in generated prose (human-voice rule); claim bodies may
+    # carry them, so normalize the assembled prose. The signature is appended
+    # afterward so the candidate's name is never altered.
+    prose = _humanize_dashes(
         f"Dear Hiring Manager,\n\n"
         f"{opening}\n\n"
         f"{proof}\n\n"
         f"{alignment}"
         f"{qb_fragment}\n\n"
-        f"{closing}\n\n"
-        f"Sincerely,\n{candidate_name}\n"
+        f"{closing}"
     )
+    return f"{prose}\n\nSincerely,\n{candidate_name}\n"
 
 
 # --- Orchestrator ---

@@ -29,6 +29,7 @@ from job_hunt.application import (
     ApplicationError,
     PlanError,
     _attempt_filename,
+    _cover_letter_lane_for_routed_resume,
     apply_posting,
     apply_status,
     checkpoint_update,
@@ -1026,6 +1027,25 @@ class RecomputeTiersBackfillTest(unittest.TestCase):
             survivor = read_json(outside)
             self.assertEqual(survivor["tier"], "tier_2")
             self.assertNotIn("tier_recomputed_at", survivor)
+
+
+class CoverLetterLaneForRoutedResumeTest(unittest.TestCase):
+    """Packet cover letters must follow the routed resume lane, not auto-pick a
+    contradictory frame off a UI-heavy posting."""
+
+    def test_backend_lead_maps_to_platform_cover_lane(self) -> None:
+        lead = {"lead_id": "x", "company": "Acme", "title": "Backend Engineer",
+                "raw_description": "Build backend services and internal tooling."}
+        self.assertEqual(
+            _cover_letter_lane_for_routed_resume(lead), "platform_internal_tools",
+        )
+
+    def test_unroutable_or_generalist_lead_returns_none(self) -> None:
+        # An empty/odd title routes to the generalist default, which has no
+        # dedicated cover lane -> None lets the generator fall back to auto.
+        lead = {"lead_id": "y", "company": "Acme", "title": "Office Manager",
+                "raw_description": "Administrative role."}
+        self.assertIsNone(_cover_letter_lane_for_routed_resume(lead))
 
 
 if __name__ == "__main__":

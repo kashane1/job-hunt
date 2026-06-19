@@ -28,8 +28,10 @@ from job_hunt.generation import (
     COVER_LETTER_MIN_LANE_MARGIN,
     COVER_LETTER_MIN_LANE_SCORE,
     NEEDS_USER_REVIEW_NAME,
+    RESUME_LANE_TO_COVER_LETTER_LANE,
     CoverLetterLaneSpec,
     _CoverLetterError,
+    _humanize_dashes,
     _resolve_candidate_name,
     _score_all_lanes,
     _unsafe_prose_reason,
@@ -367,6 +369,32 @@ class CoverLetterGuardrailTest(unittest.TestCase):
     def test_plain_prose_without_dollar_figures_is_safe(self) -> None:
         safe = "Migrated 10+ years of MySQL data to PostgreSQL with row-count checks."
         self.assertIsNone(_unsafe_prose_reason(safe, ()))
+
+    def test_humanize_dashes_em_dash_becomes_comma(self) -> None:
+        out = _humanize_dashes("Built ops UIs — chart views, modal views — at scale")
+        self.assertNotIn("—", out)
+        self.assertEqual(out, "Built ops UIs, chart views, modal views, at scale")
+
+    def test_humanize_dashes_numeric_range_keeps_hyphen(self) -> None:
+        # En-dash between digits is a range; collapse to a hyphen, not a comma.
+        self.assertEqual(_humanize_dashes("2019–2022"), "2019-2022")
+        # Non-numeric en-dash still becomes a comma separator.
+        self.assertEqual(_humanize_dashes("backend – platform"), "backend, platform")
+
+    def test_resume_lane_to_cover_letter_lane_mapping(self) -> None:
+        self.assertEqual(
+            RESUME_LANE_TO_COVER_LETTER_LANE["platform_backend"],
+            COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS,
+        )
+        self.assertEqual(
+            RESUME_LANE_TO_COVER_LETTER_LANE["ai_engineer"], COVER_LETTER_LANE_AI_ENGINEER,
+        )
+        self.assertEqual(
+            RESUME_LANE_TO_COVER_LETTER_LANE["fullstack_product"],
+            COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER,
+        )
+        # generalist_swe has no dedicated cover lane -> falls back to auto.
+        self.assertNotIn("generalist_swe", RESUME_LANE_TO_COVER_LETTER_LANE)
 
 
 class CoverLetterEndToEndTest(unittest.TestCase):

@@ -600,6 +600,24 @@ def _build_resume_asset_ref(lead_id: str, data_root: Path) -> dict:
     }
 
 
+def _cover_letter_lane_for_routed_resume(lead: dict) -> str | None:
+    """Map the lead's routed resume variant to a cover-letter lane, or None.
+
+    Keeps a packet's cover letter consistent with its resume: routing the resume
+    to platform_backend should not leave the cover letter free to auto-pick a
+    product frame off a UI-heavy posting. None (unroutable or generalist) lets
+    the generator fall back to auto lane selection.
+    """
+    from .generation import RESUME_LANE_TO_COVER_LETTER_LANE
+    from .resume_registry import RegistryError, load_registry, route_lead
+
+    try:
+        decision = route_lead(lead, load_registry())
+    except (RegistryError, KeyError, ValueError, OSError):
+        return None
+    return RESUME_LANE_TO_COVER_LETTER_LANE.get(decision.get("selected_variant_id"))
+
+
 def _build_cover_letter_asset_ref(lead: dict, candidate_profile: dict, data_root: Path) -> dict:
     from .generation import generate_cover_letter, load_cover_letter_claims_bank
 
@@ -608,12 +626,15 @@ def _build_cover_letter_asset_ref(lead: dict, candidate_profile: dict, data_root
     # Constrain prose to approved claims: load the private claims bank (falls back
     # to the sanitized example) so the generator never draws from raw intake.
     claims_bank = load_cover_letter_claims_bank()
+    # Align the cover-letter lane with the routed resume lane (else auto).
+    cover_letter_lane = _cover_letter_lane_for_routed_resume(lead)
     try:
         record = generate_cover_letter(
             lead,
             candidate_profile,
             None,
             cover_dir,
+            lane=cover_letter_lane,
             claims_bank=claims_bank,
         )
     except ValueError as exc:
