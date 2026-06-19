@@ -68,8 +68,8 @@
         "staff"
       ],
       "resume_path": "profile/resumes/platform-backend.md",
-      "review_status": "needs_user_review",
-      "notes": "Resume authored locally (gitignored) from profile/raw + claims bank; first AI draft awaiting user review of NEEDS_USER_REVIEW markers and needs_user_review claims before it is ready_local."
+      "review_status": "ready_local",
+      "notes": "Resume authored locally (gitignored), hardened with user-reviewed answers (2026-06-19): real employer/titles/dates/education, platform-level revenue wording, qualitative perf, validated-integrity migration wording, dated ai-company-os snapshot, Better Business Web as product/project. Marker-free, ATS-clean. Resume file stays private/gitignored."
     },
     {
       "id": "fullstack_product",
