@@ -677,6 +677,9 @@ def approved_claims_as_highlights(
         highlights.append({
             "summary": text,
             "source_document_ids": [f"claim:{claim.get('claim_id', '')}"],
+            # Technologies feed lane-relevance scoring so backend/platform claims
+            # outrank frontend ones for backend leads (and vice-versa).
+            "technologies": [str(t).lower() for t in (claim.get("technologies") or [])],
         })
     return highlights
 
@@ -892,15 +895,23 @@ def choose_cover_letter_lane(
     winner = _pick_auto_winner(scores)
     winner_score = scores[winner]
     sorted_scores = sorted(scores.values(), reverse=True)
-    margin = (sorted_scores[0] - sorted_scores[1]) if len(sorted_scores) > 1 else sorted_scores[0]
+    runner_up = sorted_scores[1] if len(sorted_scores) > 1 else 0.0
+    margin = winner_score - runner_up
 
-    if winner_score < COVER_LETTER_MIN_LANE_SCORE or margin < COVER_LETTER_MIN_LANE_MARGIN:
+    # Confidence is about *ambiguity*, not absolute magnitude. A job description's
+    # keyword set is often diluted by generic prose, so jaccard scores run small
+    # even for a clear-cut lane. Flag only when there is no domain signal at all,
+    # or when a real runner-up sits within the margin (a genuinely close call).
+    # A decisive winner that simply scores low is left unflagged.
+    ambiguous = winner_score <= 0.0 or (runner_up > 0.0 and margin < COVER_LETTER_MIN_LANE_MARGIN)
+    if ambiguous:
+        reason = "no domain signal" if winner_score <= 0.0 else "close runner-up"
         warnings.append({
             "code": "lane_low_confidence",
             "severity": "warning",
             "detail": (
-                f"winner {winner!r} score={winner_score:.3f} margin={margin:.3f} "
-                f"below thresholds (score≥{COVER_LETTER_MIN_LANE_SCORE}, margin≥{COVER_LETTER_MIN_LANE_MARGIN})"
+                f"winner {winner!r} score={winner_score:.3f} runner_up={runner_up:.3f} "
+                f"margin={margin:.3f} ({reason})"
             ),
         })
 
@@ -1123,18 +1134,33 @@ def _score_accomplishments_for_lane(
     lead_keywords: set[str],
     lane_spec: CoverLetterLaneSpec,
 ) -> list[tuple[float, dict]]:
-    """Score highlights against lead keywords + lane phrases; return sorted list."""
+    """Score highlights against lead keywords, lane domain, and lane phrases.
+
+    Three signals, sorted descending:
+      - lead_relevance: overlap with the (cleaned) lead keywords.
+      - lane_overlap: overlap with the lane's preferred domain keywords. This is
+        what makes a backend lead prefer migration/API/data-integrity claims over
+        a frontend ops-UI claim — and, symmetrically, a product/frontend lane
+        prefer the UI claim. It is general, not role-hardcoded.
+      - phrase_boost: lane-specific multi-word phrase presence.
+
+    A claim's `technologies` (when present) join its summary tokens so domain
+    signal is captured even when the prose does not spell the stack out.
+    """
+    lane_tokens = {kw.lower() for kw in lane_spec.preferred_keywords}
     scored: list[tuple[float, dict]] = []
     for h in highlights:
         summary = h.get("summary", "")
         h_tokens = set(generation_tokens(summary))
+        h_tokens |= {str(t).lower() for t in (h.get("technologies") or [])}
         lead_relevance = _jaccard(h_tokens, lead_keywords)
+        lane_overlap = _jaccard(h_tokens, lane_tokens)
 
         summary_lower = summary.lower()
         phrase_hits = sum(1 for phrase in lane_spec.preferred_phrases if phrase.lower() in summary_lower)
         phrase_boost = min(phrase_hits / max(len(lane_spec.preferred_phrases), 1), 1.0)
 
-        score = 0.7 * lead_relevance + 0.3 * phrase_boost
+        score = 0.5 * lead_relevance + 0.3 * lane_overlap + 0.2 * phrase_boost
         if score > 0:
             scored.append((score, h))
     scored.sort(key=lambda x: x[0], reverse=True)

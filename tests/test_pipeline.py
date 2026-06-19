@@ -489,5 +489,111 @@ remote_preference: remote
             validate(status, status_schema)
 
 
+class ReviewedIdentityNormalizationTest(unittest.TestCase):
+    """Reviewed candidate name flows from preferences frontmatter into the profile."""
+
+    _SCORING = {"skill_keywords": ["python", "typescript", "postgres", "aws"]}
+
+    def _run(self, prefs_frontmatter: str) -> dict:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw = root / "profile" / "raw"
+            raw.mkdir(parents=True)
+            (raw / "resume.txt").write_text(
+                "Some Person\nperson@example.com\n\nProfessional Experience\n* Built backend APIs in Python\n",
+                encoding="utf-8",
+            )
+            (raw / "preferences.md").write_text(prefs_frontmatter, encoding="utf-8")
+            return normalize_profile(root / "profile", root / "profile" / "normalized", self._SCORING)
+
+    def test_reviewed_name_maps_into_profile(self) -> None:
+        profile = self._run(
+            "---\n"
+            "document_type: preferences\n"
+            "candidate_name: Kashane Sakhakorn\n"
+            "remote_preference: remote\n"
+            "---\n\nPrivate preferences.\n"
+        )
+        self.assertEqual(profile["preferences"]["candidate_name"], "Kashane Sakhakorn")
+        self.assertEqual(profile["contact"]["name"], "Kashane Sakhakorn")
+
+    def test_missing_name_leaves_fields_unset(self) -> None:
+        profile = self._run(
+            "---\n"
+            "document_type: preferences\n"
+            "remote_preference: remote\n"
+            "---\n\nPrivate preferences.\n"
+        )
+        self.assertNotIn("candidate_name", profile["preferences"])
+        self.assertNotIn("name", profile["contact"])
+
+    def test_name_never_inferred_from_resume_heading(self) -> None:
+        # The resume H1 "Some Person" must NOT become the candidate name; only the
+        # explicit preferences field is trusted.
+        profile = self._run(
+            "---\ndocument_type: preferences\nremote_preference: remote\n---\n\nNo name here.\n"
+        )
+        self.assertNotIn("candidate_name", profile["preferences"])
+        self.assertNotEqual(profile.get("contact", {}).get("name"), "Some Person")
+
+    def test_missing_name_yields_review_marker_in_cover_letter(self) -> None:
+        from job_hunt.generation import generate_cover_letter
+        profile = self._run(
+            "---\ndocument_type: preferences\nremote_preference: remote\n---\n\nNo name.\n"
+        )
+        lead = {
+            "lead_id": "x", "company": "Acme", "title": "Backend Engineer",
+            "normalized_requirements": {"required": ["python"], "preferred": [],
+                                        "keywords": ["python", "backend", "api"]},
+        }
+        with tempfile.TemporaryDirectory() as out:
+            result = generate_cover_letter(lead, profile, None, Path(out))
+            md = Path(result["output_path"]).read_text()
+            self.assertIn("NEEDS_USER_REVIEW_NAME", md)
+            self.assertNotIn("\nCandidate\n", md)
+
+
+class LeadKeywordExtractionTest(unittest.TestCase):
+    """HTML-noisy job descriptions still surface meaningful role keywords."""
+
+    _HTML_BACKEND_JOB = """---
+title: Senior Backend Engineer
+company: NoiseCorp
+---
+<div class="content-intro"><h2>About NoiseCorp:</h2>
+<p><span data-sheets-root="1" data-stringify-indent="0">We build distributed systems.</span></p>
+<nav><ul><li>Home</li><li>Careers</li><li>Privacy Policy</li></ul></nav>
+<h2>What you'll do</h2>
+<ul>
+<li>Design and operate backend services and internal APIs at scale.</li>
+<li>Own data migrations on PostgreSQL and improve platform reliability.</li>
+<li>Work in TypeScript and Python across our AWS infrastructure.</li>
+</ul>
+<footer><p>&copy; 2026 NoiseCorp. All rights reserved. Cookie settings.</p></footer>
+"""
+
+    def test_html_noise_stripped_meaningful_keywords_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            src = root / "job.md"
+            src.write_text(self._HTML_BACKEND_JOB, encoding="utf-8")
+            lead = extract_lead(src, root / "leads")
+            keywords = set(lead["normalized_requirements"]["keywords"])
+
+            # HTML/markup/boilerplate noise must be gone.
+            for noise in ("span", "div", "data-sheets-root", "data-stringify-indent",
+                          "nav", "footer", "cookie", "privacy"):
+                self.assertNotIn(noise, keywords, f"{noise!r} leaked into keywords")
+
+            # Meaningful backend/platform terms should survive.
+            meaningful = {"backend", "distributed", "systems", "apis", "data",
+                          "infrastructure", "typescript", "python", "postgresql",
+                          "platform", "reliability"}
+            self.assertTrue(
+                len(keywords & meaningful) >= 5,
+                msg=f"too few meaningful keywords: {sorted(keywords)}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

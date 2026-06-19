@@ -48,6 +48,17 @@ KEYWORD_STOPWORDS: Final[frozenset[str]] = frozenset({
     "one", "two", "three", "first", "second", "third", "last",
 })
 
+# Residual web/markup/boilerplate noise that can survive HTML stripping (stray
+# entity fragments, common nav/legal/footer words). Kept separate from the
+# linguistic stopwords above so the intent stays clear. Generic, not site-specific.
+WEB_NOISE_STOPWORDS: Final[frozenset[str]] = frozenset({
+    "span", "div", "href", "nbsp", "amp", "quot", "apos", "rsquo", "lsquo",
+    "ldquo", "rdquo", "http", "https", "www", "com", "org",
+    "cookie", "cookies", "privacy", "policy", "terms", "menu", "navigation",
+    "footer", "header", "subscribe", "newsletter", "copyright",
+    "data-sheets-root", "data-stringify-indent", "data-stringify-border",
+})
+
 # Re-export shared utilities for backward compatibility.
 # New modules should import directly from job_hunt.utils.
 from .utils import (  # noqa: F401
@@ -61,6 +72,7 @@ from .utils import (  # noqa: F401
     repo_root,
     short_hash,
     slugify,
+    strip_html,
     tokens,
     unique_preserve_order,
     write_json,
@@ -881,6 +893,11 @@ def normalize_profile_documents(
                 aggregated["preferences"]["work_authorization"] = str(metadata["work_authorization"])
             if "sponsorship_required" in metadata:
                 aggregated["preferences"]["sponsorship_required"] = bool(metadata["sponsorship_required"])
+            # Reviewed candidate name comes ONLY from the explicit preferences
+            # frontmatter field — never inferred from resume headings or prose.
+            name_value = str(metadata.get("candidate_name") or "").strip()
+            if name_value:
+                aggregated["preferences"]["candidate_name"] = name_value
 
         normalized_document = {
             **doc_record,
@@ -1022,12 +1039,21 @@ def normalize_profile(profile_root: Path, normalized_root: Path, scoring_config:
         merged_preferences["work_authorization"] = aggregated["preferences"]["work_authorization"]
     if "sponsorship_required" in aggregated["preferences"]:
         merged_preferences["sponsorship_required"] = aggregated["preferences"]["sponsorship_required"]
+    reviewed_name = aggregated["preferences"].get("candidate_name")
+    if reviewed_name:
+        merged_preferences["candidate_name"] = reviewed_name
+
+    contact = select_candidate_contact(normalized_bundle["documents"])
+    # Mirror the reviewed name onto contact so consumers can read either field;
+    # absent a reviewed name, leave contact.name unset (no generic fallback).
+    if reviewed_name:
+        contact["name"] = reviewed_name
 
     candidate_profile = {
         "schema_version": "0.1.0",
         "generated_at": now_iso(),
         "documents": aggregated["documents"],
-        "contact": select_candidate_contact(normalized_bundle["documents"]),
+        "contact": contact,
         "skills": [
             {"name": name, "source_document_ids": sorted(source_ids)}
             for name, source_ids in sorted(aggregated["skill_sources"].items())
@@ -1122,11 +1148,15 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
         sections, ("requirement", "qualification", "must", "about you")
     )
     preferred = extract_requirement_lines(sections, ("preferred", "nice to have", "bonus"))
-    keyword_counts = Counter(tokens(f"{title}\n{body}"))
+    # Strip HTML before tokenizing so markup/attribute artifacts (span,
+    # data-sheets-root, etc.) don't crowd out real role keywords.
+    keyword_counts = Counter(tokens(strip_html(f"{title}\n{body}")))
     keywords = [
         word
         for word, _ in keyword_counts.most_common(100)
-        if word not in KEYWORD_STOPWORDS and len(word) >= 3
+        if word not in KEYWORD_STOPWORDS
+        and word not in WEB_NOISE_STOPWORDS
+        and len(word) >= 3
     ][:20]
 
     lead = {
@@ -2647,9 +2677,16 @@ def main(argv: list[str] | None = None) -> int:
         profile = read_json(Path(args.profile))
         prefs = profile.get("preferences", {})
         fit = lead.get("fit_assessment", {})
+        # Honest identity: reviewed name from preferences/contact, else a review
+        # marker — never a generic "Candidate" signature.
+        reviewed_name = (
+            (prefs.get("candidate_name") or "").strip()
+            or (profile.get("contact", {}).get("name") or "").strip()
+            or "NEEDS_USER_REVIEW_NAME"
+        )
         result = generate_follow_up_draft(
             lead_id=lead["lead_id"],
-            candidate_name=prefs.get("candidate_name", "Candidate"),
+            candidate_name=reviewed_name,
             company_name=lead.get("company", ""),
             job_title=lead.get("title", ""),
             matched_skills=fit.get("matched_skills", [])[:5],

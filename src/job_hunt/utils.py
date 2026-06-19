@@ -325,6 +325,28 @@ def load_yaml_file(path: Path, default: dict | None = None) -> dict:
     return load_yaml(path.read_text(encoding="utf-8"))
 
 
+_HTML_BLOCK_PATTERN = re.compile(r"<(script|style)\b[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
+
+
+def strip_html(text: str) -> str:
+    """Strip HTML so downstream tokenization sees prose, not markup.
+
+    Removes <script>/<style> blocks (with content), drops all remaining tags
+    (which also discards attribute artifacts like data-sheets-root that the
+    tokenizer would otherwise keep as compound tokens), unescapes entities, and
+    collapses whitespace. Pure and generic — no site-specific rules.
+    """
+    if not text or "<" not in text:
+        return text
+    import html as _html
+
+    cleaned = _HTML_BLOCK_PATTERN.sub(" ", text)
+    cleaned = _HTML_TAG_PATTERN.sub(" ", cleaned)
+    cleaned = _html.unescape(cleaned)
+    return cleaned
+
+
 def tokens(text: str) -> list[str]:
     return re.findall(r"[a-z0-9+#.-]{3,}", text.lower())
 

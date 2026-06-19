@@ -699,5 +699,87 @@ class CoverLetterClaimsSafetyTest(unittest.TestCase):
         )
 
 
+def _ranking_bank() -> dict:
+    """Bank with a backend claim and a frontend ops-UI claim, both approved and
+    allowed in BOTH the platform and product lanes — so lane-relevance ranking
+    (not lane filtering) decides which leads."""
+    return {
+        "schema_version": 1,
+        "claims": [
+            {
+                "claim_id": "rank-backend",
+                "claim_text": (
+                    "Led a data migration to PostgreSQL and built backend API "
+                    "integrations on the internal platform."
+                ),
+                "technologies": ["postgres", "sql", "migration", "backend", "api"],
+                "allowed_lanes": ["platform_backend", "fullstack_product"],
+                "review_status": "approved",
+            },
+            {
+                "claim_id": "rank-frontend",
+                "claim_text": (
+                    "Built data-dense React/TypeScript operations UIs with chart "
+                    "views and modal editors for customer workflows."
+                ),
+                "technologies": ["react", "typescript", "frontend"],
+                "allowed_lanes": ["platform_backend", "fullstack_product"],
+                "review_status": "approved",
+            },
+        ],
+        "never_claim": [],
+    }
+
+
+class CoverLetterClaimRankingTest(unittest.TestCase):
+    """Lane-relevance ranking: backend leads prefer backend claims, product leads
+    prefer the frontend/ops claim — general, not role-hardcoded."""
+
+    def test_backend_lane_prefers_backend_claim(self) -> None:
+        spec = COVER_LETTER_LANE_SPECS[COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS]
+        evidence, _ = select_cover_letter_evidence(
+            spec, _platform_lead(), _sample_profile(), None,
+            claims_bank=_ranking_bank(),
+        )
+        self.assertEqual(evidence["accomplishment_source_docs"][0], "claim:rank-backend")
+
+    def test_product_lane_prefers_frontend_claim(self) -> None:
+        spec = COVER_LETTER_LANE_SPECS[COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER]
+        evidence, _ = select_cover_letter_evidence(
+            spec, _product_lead(), _sample_profile(), None,
+            claims_bank=_ranking_bank(),
+        )
+        self.assertEqual(evidence["accomplishment_source_docs"][0], "claim:rank-frontend")
+
+
+class CoverLetterConfidenceTest(unittest.TestCase):
+    """Lane confidence flags ambiguity, not low absolute magnitude."""
+
+    def test_decisive_low_score_pick_not_flagged(self) -> None:
+        # A diluted backend lead: only a couple of domain tokens, but the platform
+        # lane is the sole lane with any signal. Should NOT warn low-confidence.
+        lead = {
+            "lead_id": "x", "company": "Acme", "title": "Software Engineer, Backend",
+            "normalized_requirements": {
+                "required": [], "preferred": [],
+                "keywords": ["software", "engineer", "backend", "infrastructure",
+                             "products", "solutions", "about", "help", "status"],
+            },
+        }
+        _, source, _, warnings = choose_cover_letter_lane(lead, _sample_profile())
+        self.assertEqual(source, "auto")
+        codes = [w["code"] for w in warnings]
+        self.assertNotIn("lane_low_confidence", codes)
+
+    def test_no_signal_still_flagged(self) -> None:
+        lead = {
+            "lead_id": "x", "company": "Acme", "title": "Engineer",
+            "normalized_requirements": {"required": [], "preferred": [], "keywords": ["zzz"]},
+        }
+        _, _, _, warnings = choose_cover_letter_lane(lead, _sample_profile())
+        codes = [w["code"] for w in warnings]
+        self.assertIn("lane_low_confidence", codes)
+
+
 if __name__ == "__main__":
     unittest.main()
