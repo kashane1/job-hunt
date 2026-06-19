@@ -601,16 +601,20 @@ def _build_resume_asset_ref(lead_id: str, data_root: Path) -> dict:
 
 
 def _build_cover_letter_asset_ref(lead: dict, candidate_profile: dict, data_root: Path) -> dict:
-    from .generation import generate_cover_letter
+    from .generation import generate_cover_letter, load_cover_letter_claims_bank
 
     cover_dir = _generated_content_dir(data_root, "cover_letter")
     ensure_dir(cover_dir)
+    # Constrain prose to approved claims: load the private claims bank (falls back
+    # to the sanitized example) so the generator never draws from raw intake.
+    claims_bank = load_cover_letter_claims_bank()
     try:
         record = generate_cover_letter(
             lead,
             candidate_profile,
             None,
             cover_dir,
+            claims_bank=claims_bank,
         )
     except ValueError as exc:
         return {

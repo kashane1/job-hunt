@@ -4,10 +4,10 @@
   "claims": [
     {
       "claim_id": "example-backend-migration",
-      "claim_text": "[EXAMPLE] Led a relational database migration with zero data loss across the full dataset.",
+      "claim_text": "[EXAMPLE] Led a relational database migration, validating data integrity across the full dataset with row-count and constraint checks.",
       "evidence": "EXAMPLE — replace with your verifiable source (PR, runbook, employer).",
       "technologies": ["python", "postgres", "sql"],
-      "impact": "Zero data-loss cutover (example metric — only keep if defensible).",
+      "impact": "Validated integrity across the dataset (example metric — only keep if defensible).",
       "allowed_lanes": ["platform_backend", "generalist_swe"],
       "confidence": "high",
       "review_status": "approved",

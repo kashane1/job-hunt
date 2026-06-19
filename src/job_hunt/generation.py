@@ -572,6 +572,149 @@ UNSUPPORTED_COMPANY_NOUNS: Final[tuple[str, ...]] = (
 # Placeholder pattern matches typical template leakage like [Company], [Role], {Company}.
 _PLACEHOLDER_PATTERN: Final = re.compile(r"[\[\{]\s*(?:Company|Role|Team|Hiring Manager|Name)\s*[\]\}]", re.IGNORECASE)
 
+# --- Claims-bank source policy (constrains generated cover-letter prose) ---
+#
+# Cover letters may only build prose from approved, lane-appropriate claims plus
+# safe profile identity and grounded lead/company metadata. Raw intake (resume
+# headings, old cover-letter titles, normalized question-bank answers) is NOT a
+# safe source: it carries softened-away over-claims and document headings that
+# leak verbatim. The denylist + safety filters below are the deterministic
+# backstop; sourcing from approved claims is the primary defense.
+
+# Sign-off marker emitted when no reviewed candidate name is available. Never
+# fall back to a generic "Candidate" signature — surface the gap for review.
+NEEDS_USER_REVIEW_NAME: Final = "NEEDS_USER_REVIEW_NAME"
+
+# Map each cover-letter lane to the claims-bank `allowed_lanes` it may draw from.
+# generalist_swe is included everywhere as a safe, broadly-applicable fallback.
+COVER_LETTER_LANE_TO_CLAIMS_LANES: Final[dict[str, tuple[str, ...]]] = {
+    COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS: ("platform_backend", "generalist_swe"),
+    COVER_LETTER_LANE_AI_ENGINEER: ("ai_engineer", "generalist_swe"),
+    COVER_LETTER_LANE_PRODUCT_MINDED_ENGINEER: ("fullstack_product", "generalist_swe"),
+}
+
+# Softened-away / unsupported phrases that must never appear in generated prose,
+# regardless of source. These are the specific fragments the claims bank softened
+# out (absolute integrity/loss wording, the unsourced "up to 50%" metric) plus
+# the unsupported personal stack (AI Notecards / RN / RevenueCat). Company-fact
+# nouns such as "kubernetes" are deliberately excluded — a target company may
+# legitimately use them, and we only source candidate prose from approved claims.
+SOFTENED_CLAIM_DENYLIST: Final[tuple[str, ...]] = (
+    "100% data integrity",
+    "zero data loss",
+    "no data loss",
+    "without data loss",
+    "up to 50%",
+    "ai notecards",
+    "react native",
+    "revenuecat",
+)
+
+# Markers that flag raw intake / template text leaking into prose.
+_RAW_HEADING_PATTERN: Final = re.compile(r"^\s*#{1,6}\s", re.MULTILINE)
+_TEMPLATE_BRACKET_PATTERN: Final = re.compile(
+    r"\[[^\]]*\b(?:fill in|fill-in|your|tbd|todo|placeholder|optional)\b[^\]]*\]",
+    re.IGNORECASE,
+)
+_RAW_COVER_LETTER_HEADING: Final = re.compile(r"cover letter\s*:", re.IGNORECASE)
+
+
+def _cover_letter_denylist(claims_bank: dict | None) -> tuple[str, ...]:
+    """Return the lowercased phrase denylist for guardrails.
+
+    Always includes the built-in softened/unsupported fragments. The claims
+    bank's `never_claim` entries are full sentences that rarely substring-match
+    generated prose, so they are not folded in here — they are enforced by
+    sourcing prose only from approved claims, not by phrase matching.
+    """
+    return tuple(dict.fromkeys(p.lower() for p in SOFTENED_CLAIM_DENYLIST))
+
+
+def _unsafe_prose_reason(text: str, denylist: tuple[str, ...]) -> str | None:
+    """Return a reason string if `text` is unsafe to use as generated prose, else None.
+
+    Unsafe = empty, a raw markdown heading, a raw cover-letter heading, a template
+    placeholder bracket, or contains a denylisted softened/unsupported phrase.
+    """
+    if not text or not text.strip():
+        return "empty"
+    if _RAW_HEADING_PATTERN.search(text):
+        return "raw_markdown_heading"
+    if _RAW_COVER_LETTER_HEADING.search(text):
+        return "raw_cover_letter_heading"
+    if _TEMPLATE_BRACKET_PATTERN.search(text):
+        return "template_placeholder"
+    low = text.lower()
+    for phrase in denylist:
+        if phrase in low:
+            return f"denylisted_phrase:{phrase}"
+    return None
+
+
+def approved_claims_as_highlights(
+    claims_bank: dict | None, cover_letter_lane_id: str
+) -> list[dict]:
+    """Adapt approved, lane-appropriate claims into highlight-shaped dicts.
+
+    Only `review_status == "approved"` claims are returned (needs_user_review,
+    draft, and rejected claims are excluded), and only those whose allowed_lanes
+    intersect the cover-letter lane's mapped claims lanes. The returned shape
+    matches `experience_highlights` so it flows through the existing scorer.
+    """
+    if not claims_bank:
+        return []
+    target_lanes = set(COVER_LETTER_LANE_TO_CLAIMS_LANES.get(cover_letter_lane_id, ()))
+    highlights: list[dict] = []
+    for claim in claims_bank.get("claims", []) or []:
+        if claim.get("review_status") != "approved":
+            continue
+        allowed = set(claim.get("allowed_lanes", []) or [])
+        if target_lanes and not (allowed & target_lanes):
+            continue
+        text = (claim.get("claim_text") or "").strip()
+        if not text:
+            continue
+        highlights.append({
+            "summary": text,
+            "source_document_ids": [f"claim:{claim.get('claim_id', '')}"],
+        })
+    return highlights
+
+
+def _resolve_candidate_name(candidate_profile: dict) -> str:
+    """Resolve a reviewed candidate name, or the review marker — never "Candidate".
+
+    Order: preferences.candidate_name, then contact.name, then the review marker.
+    """
+    prefs = candidate_profile.get("preferences", {}) or {}
+    name = (prefs.get("candidate_name") or "").strip()
+    if name and name.lower() != "candidate":
+        return name
+    contact = candidate_profile.get("contact", {}) or {}
+    cname = (contact.get("name") or "").strip()
+    if cname and cname.lower() != "candidate":
+        return cname
+    return NEEDS_USER_REVIEW_NAME
+
+
+def load_cover_letter_claims_bank(root: Path | None = None) -> dict | None:
+    """Load the private claims bank for cover-letter sourcing, else the example.
+
+    Disk I/O lives here (not in the pure generator) so tests can pass an explicit
+    claims_bank fixture and stay deterministic regardless of local private files.
+    """
+    from .utils import read_json, repo_root
+
+    base = root or repo_root()
+    for rel in ("profile/claims/claims-bank.json", "profile/claims/claims-bank.example.json"):
+        p = base / rel
+        if p.exists():
+            try:
+                return read_json(p)
+            except (OSError, ValueError):
+                continue
+    return None
+
 
 @dataclass(frozen=True)
 class CoverLetterLaneSpec:
@@ -810,6 +953,7 @@ def select_cover_letter_evidence(
     candidate_profile: dict,
     company_research: dict | None,
     explicit_mode: bool = False,
+    claims_bank: dict | None = None,
 ) -> tuple[dict, list[dict]]:
     """Return (evidence, warnings).
 
@@ -830,24 +974,75 @@ def select_cover_letter_evidence(
     """
     warnings: list[dict] = []
     lead_keywords = _lead_keyword_tokens(lead)
+    denylist = _cover_letter_denylist(claims_bank)
+    claims_mode = claims_bank is not None
 
     # Skills: filter to those with nonzero overlap vs lead, ordered by jaccard.
     skills = candidate_profile.get("skills", []) or []
     top_skills = select_skills_for_variant(skills, lead_keywords, STYLE_IMPACT_FOCUSED, limit=6)
     matched_skill_count = sum(1 for s in top_skills if set(generation_tokens(s)) & lead_keywords)
 
-    # Accomplishments: score against lead_keywords + lane's preferred phrase list.
-    highlights = candidate_profile.get("experience_highlights", []) or []
+    # Accomplishments source: approved, lane-appropriate claims when a claims bank
+    # is supplied; otherwise the (filtered) normalized experience highlights.
+    if claims_mode:
+        raw_highlights = approved_claims_as_highlights(claims_bank, lane_spec.lane_id)
+        if not raw_highlights:
+            warnings.append({
+                "code": "no_approved_claims",
+                "severity": "warning",
+                "detail": (
+                    f"no approved claims available for lane {lane_spec.lane_id!r}; "
+                    f"letter falls back to conservative, non-specific prose"
+                ),
+            })
+    else:
+        raw_highlights = candidate_profile.get("experience_highlights", []) or []
+
+    # Safety filter: never let raw headings, template placeholders, or
+    # softened/unsupported phrases ride into generated prose.
+    highlights: list[dict] = []
+    for h in raw_highlights:
+        reason = _unsafe_prose_reason(h.get("summary", ""), denylist)
+        if reason:
+            warnings.append({
+                "code": "unsafe_prose_filtered",
+                "severity": "warning",
+                "detail": f"dropped accomplishment ({reason})",
+            })
+            continue
+        highlights.append(h)
+
     scored_accomplishments = _score_accomplishments_for_lane(highlights, lead_keywords, lane_spec)
-    top_accomplishments = [h.get("summary", "") for _, h in scored_accomplishments[:3] if h.get("summary")]
+    selected = [h for _, h in scored_accomplishments[:3]]
+    # Claims-mode: approved claims are all safe to surface. If none cleared the
+    # keyword-overlap scorer, still ground the letter in approved claims (bank
+    # order) rather than falling through to an empty proof paragraph.
+    if claims_mode and not selected and highlights:
+        selected = highlights[:3]
+    top_accomplishments = [h.get("summary", "") for h in selected if h.get("summary")]
     accomplishment_source_docs = [
-        doc_id
-        for _, h in scored_accomplishments[:3]
-        for doc_id in (h.get("source_document_ids") or [])
+        doc_id for h in selected for doc_id in (h.get("source_document_ids") or [])
     ]
 
-    # Question bank: prefer generic prompts; drop company-specific ones.
-    question_bank_entries = _filter_question_bank(candidate_profile.get("question_bank", []) or [])[:2]
+    # Question bank: raw normalized answers are intake, not approved claims, so
+    # they are excluded entirely in claims-mode. In no-bank mode (sanitized
+    # fixtures), keep generic prompts but still filter unsafe answers.
+    if claims_mode:
+        question_bank_entries: list[dict] = []
+    else:
+        candidate_qb = _filter_question_bank(candidate_profile.get("question_bank", []) or [])
+        safe_qb: list[dict] = []
+        for e in candidate_qb:
+            reason = _unsafe_prose_reason(e.get("answer", ""), denylist)
+            if reason:
+                warnings.append({
+                    "code": "unsafe_prose_filtered",
+                    "severity": "warning",
+                    "detail": f"dropped question-bank answer ({reason})",
+                })
+                continue
+            safe_qb.append(e)
+        question_bank_entries = safe_qb[:2]
 
     # Project notes: intersect the lane's preferred doc ids with the profile's documents.
     profile_doc_ids = {d.get("document_id") for d in candidate_profile.get("documents", []) or []}
@@ -1013,9 +1208,10 @@ def render_cover_letter_markdown(
         f"I'm most interested in {lane_spec.opening_emphasis}."
     )
 
-    # Proof paragraph: top accomplishment + skills + lane framing.
+    # Proof paragraph: top accomplishment + skills + lane framing. Strip any
+    # trailing sentence punctuation so the template's own "." doesn't double up.
     if top_accomplishments:
-        accomplishment_text = top_accomplishments[0]
+        accomplishment_text = top_accomplishments[0].rstrip(" .")
     else:
         accomplishment_text = "shipping production systems end-to-end"
     skill_phrase = ", ".join(top_skills[:4]) if top_skills else "relevant engineering domains"
@@ -1090,6 +1286,7 @@ def generate_cover_letter(
     company_research: dict | None,
     output_dir: Path,
     lane: str | None = None,
+    claims_bank: dict | None = None,
 ) -> dict:
     """Generate a lane-aware cover letter assembled from grounded profile data.
 
@@ -1100,6 +1297,12 @@ def generate_cover_letter(
       - zero_grounded_evidence: no lane has enough evidence
       - unresolved_placeholder: rendered text contains [Company]/[Role]
       - wrong_company_name: rendered text mentions a denylisted non-target company
+      - never_claim_violation: rendered text contains a softened/unsupported phrase
+      - raw_intake_leak: rendered text leaked a raw cover-letter/document heading
+
+    When `claims_bank` is provided, proof prose is sourced only from approved,
+    lane-appropriate claims; raw question-bank answers are excluded. A missing
+    reviewed name is signed as NEEDS_USER_REVIEW_NAME (never "Candidate").
     """
     ensure_dir(output_dir)
 
@@ -1114,7 +1317,7 @@ def generate_cover_letter(
 
     preferences = candidate_profile.get("preferences", {}) or {}
     documents = candidate_profile.get("documents", []) or []
-    candidate_name = preferences.get("candidate_name", "Candidate")
+    candidate_name = _resolve_candidate_name(candidate_profile)
     remote_preference = preferences.get("remote_preference", "flexible")
 
     explicit_lane: str | None = None
@@ -1127,10 +1330,20 @@ def generate_cover_letter(
     )
     lane_spec = COVER_LETTER_LANE_SPECS[lane_id]
 
+    if candidate_name == NEEDS_USER_REVIEW_NAME:
+        generation_warnings.append({
+            "code": "name_needs_review",
+            "severity": "warning",
+            "detail": (
+                "no reviewed candidate name in preferences.candidate_name or contact.name; "
+                "signature marked NEEDS_USER_REVIEW_NAME"
+            ),
+        })
+
     # 2. Select evidence. Auto mode falls back to next-priority lane on zero-evidence.
     evidence, evidence_warnings = _select_evidence_with_fallback(
         lane_spec, lead, candidate_profile, company_research,
-        explicit_mode=(lane_source == "explicit"),
+        explicit_mode=(lane_source == "explicit"), claims_bank=claims_bank,
     )
     # _select_evidence_with_fallback may have switched lanes in auto mode; read back.
     lane_id = evidence.pop("_resolved_lane_id", lane_id)
@@ -1162,6 +1375,20 @@ def generate_cover_letter(
             "wrong_company_name",
             f"Rendered cover letter leaked non-target company name(s) {stale_hits} "
             f"for target {lead_company!r}.",
+        )
+    # Softened/unsupported phrase backstop: source restriction should keep these
+    # out, but a denylisted fragment in the rendered letter is a hard failure.
+    denylist = _cover_letter_denylist(claims_bank)
+    banned_hits = sorted({p for p in denylist if p in md_content.lower()})
+    if banned_hits:
+        raise _CoverLetterError(
+            "never_claim_violation",
+            f"Rendered cover letter contains disallowed phrase(s): {banned_hits}",
+        )
+    if _RAW_COVER_LETTER_HEADING.search(md_content):
+        raise _CoverLetterError(
+            "raw_intake_leak",
+            "Rendered cover letter leaked a raw cover-letter heading.",
         )
 
     # 5. Assemble record.
@@ -1225,6 +1452,7 @@ def _select_evidence_with_fallback(
     candidate_profile: dict,
     company_research: dict | None,
     explicit_mode: bool,
+    claims_bank: dict | None = None,
 ) -> tuple[dict, list[dict]]:
     """Select evidence for the chosen lane; in auto mode, fall back to next priority
     lane on zero evidence. In explicit mode, honor the lane and surface warnings."""
@@ -1243,7 +1471,8 @@ def _select_evidence_with_fallback(
         spec = COVER_LETTER_LANE_SPECS[lane_id]
         try:
             evidence, warnings = select_cover_letter_evidence(
-                spec, lead, candidate_profile, company_research, explicit_mode=explicit_mode,
+                spec, lead, candidate_profile, company_research,
+                explicit_mode=explicit_mode, claims_bank=claims_bank,
             )
         except _CoverLetterError as exc:
             last_error = exc

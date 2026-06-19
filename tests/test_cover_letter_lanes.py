@@ -27,9 +27,13 @@ from job_hunt.generation import (
     COVER_LETTER_LANE_SPECS,
     COVER_LETTER_MIN_LANE_MARGIN,
     COVER_LETTER_MIN_LANE_SCORE,
+    NEEDS_USER_REVIEW_NAME,
     CoverLetterLaneSpec,
     _CoverLetterError,
+    _resolve_candidate_name,
     _score_all_lanes,
+    _unsafe_prose_reason,
+    approved_claims_as_highlights,
     choose_cover_letter_lane,
     find_stale_company_mentions,
     find_unresolved_placeholders,
@@ -463,6 +467,236 @@ class CoverLetterEndToEndTest(unittest.TestCase):
             )
             self.assertIn("company_facts_used", res3)
             self.assertEqual(res3["company_facts_used"], [])
+
+
+def _sanitized_claims_bank() -> dict:
+    """Sanitized, fictional claims bank for claims-mode tests. No private data."""
+    return {
+        "schema_version": 1,
+        "claims": [
+            {
+                "claim_id": "fixture-migration",
+                "claim_text": (
+                    "Led a database migration, validating data integrity across the "
+                    "full dataset with row-count and constraint checks."
+                ),
+                "technologies": ["postgres", "sql", "migration"],
+                "allowed_lanes": ["platform_backend", "generalist_swe"],
+                "review_status": "approved",
+            },
+            {
+                "claim_id": "fixture-api",
+                "claim_text": (
+                    "Built backend API integrations on a high-volume transactional platform."
+                ),
+                "technologies": ["api", "backend"],
+                "allowed_lanes": ["platform_backend", "generalist_swe"],
+                "review_status": "approved",
+            },
+            {
+                "claim_id": "fixture-ai-only",
+                "claim_text": "Shipped an internal LLM tool that drafts and routes structured documents.",
+                "technologies": ["llm", "python"],
+                "allowed_lanes": ["ai_engineer"],
+                "review_status": "approved",
+            },
+            {
+                "claim_id": "fixture-needs-review",
+                "claim_text": (
+                    "Single-handedly delivered a platform with zero data loss and 100% data integrity."
+                ),
+                "technologies": ["postgres"],
+                "allowed_lanes": ["platform_backend"],
+                "review_status": "needs_user_review",
+            },
+        ],
+        "never_claim": [
+            {"text": "Sole ownership of multi-person achievements.", "reason": "dishonest"},
+        ],
+    }
+
+
+class CoverLetterClaimsSafetyTest(unittest.TestCase):
+    """Package: cover-letter prose is constrained to approved claims + safe identity."""
+
+    def _profile_no_name(self) -> dict:
+        prof = _sample_profile()
+        prof["preferences"] = {"remote_preference": "remote"}  # no candidate_name
+        prof.pop("contact", None)
+        return prof
+
+    # --- approved_claims_as_highlights ---
+
+    def test_only_approved_claims_used(self) -> None:
+        highlights = approved_claims_as_highlights(
+            _sanitized_claims_bank(), COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS,
+        )
+        ids = {h["source_document_ids"][0] for h in highlights}
+        self.assertIn("claim:fixture-migration", ids)
+        self.assertIn("claim:fixture-api", ids)
+        # needs_user_review claim must be excluded.
+        self.assertNotIn("claim:fixture-needs-review", ids)
+        # ai-only claim is out of lane for the platform lane.
+        self.assertNotIn("claim:fixture-ai-only", ids)
+
+    def test_vercel_style_backend_selects_platform_claims(self) -> None:
+        # A backend lead routes to the platform lane and pulls platform-lane claims.
+        lane_id, _, _, _ = choose_cover_letter_lane(_platform_lead(), _sample_profile())
+        self.assertEqual(lane_id, COVER_LETTER_LANE_PLATFORM_INTERNAL_TOOLS)
+        spec = COVER_LETTER_LANE_SPECS[lane_id]
+        evidence, _ = select_cover_letter_evidence(
+            spec, _platform_lead(), _sample_profile(), None,
+            claims_bank=_sanitized_claims_bank(),
+        )
+        used = " ".join(evidence["accomplishment_source_docs"])
+        self.assertIn("claim:fixture", used)
+        self.assertNotIn("fixture-ai-only", used)
+
+    # --- needs_user_review / never_claim / softened phrases excluded from output ---
+
+    def test_needs_user_review_claim_never_renders(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), _sample_profile(), None, Path(tmpdir),
+                claims_bank=_sanitized_claims_bank(),
+            )
+            md = Path(result["output_path"]).read_text()
+            # The needs_user_review claim carries softened phrases; none may leak.
+            self.assertNotIn("zero data loss", md.lower())
+            self.assertNotIn("100% data integrity", md.lower())
+            self.assertNotIn("single-handedly", md.lower())
+
+    def test_softened_phrase_in_raw_profile_is_filtered(self) -> None:
+        # No-bank mode: an unsafe experience highlight must not reach the letter.
+        profile = _sample_profile()
+        profile["experience_highlights"].insert(0, {
+            "summary": (
+                "Led python aws platform migration ensuring 100% data integrity "
+                "and zero data loss across internal tools"
+            ),
+            "source_document_ids": ["resume"],
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), profile, None, Path(tmpdir),
+            )
+            md = Path(result["output_path"]).read_text().lower()
+            self.assertNotIn("zero data loss", md)
+            self.assertNotIn("100% data integrity", md)
+            codes = [w["code"] for w in result.get("generation_warnings", [])]
+            self.assertIn("unsafe_prose_filtered", codes)
+
+    def test_raw_heading_not_copied(self) -> None:
+        # The real bug: a raw cover-letter heading rode in as an "accomplishment".
+        profile = _sample_profile()
+        profile["experience_highlights"].insert(0, {
+            "summary": "# Cover Letter: Software Engineer, Data at Airtable",
+            "source_document_ids": ["resume"],
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), profile, None, Path(tmpdir),
+            )
+            md = Path(result["output_path"]).read_text()
+            self.assertNotIn("Cover Letter:", md)
+            self.assertNotIn("Airtable", md)
+
+    def test_old_cover_letter_title_in_question_bank_dropped(self) -> None:
+        profile = _sample_profile()
+        profile["question_bank"].insert(0, {
+            "question": "Tell me about your work.",
+            "answer": "# Cover Letter: Backend Engineer at OtherCo",
+            "provenance": "grounded",
+            "source_document_ids": ["resume"],
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), profile, None, Path(tmpdir),
+            )
+            md = Path(result["output_path"]).read_text()
+            self.assertNotIn("Cover Letter:", md)
+
+    # --- signature / identity ---
+
+    def test_missing_name_does_not_become_candidate(self) -> None:
+        self.assertEqual(_resolve_candidate_name(self._profile_no_name()), NEEDS_USER_REVIEW_NAME)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), self._profile_no_name(), None, Path(tmpdir),
+                claims_bank=_sanitized_claims_bank(),
+            )
+            md = Path(result["output_path"]).read_text()
+            self.assertNotIn("\nCandidate\n", md)
+            self.assertIn(NEEDS_USER_REVIEW_NAME, md)
+            codes = [w["code"] for w in result.get("generation_warnings", [])]
+            self.assertIn("name_needs_review", codes)
+
+    def test_explicit_candidate_name_preserved(self) -> None:
+        prof = _sample_profile()
+        prof["preferences"]["candidate_name"] = "Real Person"
+        self.assertEqual(_resolve_candidate_name(prof), "Real Person")
+
+    # --- approved claims appear; conservative fallback when none ---
+
+    def test_approved_claim_appears_in_conservative_form(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), _sample_profile(), None, Path(tmpdir),
+                claims_bank=_sanitized_claims_bank(),
+            )
+            md = Path(result["output_path"]).read_text().lower()
+            # A fragment of an approved claim should be present.
+            self.assertTrue(
+                "validating data integrity" in md or "api integrations" in md,
+                msg=f"expected approved-claim prose in letter:\n{md}",
+            )
+
+    def test_insufficient_approved_claims_flags_not_invents(self) -> None:
+        empty_bank = {"schema_version": 1, "claims": [], "never_claim": []}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), _sample_profile(), None, Path(tmpdir),
+                claims_bank=empty_bank,
+            )
+            md = Path(result["output_path"]).read_text()
+            # Letter is produced (conservative), with a review flag, and no
+            # fabricated specifics from the raw profile.
+            self.assertTrue(Path(result["output_path"]).exists())
+            codes = [w["code"] for w in result.get("generation_warnings", [])]
+            self.assertIn("no_approved_claims", codes)
+            # The raw profile's metric-bearing highlight must not appear.
+            self.assertNotIn("80%", md)
+
+    def test_generation_without_private_data_uses_fixtures(self) -> None:
+        # Sanitized fixtures only: claims-mode end-to-end succeeds, schema-valid.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), _sample_profile(), None, Path(tmpdir),
+                claims_bank=_sanitized_claims_bank(),
+            )
+            schema = json.loads(
+                (ROOT / "schemas" / "generated-content.schema.json").read_text()
+            )
+            validate(result, schema)
+            self.assertTrue(Path(result["output_path"]).exists())
+
+    # --- unit: unsafe-prose classifier ---
+
+    def test_unsafe_prose_reason_classifies(self) -> None:
+        deny = ("zero data loss",)
+        self.assertIsNone(_unsafe_prose_reason("Built a clean backend service.", deny))
+        self.assertEqual(_unsafe_prose_reason("", deny), "empty")
+        self.assertEqual(
+            _unsafe_prose_reason("# Cover Letter: X", deny), "raw_markdown_heading",
+        )
+        self.assertEqual(
+            _unsafe_prose_reason("achieved zero data loss", deny),
+            "denylisted_phrase:zero data loss",
+        )
+        self.assertEqual(
+            _unsafe_prose_reason("[Fill in your achievements]", deny),
+            "template_placeholder",
+        )
 
 
 if __name__ == "__main__":
