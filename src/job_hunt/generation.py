@@ -617,6 +617,13 @@ _TEMPLATE_BRACKET_PATTERN: Final = re.compile(
     re.IGNORECASE,
 )
 _RAW_COVER_LETTER_HEADING: Final = re.compile(r"cover letter\s*:", re.IGNORECASE)
+# Scale/revenue dollar figures (e.g. "$10M+", "$10 million", "$500K") read as
+# inflated self-credit in a cover letter even when an approved claim frames them
+# as system context. Keep them out of generated cover-letter prose; resumes,
+# which use a separate renderer, are unaffected.
+_REVENUE_FIGURE_PATTERN: Final = re.compile(
+    r"\$\s?\d[\d,.]*\+?\s?(?:k|m|mm|b|million|billion)\b", re.IGNORECASE
+)
 
 
 def _cover_letter_denylist(claims_bank: dict | None) -> tuple[str, ...]:
@@ -644,6 +651,8 @@ def _unsafe_prose_reason(text: str, denylist: tuple[str, ...]) -> str | None:
         return "raw_cover_letter_heading"
     if _TEMPLATE_BRACKET_PATTERN.search(text):
         return "template_placeholder"
+    if _REVENUE_FIGURE_PATTERN.search(text):
+        return "revenue_figure"
     low = text.lower()
     for phrase in denylist:
         if phrase in low:
@@ -1264,7 +1273,7 @@ def render_cover_letter_markdown(
     else:
         # Role-specific fallback: never invent company facts.
         alignment = (
-            f"This {title} role stands out because it maps directly to where I'm strongest — "
+            f"This {title} role stands out because it maps directly to where I'm strongest: "
             f"{lane_spec.closing_value_prop}. I'd rather talk concretely about the work itself "
             f"than speculate about the org, and I'd welcome the chance to learn more in conversation."
         )

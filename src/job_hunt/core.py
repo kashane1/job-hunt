@@ -2610,13 +2610,18 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "generate-cover-letter":
-        from .generation import generate_cover_letter
+        from .generation import generate_cover_letter, load_cover_letter_claims_bank
 
         lead = read_json(Path(args.lead))
         profile = read_json(Path(args.profile))
         company = read_json(Path(args.company)) if args.company else None
+        # Constrain prose to approved claims: load the private claims bank (falls
+        # back to the sanitized example) so the CLI path never draws from raw
+        # intake — matching prepare-application's _build_cover_letter_asset_ref.
+        claims_bank = load_cover_letter_claims_bank()
         result = generate_cover_letter(
             lead, profile, company, Path(args.output_dir), lane=args.lane,
+            claims_bank=claims_bank,
         )
 
         # CLI-orchestrated ATS check post-hook

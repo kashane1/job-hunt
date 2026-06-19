@@ -353,6 +353,21 @@ class CoverLetterGuardrailTest(unittest.TestCase):
         text = "kadince handled our prior integration"
         self.assertEqual(find_stale_company_mentions(text, target_company="Acme"), ["Kadince"])
 
+    def test_revenue_figure_flagged_as_unsafe(self) -> None:
+        # Scale/revenue dollar figures must not enter generated cover-letter prose,
+        # even when an approved claim frames them as system context.
+        for unsafe in (
+            "on a system that supports $10M+ in annual revenue",
+            "drove $10 million in revenue",
+            "managed a $500K budget",
+            "scaled to $2B in transactions",
+        ):
+            self.assertEqual(_unsafe_prose_reason(unsafe, ()), "revenue_figure", unsafe)
+
+    def test_plain_prose_without_dollar_figures_is_safe(self) -> None:
+        safe = "Migrated 10+ years of MySQL data to PostgreSQL with row-count checks."
+        self.assertIsNone(_unsafe_prose_reason(safe, ()))
+
 
 class CoverLetterEndToEndTest(unittest.TestCase):
     def test_generate_produces_valid_record_and_markdown(self) -> None:
@@ -370,6 +385,16 @@ class CoverLetterEndToEndTest(unittest.TestCase):
                 (ROOT / "schemas" / "generated-content.schema.json").read_text()
             )
             validate(result, schema)
+
+    def test_rendered_letter_has_no_emdash_or_endash(self) -> None:
+        # Human-voice rule: generated prose must not contain em/en dashes.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = generate_cover_letter(
+                _platform_lead(), _sample_profile(), None, Path(tmpdir),
+            )
+            md = Path(result["output_path"]).read_text()
+            self.assertNotIn("—", md)
+            self.assertNotIn("–", md)
 
     def test_different_lanes_produce_different_letters(self) -> None:
         # Separate tmpdirs per call — content_id collides when timestamps land in
