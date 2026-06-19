@@ -367,8 +367,12 @@ class GhostScanTest(unittest.TestCase):
         from job_hunt.triage import scan_ghost_timeouts
         with tempfile.TemporaryDirectory() as t:
             root = Path(t)
+            # NEW must stay fresh relative to wall-clock now (a hardcoded date
+            # silently rots into the >21-day window as time passes).
+            from datetime import datetime, timedelta, timezone
+            fresh = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
             self._stale_status(root, "OLD", "phone_screen", "2026-01-01T00:00:00+00:00")
-            self._stale_status(root, "NEW", "phone_screen", "2026-05-17T00:00:00+00:00")
+            self._stale_status(root, "NEW", "phone_screen", fresh)
             res = scan_ghost_timeouts(data_root=root, days=21)
             ghosted = {r["lead_id"]: r["outcome"] for r in res}
             self.assertEqual(ghosted.get("OLD"), "advanced")

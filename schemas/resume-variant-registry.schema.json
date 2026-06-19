@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Resume Variant Registry",
+  "description": "Config-driven map of job-title lanes to pre-authored resume files. Read by src/job_hunt/resume_registry.py; never auto-rewritten.",
+  "type": "object",
+  "required": ["schema_version", "default_variant", "variants"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "_comment": { "type": "string" },
+    "default_variant": {
+      "type": "string",
+      "description": "id of the variant used when no specialized lane clears the minimum confidence."
+    },
+    "variants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title_patterns", "resume_path"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "title_patterns": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Lowercase substrings matched against the lead title. Empty array = wildcard (default lane)."
+          },
+          "emphasis_skills": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "seniority_bands": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["junior", "mid", "senior", "staff"] }
+          },
+          "resume_path": {
+            "type": "string",
+            "description": "Repo-relative path to the ATS-passing resume markdown for this lane."
+          },
+          "notes": { "type": "string" }
+        }
+      }
+    }
+  }
+}

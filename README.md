@@ -103,6 +103,32 @@ Generated reports now capture:
 - browser tab budget metrics and hard-limit breaches
 - redaction status for any secret-like fields present in runtime attempt data
 
+## Level 1.5 Co-Pilot (scan → score → route → packet → handoff)
+
+A safe, fully-logged chain that takes "find new SWE jobs from the last hour that
+match my resume, pick the best variant, and prepare the application up to — but
+not including — submit." Every decision is a concrete artifact. See
+[`docs/ai/architecture-copilot-level-1.5.md`](docs/ai/architecture-copilot-level-1.5.md).
+
+```bash
+# 1. Recent-job scan: leads inside a wall-clock window, grouped by fit tier
+python3 scripts/job_hunt.py scan-recent-jobs --since 1h
+
+# 2. Route a scored lead to its best resume variant (writes a logged decision)
+python3 scripts/job_hunt.py select-resume-variant --lead data/leads/<id>.json
+
+# 3. Plan the whole run as one dry-run with a per-job decision log (never submits)
+python3 scripts/job_hunt.py copilot-run --since 1h --min-tier maybe
+```
+
+Resume variants are a **config-driven registry** (`config/resume-variants.json`):
+job-title lanes map to pre-authored resume files. Routing scores each lane by
+title-pattern match + emphasis-skills overlap + seniority, picks the best, and
+flags `needs_human_review` when the resume file is missing, two lanes are near a
+tie, confidence is low, or the lead was never scored. Drop your variants under
+`profile/resumes/` (see `profile/resumes/README.md`). `copilot-run` stops at the
+human submit gate by construction — it prepares, it never submits.
+
 ## Batch 4: Autonomous Indeed Apply
 
 End-to-end pipeline for applying to Indeed postings: lead discovery →

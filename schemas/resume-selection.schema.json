@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Resume Selection Decision",
+  "description": "Auditable record of which resume variant was routed to a lead and why. Written by select-resume-variant.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "lead_id",
+    "selected_variant_id",
+    "selected_resume_path",
+    "selected_resume_exists",
+    "score",
+    "confidence",
+    "fallback_used",
+    "needs_human_review",
+    "review_reasons",
+    "rationale",
+    "alternatives",
+    "registry_version",
+    "selected_at"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "lead_id": { "type": "string" },
+    "lead_title": { "type": "string" },
+    "selected_variant_id": { "type": "string" },
+    "selected_variant_label": { "type": "string" },
+    "selected_resume_path": { "type": "string" },
+    "selected_resume_exists": { "type": "boolean" },
+    "score": { "type": "number" },
+    "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+    "fallback_used": {
+      "type": "boolean",
+      "description": "true when the default variant was chosen because no specialized lane cleared the minimum confidence."
+    },
+    "needs_human_review": { "type": "boolean" },
+    "review_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "rationale": { "type": "string" },
+    "matched_title_patterns": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "matched_emphasis_skills": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "alternatives": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["variant_id", "score"],
+        "properties": {
+          "variant_id": { "type": "string" },
+          "score": { "type": "number" },
+          "resume_exists": { "type": "boolean" }
+        }
+      }
+    },
+    "registry_version": { "type": "integer" },
+    "selected_at": { "type": "string" }
+  }
+}

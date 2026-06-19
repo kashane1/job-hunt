@@ -15,6 +15,23 @@ Operate this repository as a trustworthy job-search system for one person. The g
 - **Indeed.com and LinkedIn.com are allowlisted per `config/domain-allowlist.yaml`** (with playbooks `indeed-easy-apply.md`, `linkedin-easy-apply.md`). Other sites in `HARD_FAIL_URL_PATTERNS` continue to hard-fail unless explicitly allowlisted.
 - **Glassdoor automation is a board-specific exception** via `glassdoor-easy-apply.md`, not a global allowlist; `glassdoor.com` is not allowlisted for ingestion/discovery.
 
+## Level 1.5 Co-Pilot
+
+- **Resume variant routing is config-driven and logged.** `config/resume-variants.json`
+  (schema `resume-variant-registry`) maps job-title lanes to pre-authored resume
+  files. `select-resume-variant --lead <lead>` routes a lead via
+  `resume_registry.route_lead` and writes a `<lead_id>-resume-selection.json`
+  decision artifact (schema `resume-selection`): chosen variant, score,
+  confidence, matched evidence, alternatives, and an explicit
+  `needs_human_review` with reasons. Routing reads the registry; it never
+  rewrites it.
+- **`scan-recent-jobs --since <window>`** filters discovered leads to a
+  wall-clock window (`30m`/`1h`/`2d`/`1w`/ISO) and groups by fit tier.
+- **`copilot-run`** chains scan → variant routing → per-job packet plan and
+  writes one decision log per run under `data/runs/copilot-<ts>/`. It is
+  plan/dry-run only: it generates no final content and **never submits** — the
+  human submit gate is preserved by construction.
+
 ## Browser Guardrails
 
 Soft tab limit 10, hard tab limit 15. Reuse the current tab whenever possible. Close background tabs aggressively before opening new ones. If the hard limit is reached, stop safely and record the failure.

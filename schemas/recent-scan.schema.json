@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Recent Job Scan",
+  "description": "Result of scan-recent-jobs: leads whose effective discovery timestamp falls within a wall-clock window, grouped by fit tier.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "scanned_at",
+    "since",
+    "window_start",
+    "counts",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "scanned_at": { "type": "string" },
+    "since": {
+      "type": "string",
+      "description": "The raw --since value (e.g. '1h', '2d', or an ISO timestamp)."
+    },
+    "window_start": {
+      "type": "string",
+      "description": "Resolved ISO timestamp; leads newer than this are included."
+    },
+    "leads_dir": { "type": "string" },
+    "discover_ran": { "type": "boolean" },
+    "counts": {
+      "type": "object",
+      "required": ["total_in_window", "strong_yes", "maybe", "no", "unscored"],
+      "properties": {
+        "total_in_window": { "type": "integer" },
+        "strong_yes": { "type": "integer" },
+        "maybe": { "type": "integer" },
+        "no": { "type": "integer" },
+        "unscored": { "type": "integer" }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["lead_id", "title", "company", "tier", "effective_timestamp"],
+        "properties": {
+          "lead_id": { "type": "string" },
+          "title": { "type": "string" },
+          "company": { "type": "string" },
+          "source": { "type": "string" },
+          "application_url": { "type": "string" },
+          "tier": { "type": "string", "enum": ["strong_yes", "maybe", "no", "unscored"] },
+          "fit_score": { "type": ["number", "null"] },
+          "effective_timestamp": { "type": "string" },
+          "lead_path": { "type": "string" }
+        }
+      }
+    }
+  }
+}

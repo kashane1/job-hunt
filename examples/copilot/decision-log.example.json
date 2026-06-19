@@ -1,0 +1,315 @@
+{
+  "generated_at": "2026-06-19T01:07:37+00:00",
+  "human_gate": "Co-pilot prepares applications up to a filled-but-unsubmitted form. Final Submit always requires a human click (auto_submit_tiers = []).",
+  "jobs": [
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/5255853008",
+      "company": "Anthropic",
+      "fit_score": 27,
+      "lead_id": "anthropic-it-systems-engineer-client-platform-engineer-edd1371c",
+      "needs_human_review": true,
+      "next_commands": [
+        "python3 scripts/job_hunt.py select-resume-variant --lead data/leads/anthropic-it-systems-engineer-client-platform-engineer-edd1371c.json",
+        "python3 scripts/job_hunt.py prepare-application --lead data/leads/anthropic-it-systems-engineer-client-platform-engineer-edd1371c.json",
+        "python3 scripts/job_hunt.py apply-posting --draft-id <draft-id-from-prepare>"
+      ],
+      "resume_selection": {
+        "alternatives": [
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "ai_engineer"
+          },
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "fullstack_product"
+          },
+          {
+            "resume_exists": true,
+            "score": 10.0,
+            "variant_id": "generalist_swe"
+          }
+        ],
+        "confidence": "high",
+        "fallback_used": false,
+        "lead_id": "anthropic-it-systems-engineer-client-platform-engineer-edd1371c",
+        "lead_title": "IT Systems Engineer, Client Platform Engineer",
+        "matched_emphasis_skills": [
+          "platform"
+        ],
+        "matched_title_patterns": [
+          "platform engineer"
+        ],
+        "needs_human_review": true,
+        "rationale": "Routed to 'platform_backend' (score 72.5): title matched ['platform engineer']; emphasis skills overlap ['platform']; inferred seniority mid.",
+        "registry_version": 1,
+        "review_reasons": [
+          "resume_source_missing:profile/resumes/platform-backend.md"
+        ],
+        "schema_version": 1,
+        "score": 72.5,
+        "selected_at": "2026-06-19T01:07:37+00:00",
+        "selected_resume_exists": false,
+        "selected_resume_path": "profile/resumes/platform-backend.md",
+        "selected_variant_id": "platform_backend",
+        "selected_variant_label": "Platform / Backend Engineer"
+      },
+      "review_items": [
+        "resume_source_missing:profile/resumes/platform-backend.md"
+      ],
+      "tier": "no",
+      "title": "IT Systems Engineer, Client Platform Engineer",
+      "why_matched": "Matched skills: platform. Title alignment: limited. Location: no-location-preference-set. Penalty keywords: none."
+    },
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/5248983008",
+      "company": "Anthropic",
+      "fit_score": 11,
+      "lead_id": "anthropic-applied-ai-engineer-09b33c17",
+      "needs_human_review": true,
+      "next_commands": [
+        "python3 scripts/job_hunt.py select-resume-variant --lead data/leads/anthropic-applied-ai-engineer-09b33c17.json",
+        "python3 scripts/job_hunt.py prepare-application --lead data/leads/anthropic-applied-ai-engineer-09b33c17.json",
+        "python3 scripts/job_hunt.py apply-posting --draft-id <draft-id-from-prepare>"
+      ],
+      "resume_selection": {
+        "alternatives": [
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "platform_backend"
+          },
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "fullstack_product"
+          },
+          {
+            "resume_exists": true,
+            "score": 10.0,
+            "variant_id": "generalist_swe"
+          }
+        ],
+        "confidence": "high",
+        "fallback_used": false,
+        "lead_id": "anthropic-applied-ai-engineer-09b33c17",
+        "lead_title": "Applied AI Engineer",
+        "matched_emphasis_skills": [
+          "ai"
+        ],
+        "matched_title_patterns": [
+          "ai engineer",
+          "applied ai"
+        ],
+        "needs_human_review": true,
+        "rationale": "Routed to 'ai_engineer' (score 78.75): title matched ['ai engineer', 'applied ai']; emphasis skills overlap ['ai']; inferred seniority mid.",
+        "registry_version": 1,
+        "review_reasons": [
+          "resume_source_missing:profile/resumes/ai-engineer.md"
+        ],
+        "schema_version": 1,
+        "score": 78.75,
+        "selected_at": "2026-06-19T01:07:37+00:00",
+        "selected_resume_exists": false,
+        "selected_resume_path": "profile/resumes/ai-engineer.md",
+        "selected_variant_id": "ai_engineer",
+        "selected_variant_label": "AI / ML Engineer"
+      },
+      "review_items": [
+        "resume_source_missing:profile/resumes/ai-engineer.md"
+      ],
+      "tier": "no",
+      "title": "Applied AI Engineer",
+      "why_matched": "Matched skills: none. Title alignment: limited. Location: no-location-preference-set. Penalty keywords: none."
+    },
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/4956672008",
+      "company": "Anthropic",
+      "fit_score": 42,
+      "lead_id": "anthropic-data-engineer-fd69d0c0",
+      "needs_human_review": true,
+      "next_commands": [
+        "python3 scripts/job_hunt.py select-resume-variant --lead data/leads/anthropic-data-engineer-fd69d0c0.json",
+        "python3 scripts/job_hunt.py prepare-application --lead data/leads/anthropic-data-engineer-fd69d0c0.json",
+        "python3 scripts/job_hunt.py apply-posting --draft-id <draft-id-from-prepare>"
+      ],
+      "resume_selection": {
+        "alternatives": [
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "ai_engineer"
+          },
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "platform_backend"
+          },
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "fullstack_product"
+          }
+        ],
+        "confidence": "low",
+        "fallback_used": true,
+        "lead_id": "anthropic-data-engineer-fd69d0c0",
+        "lead_title": "Data Engineer",
+        "matched_emphasis_skills": [],
+        "matched_title_patterns": [],
+        "needs_human_review": true,
+        "rationale": "No specialized lane cleared the 22.0 threshold; used default lane 'generalist_swe'. Inferred seniority: mid.",
+        "registry_version": 1,
+        "review_reasons": [
+          "no_specialized_lane_cleared_threshold (best=ai_engineer@10.0)"
+        ],
+        "schema_version": 1,
+        "score": 10.0,
+        "selected_at": "2026-06-19T01:07:37+00:00",
+        "selected_resume_exists": true,
+        "selected_resume_path": "examples/profile/raw/resume.md",
+        "selected_variant_id": "generalist_swe",
+        "selected_variant_label": "Generalist Software Engineer"
+      },
+      "review_items": [
+        "no_specialized_lane_cleared_threshold (best=ai_engineer@10.0)"
+      ],
+      "tier": "no",
+      "title": "Data Engineer",
+      "why_matched": "Matched skills: data. Title alignment: limited. Location: no-location-preference-set. Penalty keywords: none."
+    },
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/5186067008",
+      "company": "Anthropic",
+      "fit_score": 42,
+      "lead_id": "anthropic-full-stack-software-engineer-reinforcement-learning-d1d54353",
+      "needs_human_review": true,
+      "next_commands": [
+        "python3 scripts/job_hunt.py select-resume-variant --lead data/leads/anthropic-full-stack-software-engineer-reinforcement-learning-d1d54353.json",
+        "python3 scripts/job_hunt.py prepare-application --lead data/leads/anthropic-full-stack-software-engineer-reinforcement-learning-d1d54353.json",
+        "python3 scripts/job_hunt.py apply-posting --draft-id <draft-id-from-prepare>"
+      ],
+      "resume_selection": {
+        "alternatives": [
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "ai_engineer"
+          },
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "platform_backend"
+          },
+          {
+            "resume_exists": true,
+            "score": 10.0,
+            "variant_id": "generalist_swe"
+          }
+        ],
+        "confidence": "high",
+        "fallback_used": false,
+        "lead_id": "anthropic-full-stack-software-engineer-reinforcement-learning-d1d54353",
+        "lead_title": "Full-Stack Software Engineer, Reinforcement Learning",
+        "matched_emphasis_skills": [],
+        "matched_title_patterns": [
+          "full-stack"
+        ],
+        "needs_human_review": true,
+        "rationale": "Routed to 'fullstack_product' (score 70.0): title matched ['full-stack']; inferred seniority mid.",
+        "registry_version": 1,
+        "review_reasons": [
+          "resume_source_missing:profile/resumes/fullstack-product.md"
+        ],
+        "schema_version": 1,
+        "score": 70.0,
+        "selected_at": "2026-06-19T01:07:37+00:00",
+        "selected_resume_exists": false,
+        "selected_resume_path": "profile/resumes/fullstack-product.md",
+        "selected_variant_id": "fullstack_product",
+        "selected_variant_label": "Full-Stack / Product Engineer"
+      },
+      "review_items": [
+        "resume_source_missing:profile/resumes/fullstack-product.md"
+      ],
+      "tier": "no",
+      "title": "Full-Stack Software Engineer, Reinforcement Learning",
+      "why_matched": "Matched skills: data. Title alignment: limited. Location: no-location-preference-set. Penalty keywords: none."
+    },
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/4778843008",
+      "company": "Anthropic",
+      "fit_score": 46,
+      "lead_id": "anthropic-ml-infrastructure-engineer-safeguards-1a67a0f3",
+      "needs_human_review": true,
+      "next_commands": [
+        "python3 scripts/job_hunt.py select-resume-variant --lead data/leads/anthropic-ml-infrastructure-engineer-safeguards-1a67a0f3.json",
+        "python3 scripts/job_hunt.py prepare-application --lead data/leads/anthropic-ml-infrastructure-engineer-safeguards-1a67a0f3.json",
+        "python3 scripts/job_hunt.py apply-posting --draft-id <draft-id-from-prepare>"
+      ],
+      "resume_selection": {
+        "alternatives": [
+          {
+            "resume_exists": false,
+            "score": 13.75,
+            "variant_id": "ai_engineer"
+          },
+          {
+            "resume_exists": false,
+            "score": 10.0,
+            "variant_id": "fullstack_product"
+          },
+          {
+            "resume_exists": true,
+            "score": 10.0,
+            "variant_id": "generalist_swe"
+          }
+        ],
+        "confidence": "high",
+        "fallback_used": false,
+        "lead_id": "anthropic-ml-infrastructure-engineer-safeguards-1a67a0f3",
+        "lead_title": "ML Infrastructure Engineer, Safeguards",
+        "matched_emphasis_skills": [
+          "infrastructure"
+        ],
+        "matched_title_patterns": [
+          "infrastructure engineer"
+        ],
+        "needs_human_review": true,
+        "rationale": "Routed to 'platform_backend' (score 72.5): title matched ['infrastructure engineer']; emphasis skills overlap ['infrastructure']; inferred seniority mid.",
+        "registry_version": 1,
+        "review_reasons": [
+          "resume_source_missing:profile/resumes/platform-backend.md"
+        ],
+        "schema_version": 1,
+        "score": 72.5,
+        "selected_at": "2026-06-19T01:07:37+00:00",
+        "selected_resume_exists": false,
+        "selected_resume_path": "profile/resumes/platform-backend.md",
+        "selected_variant_id": "platform_backend",
+        "selected_variant_label": "Platform / Backend Engineer"
+      },
+      "review_items": [
+        "resume_source_missing:profile/resumes/platform-backend.md"
+      ],
+      "tier": "no",
+      "title": "ML Infrastructure Engineer, Safeguards",
+      "why_matched": "Matched skills: data. Title alignment: limited. Location: no-location-preference-set. Penalty keywords: none."
+    }
+  ],
+  "jobs_needing_review": 5,
+  "jobs_planned": 5,
+  "leads_dir": "data/leads",
+  "min_tier": "no",
+  "scan_counts": {
+    "maybe": 0,
+    "no": 5,
+    "strong_yes": 0,
+    "total_in_window": 5,
+    "unscored": 0
+  },
+  "schema_version": 1,
+  "since": "1h",
+  "window_start": "2026-06-19T00:07:37.468935+00:00"
+}

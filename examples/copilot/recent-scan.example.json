@@ -1,0 +1,72 @@
+{
+  "candidates": [
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/5255853008",
+      "company": "Anthropic",
+      "effective_timestamp": "2026-06-19T01:07:12+00:00",
+      "fit_score": 27,
+      "lead_id": "anthropic-it-systems-engineer-client-platform-engineer-edd1371c",
+      "lead_path": "data/leads/anthropic-it-systems-engineer-client-platform-engineer-edd1371c.json",
+      "source": "greenhouse",
+      "tier": "no",
+      "title": "IT Systems Engineer, Client Platform Engineer"
+    },
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/5248983008",
+      "company": "Anthropic",
+      "effective_timestamp": "2026-06-19T01:07:11+00:00",
+      "fit_score": 11,
+      "lead_id": "anthropic-applied-ai-engineer-09b33c17",
+      "lead_path": "data/leads/anthropic-applied-ai-engineer-09b33c17.json",
+      "source": "greenhouse",
+      "tier": "no",
+      "title": "Applied AI Engineer"
+    },
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/4956672008",
+      "company": "Anthropic",
+      "effective_timestamp": "2026-06-19T01:07:11+00:00",
+      "fit_score": 42,
+      "lead_id": "anthropic-data-engineer-fd69d0c0",
+      "lead_path": "data/leads/anthropic-data-engineer-fd69d0c0.json",
+      "source": "greenhouse",
+      "tier": "no",
+      "title": "Data Engineer"
+    },
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/5186067008",
+      "company": "Anthropic",
+      "effective_timestamp": "2026-06-19T01:07:11+00:00",
+      "fit_score": 42,
+      "lead_id": "anthropic-full-stack-software-engineer-reinforcement-learning-d1d54353",
+      "lead_path": "data/leads/anthropic-full-stack-software-engineer-reinforcement-learning-d1d54353.json",
+      "source": "greenhouse",
+      "tier": "no",
+      "title": "Full-Stack Software Engineer, Reinforcement Learning"
+    },
+    {
+      "application_url": "https://job-boards.greenhouse.io/anthropic/jobs/4778843008",
+      "company": "Anthropic",
+      "effective_timestamp": "2026-06-19T01:07:11+00:00",
+      "fit_score": 46,
+      "lead_id": "anthropic-ml-infrastructure-engineer-safeguards-1a67a0f3",
+      "lead_path": "data/leads/anthropic-ml-infrastructure-engineer-safeguards-1a67a0f3.json",
+      "source": "greenhouse",
+      "tier": "no",
+      "title": "ML Infrastructure Engineer, Safeguards"
+    }
+  ],
+  "counts": {
+    "maybe": 0,
+    "no": 5,
+    "strong_yes": 0,
+    "total_in_window": 5,
+    "unscored": 0
+  },
+  "discover_ran": false,
+  "leads_dir": "data/leads",
+  "scanned_at": "2026-06-19T01:07:37+00:00",
+  "schema_version": 1,
+  "since": "1h",
+  "window_start": "2026-06-19T00:07:37.401876+00:00"
+}

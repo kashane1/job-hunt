@@ -66,7 +66,20 @@ def _pick_curated_resume(lead: dict) -> tuple[Path | None, str]:
 
     Uses `utils.repo_root()` to resolve file paths — same convention as
     `application.py`, `playbooks.py`, and `confirmation.py`.
+
+    Consults the config-driven resume variant registry first
+    (`config/resume-variants.json`). The registry only *wins* when its routed
+    resume file exists on disk; otherwise this falls through to the legacy
+    hardcoded `CURATED_RESUME_LANES` below, preserving prior behavior. The full
+    routing decision (including missing-file review flags) is surfaced by the
+    `select-resume-variant` CLI, not buried in generation warnings.
     """
+    from .resume_registry import pick_registry_resume
+
+    registry_path, _decision = pick_registry_resume(lead)
+    if registry_path is not None:
+        return registry_path, ""
+
     title_lc = str(lead.get("title") or "").lower()
     root = repo_root()
     for keywords, rel_path in CURATED_RESUME_LANES:

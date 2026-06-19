@@ -1,0 +1,43 @@
+{
+  "alternatives": [
+    {
+      "resume_exists": false,
+      "score": 10.0,
+      "variant_id": "platform_backend"
+    },
+    {
+      "resume_exists": false,
+      "score": 10.0,
+      "variant_id": "fullstack_product"
+    },
+    {
+      "resume_exists": true,
+      "score": 10.0,
+      "variant_id": "generalist_swe"
+    }
+  ],
+  "confidence": "high",
+  "fallback_used": false,
+  "lead_id": "anthropic-applied-ai-engineer-09b33c17",
+  "lead_title": "Applied AI Engineer",
+  "matched_emphasis_skills": [
+    "ai"
+  ],
+  "matched_title_patterns": [
+    "ai engineer",
+    "applied ai"
+  ],
+  "needs_human_review": true,
+  "rationale": "Routed to 'ai_engineer' (score 78.75): title matched ['ai engineer', 'applied ai']; emphasis skills overlap ['ai']; inferred seniority mid.",
+  "registry_version": 1,
+  "review_reasons": [
+    "resume_source_missing:profile/resumes/ai-engineer.md"
+  ],
+  "schema_version": 1,
+  "score": 78.75,
+  "selected_at": "2026-06-19T01:07:37+00:00",
+  "selected_resume_exists": false,
+  "selected_resume_path": "profile/resumes/ai-engineer.md",
+  "selected_variant_id": "ai_engineer",
+  "selected_variant_label": "AI / ML Engineer"
+}

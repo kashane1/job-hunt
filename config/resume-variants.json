@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "_comment": "Resume variant registry. Maps job-title lanes to a pre-authored, ATS-passing resume file. The router (src/job_hunt/resume_registry.py) scores each variant against a scored lead using title-pattern match + emphasis-skills overlap + seniority band, then picks the best. default_variant is used when no specialized lane clears the minimum confidence. To add a variant: drop an ATS-passing markdown resume under profile/resumes/, then add an entry pointing resume_path at it. A variant whose resume_path is missing still routes but is flagged needs_human_review. JSON (not YAML) because the repo is stdlib-only except Pillow and the in-repo YAML loader does not support nested list-of-objects. This file is config, not code: routing reads it, never rewrites it.",
+  "default_variant": "generalist_swe",
+  "variants": [
+    {
+      "id": "ai_engineer",
+      "label": "AI / ML Engineer",
+      "title_patterns": [
+        "ai engineer",
+        "ml engineer",
+        "machine learning",
+        "applied ai",
+        "applied scientist",
+        "llm",
+        "genai",
+        "ai systems",
+        "nlp"
+      ],
+      "emphasis_skills": [
+        "python",
+        "pytorch",
+        "llm",
+        "rag",
+        "ml",
+        "nlp",
+        "ai",
+        "automation"
+      ],
+      "seniority_bands": [
+        "mid",
+        "senior",
+        "staff"
+      ],
+      "resume_path": "profile/resumes/ai-engineer.md",
+      "notes": "Use for roles centered on model/LLM/ML work. Author the resume file before relying on this lane in a live run."
+    },
+    {
+      "id": "platform_backend",
+      "label": "Platform / Backend Engineer",
+      "title_patterns": [
+        "platform engineer",
+        "backend engineer",
+        "infrastructure engineer",
+        "devops",
+        "site reliability",
+        "sre",
+        "distributed systems",
+        "api engineer"
+      ],
+      "emphasis_skills": [
+        "python",
+        "go",
+        "postgres",
+        "sql",
+        "aws",
+        "gcp",
+        "kubernetes",
+        "docker",
+        "api",
+        "backend",
+        "infrastructure",
+        "platform"
+      ],
+      "seniority_bands": [
+        "mid",
+        "senior",
+        "staff"
+      ],
+      "resume_path": "profile/resumes/platform-backend.md",
+      "notes": "Use for infra/platform/backend roles. Author the resume file before relying on this lane in a live run."
+    },
+    {
+      "id": "fullstack_product",
+      "label": "Full-Stack / Product Engineer",
+      "title_patterns": [
+        "full stack",
+        "fullstack",
+        "full-stack",
+        "product engineer",
+        "software engineer, product",
+        "frontend",
+        "forward deployed"
+      ],
+      "emphasis_skills": [
+        "python",
+        "typescript",
+        "react",
+        "node",
+        "api",
+        "frontend",
+        "backend"
+      ],
+      "seniority_bands": [
+        "junior",
+        "mid",
+        "senior"
+      ],
+      "resume_path": "profile/resumes/fullstack-product.md",
+      "notes": "Use for product-facing / full-stack roles. Author the resume file before relying on this lane in a live run."
+    },
+    {
+      "id": "generalist_swe",
+      "label": "Generalist Software Engineer",
+      "title_patterns": [],
+      "emphasis_skills": [
+        "python",
+        "backend",
+        "api",
+        "sql",
+        "aws",
+        "automation"
+      ],
+      "seniority_bands": [
+        "junior",
+        "mid",
+        "senior",
+        "staff"
+      ],
+      "resume_path": "examples/profile/raw/resume.md",
+      "notes": "Catch-all default (empty title_patterns = wildcard). Anchored to the bundled example resume so a fresh checkout resolves; replace with your real generalist resume under profile/resumes/."
+    }
+  ]
+}

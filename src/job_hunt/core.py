@@ -1670,6 +1670,43 @@ def build_parser() -> argparse.ArgumentParser:
     score.add_argument("--profile", default="profile/normalized/candidate-profile.json")
     score.add_argument("--scoring-config", default="config/scoring.yaml")
 
+    # --- Level 1.5 co-pilot commands ---
+    sel_variant = subparsers.add_parser(
+        "select-resume-variant",
+        help="Route a scored lead to its best resume variant (logged decision)",
+    )
+    sel_variant.add_argument("--lead", required=True, help="Path to lead JSON file")
+    sel_variant.add_argument("--registry", default="config/resume-variants.json")
+    sel_variant.add_argument(
+        "--output-dir", default="data/applications",
+        help="Where to write the <lead_id>-resume-selection.json decision artifact",
+    )
+    sel_variant.add_argument("--json", action="store_true", help="Print the decision JSON")
+
+    scan_recent_p = subparsers.add_parser(
+        "scan-recent-jobs",
+        help="List discovered leads within a recent wall-clock window, grouped by fit tier",
+    )
+    scan_recent_p.add_argument(
+        "--since", default="1h", help="Window: 30m, 1h, 2d, 1w, or an ISO timestamp")
+    scan_recent_p.add_argument("--leads-dir", default="data/leads")
+    scan_recent_p.add_argument("--output-dir", default="data/runs")
+    scan_recent_p.add_argument("--json", action="store_true", help="Print the scan artifact")
+
+    copilot_p = subparsers.add_parser(
+        "copilot-run",
+        help="Plan a co-pilot run (scan -> route variant -> packet plan); writes a "
+             "decision log. Prepares only — NEVER submits.",
+    )
+    copilot_p.add_argument("--since", default="1h")
+    copilot_p.add_argument(
+        "--min-tier", default="maybe",
+        choices=["strong_yes", "maybe", "no", "unscored"])
+    copilot_p.add_argument("--leads-dir", default="data/leads")
+    copilot_p.add_argument("--registry", default="config/resume-variants.json")
+    copilot_p.add_argument("--runs-root", default="data/runs")
+    copilot_p.add_argument("--json", action="store_true")
+
     draft = subparsers.add_parser("build-draft")
     draft.add_argument("--lead", required=True)
     draft.add_argument("--profile", default="profile/normalized/candidate-profile.json")
@@ -2304,6 +2341,64 @@ def main(argv: list[str] | None = None) -> int:
             load_yaml_file(Path(args.scoring_config), {}),
         )
         write_json(lead_path, scored)
+        return 0
+
+    if args.command == "select-resume-variant":
+        from .resume_registry import load_registry, route_lead
+
+        lead = read_json(Path(args.lead))
+        registry = load_registry(Path(args.registry))
+        decision = route_lead(lead, registry)
+        out_dir = Path(args.output_dir)
+        ensure_dir(out_dir)
+        out_path = out_dir / f"{lead.get('lead_id', 'lead')}-resume-selection.json"
+        write_json(out_path, decision)
+        if args.json:
+            print(json.dumps(decision, indent=2))
+        else:
+            print(
+                f"{decision['selected_variant_id']} "
+                f"(confidence={decision['confidence']}, score={decision['score']}, "
+                f"needs_review={decision['needs_human_review']}) -> {out_path}"
+            )
+        return 0
+
+    if args.command == "scan-recent-jobs":
+        from .copilot import scan_recent
+
+        artifact = scan_recent(Path(args.leads_dir), args.since)
+        out_dir = Path(args.output_dir)
+        ensure_dir(out_dir)
+        stamp = artifact["scanned_at"].replace(":", "").replace("-", "").replace("+", "")[:15]
+        out_path = out_dir / f"recent-scan-{stamp}.json"
+        write_json(out_path, artifact)
+        if args.json:
+            print(json.dumps(artifact, indent=2))
+        else:
+            c = artifact["counts"]
+            print(
+                f"{c['total_in_window']} lead(s) since {args.since} "
+                f"(strong_yes={c['strong_yes']}, maybe={c['maybe']}, "
+                f"no={c['no']}, unscored={c['unscored']}) -> {out_path}"
+            )
+        return 0
+
+    if args.command == "copilot-run":
+        from .copilot import plan_copilot_run, write_copilot_run
+        from .resume_registry import load_registry
+
+        registry = load_registry(Path(args.registry))
+        run = plan_copilot_run(
+            Path(args.leads_dir), args.since, min_tier=args.min_tier, registry=registry
+        )
+        run_dir = write_copilot_run(run, Path(args.runs_root))
+        if args.json:
+            print(json.dumps(run, indent=2))
+        else:
+            print(
+                f"planned {run['jobs_planned']} job(s), "
+                f"{run['jobs_needing_review']} need review -> {run_dir}"
+            )
         return 0
 
     if args.command == "build-draft":
