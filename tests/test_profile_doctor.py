@@ -36,6 +36,8 @@ class IsPrivatePathTest(unittest.TestCase):
     def test_private(self) -> None:
         for p in [
             "profile/raw/accomplishments.md",
+            "profile/raw/intake/old-resume.txt",
+            "profile/private-review/source-map.md",
             "profile/normalized/candidate-profile.json",
             "profile/resumes/ai-engineer.md",
             "profile/claims/claims-bank.json",

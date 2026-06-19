@@ -60,6 +60,7 @@ def approved_claims_by_lane(claims_bank: dict | None) -> dict[str, int]:
 
 _PRIVATE_DIR_PREFIXES: Final = (
     "profile/raw/",
+    "profile/private-review/",
     "profile/normalized/",
     "data/generated/",
     "data/applications/",

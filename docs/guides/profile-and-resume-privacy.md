@@ -25,6 +25,8 @@ public, be forked, or be shared.
 | `profile/resumes/*.md` (real lane files) | 🔒 gitignored | Real resume content |
 | `profile/claims/claims-bank.json` | 🔒 gitignored | Real claims |
 | `profile/raw/`, `profile/normalized/` | 🔒 gitignored | Raw + normalized profile |
+| `profile/raw/intake/` | 🔒 gitignored | Private source dump (old resumes, cover letters, application answers, work journals) |
+| `profile/private-review/` | 🔒 gitignored | Source-of-truth maps, lane recommendations, working analysis derived from raw material |
 | `data/generated/`, `data/applications/`, `data/leads/`, `data/runs/`, `data/calibration/`, `data/discovery/`, `data/companies/` | 🔒 gitignored | Runtime PII artifacts |
 | generated PDFs (`data/generated/...`) | 🔒 gitignored | Rendered resumes/letters |
 | decision logs (`data/runs/copilot-*/`) | 🔒 gitignored | Embed scored lead data |

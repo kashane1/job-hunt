@@ -16,7 +16,12 @@ build/
 
 # Candidate PII and generated artifacts — never push to remote
 profile/raw/
+# (profile/raw/intake/ — private source dump: old resumes, cover letters,
+#  application answers, work journals — is covered by profile/raw/ above.)
 profile/normalized/
+# Private source-of-truth analysis: source maps, lane recommendations, and any
+# other working notes derived from raw material. Local-only, never tracked.
+profile/private-review/
 data/generated/
 data/companies/
 data/applications/
