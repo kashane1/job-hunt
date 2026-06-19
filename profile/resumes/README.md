@@ -18,5 +18,20 @@ the decision `needs_human_review` with `resume_source_missing` so you know to
 author it. Replace the default lane's `resume_path` with your own generalist
 resume once you have one.
 
-These files are gitignored by default if they contain real personal data —
-check `.gitignore` before committing.
+## Authoring a lane
+
+Start from the scaffold in `profile/resumes/templates/<lane>.template.md`:
+
+```bash
+cp profile/resumes/templates/ai-engineer.template.md profile/resumes/ai-engineer.md
+# fill it in with true, evidence-backed content (claims from profile/claims/)
+python3 scripts/job_hunt.py profile-doctor
+```
+
+## Privacy (enforced by .gitignore)
+
+Real lane files (`profile/resumes/*.md`) are **gitignored** — only this README
+and the `templates/` scaffolds are tracked. The claims truth bank under
+`profile/claims/` follows the same pattern. See
+[`docs/guides/profile-and-resume-privacy.md`](../../docs/guides/profile-and-resume-privacy.md)
+for the full policy and the broader title-taxonomy → lane mapping.

@@ -32,6 +32,20 @@ Operate this repository as a trustworthy job-search system for one person. The g
   plan/dry-run only: it generates no final content and **never submits** — the
   human submit gate is preserved by construction.
 
+## Profile / Resume Source of Truth
+
+- **Privacy policy:** `docs/guides/profile-and-resume-privacy.md`. Track only
+  scaffolding (schemas, config, templates, sanitized examples, READMEs). Real
+  resume lane files (`profile/resumes/*.md`), the claims bank
+  (`profile/claims/claims-bank.json`), `profile/raw/`, `profile/normalized/`,
+  and all `data/` runtime artifacts are gitignored and PII-sensitive.
+- **Claims truth bank** (`profile/claims/claims-bank.json`, schema `claims-bank`):
+  only `review_status: approved` claims may appear in generated materials, and
+  only for their `allowed_lanes`. Never fabricate; leave `impact` null rather
+  than inventing a metric. Keep rejected over-claims and a `never_claim` list.
+- **`profile-doctor`** validates registry/lane/template/claims consistency and
+  flags any private/PII path tracked by git (exit non-zero on errors).
+
 ## Browser Guardrails
 
 Soft tab limit 10, hard tab limit 15. Reuse the current tab whenever possible. Close background tabs aggressively before opening new ones. If the hard limit is reached, stop safely and record the failure.

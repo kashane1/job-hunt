@@ -27,6 +27,18 @@ data/calibration/
 docs/reports/*-report.md
 examples/results/
 
+# Real resume-lane files and the claims truth bank are PII. Track only the
+# scaffolding: templates (profile/resumes/templates/), the README, and the
+# sanitized example claims bank. See docs/guides/profile-and-resume-privacy.md.
+profile/resumes/*.md
+!profile/resumes/README.md
+profile/claims/*.json
+!profile/claims/claims-bank.example.json
+
+# Internal capability/audit reports carry candid personal job-search context.
+# Keep them local; never push.
+docs/reports/*-audit-*.md
+
 # Watchlist contains user-supplied target-company names (PII-adjacent).
 # Track config/watchlist.example.yaml as the template.
 config/watchlist.yaml

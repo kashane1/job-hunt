@@ -36,6 +36,11 @@
             "type": "string",
             "description": "Repo-relative path to the ATS-passing resume markdown for this lane."
           },
+          "review_status": {
+            "type": "string",
+            "enum": ["missing", "draft", "ready"],
+            "description": "Authoring state. Optional; absent is treated as 'draft'. A lane marked 'ready' must have its resume file present AND at least one approved claim allowed for it (enforced by profile-doctor)."
+          },
           "notes": { "type": "string" }
         }
       }

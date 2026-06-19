@@ -121,6 +121,16 @@ python3 scripts/job_hunt.py select-resume-variant --lead data/leads/<id>.json
 python3 scripts/job_hunt.py copilot-run --since 1h --min-tier maybe
 ```
 
+Authoring real profile/resume content? See
+[`docs/guides/profile-and-resume-privacy.md`](docs/guides/profile-and-resume-privacy.md)
+for what is safe to track vs. kept private, the per-lane authoring templates
+(`profile/resumes/templates/`), and the claims truth bank
+(`profile/claims/`). Validate the foundation with:
+
+```bash
+python3 scripts/job_hunt.py profile-doctor
+```
+
 Resume variants are a **config-driven registry** (`config/resume-variants.json`):
 job-title lanes map to pre-authored resume files. Routing scores each lane by
 title-pattern match + emphasis-skills overlap + seniority, picks the best, and

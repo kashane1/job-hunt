@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "_comment": "SANITIZED EXAMPLE claims bank — fictional, generic claims that show the structure only. Copy to profile/claims/claims-bank.json (gitignored) and replace with your own true, evidence-backed claims. Never fabricate. Only review_status=approved claims are usable in materials, and only for their allowed_lanes.",
+  "claims": [
+    {
+      "claim_id": "example-backend-migration",
+      "claim_text": "[EXAMPLE] Led a relational database migration with zero data loss across the full dataset.",
+      "evidence": "EXAMPLE — replace with your verifiable source (PR, runbook, employer).",
+      "technologies": ["python", "postgres", "sql"],
+      "impact": "Zero data-loss cutover (example metric — only keep if defensible).",
+      "allowed_lanes": ["platform_backend", "generalist_swe"],
+      "confidence": "high",
+      "review_status": "approved",
+      "fabrication_risk": "Only claim 'zero data loss' if validated by row counts/checksums; otherwise soften to 'validated integrity'."
+    },
+    {
+      "claim_id": "example-api-integration",
+      "claim_text": "[EXAMPLE] Built a third-party API integration powering a high-volume transactional system.",
+      "evidence": "EXAMPLE — replace with your verifiable source.",
+      "technologies": ["python", "api", "backend"],
+      "impact": null,
+      "allowed_lanes": ["platform_backend", "fullstack_product", "generalist_swe"],
+      "confidence": "medium",
+      "review_status": "approved",
+      "fabrication_risk": "Do not attach a revenue figure unless you can source it; impact left null on purpose."
+    },
+    {
+      "claim_id": "example-llm-tooling",
+      "claim_text": "[EXAMPLE] Shipped an internal tool that uses an LLM to draft and route structured documents.",
+      "evidence": "EXAMPLE — replace with your verifiable source.",
+      "technologies": ["python", "llm", "automation"],
+      "impact": null,
+      "allowed_lanes": ["ai_engineer"],
+      "confidence": "medium",
+      "review_status": "draft",
+      "fabrication_risk": "Draft until evidence is attached and impact is verifiable. Not usable while review_status != approved."
+    },
+    {
+      "claim_id": "example-frontend-perf",
+      "claim_text": "[EXAMPLE] Reduced page interaction latency on a customer-facing workflow.",
+      "evidence": "EXAMPLE — replace with your verifiable source.",
+      "technologies": ["typescript", "react", "frontend"],
+      "impact": "Faster interactions (attach a measured % only if you have it).",
+      "allowed_lanes": ["fullstack_product"],
+      "confidence": "low",
+      "review_status": "draft",
+      "fabrication_risk": "Percentage improvements are the most-faked metric; keep generic unless instrumented."
+    },
+    {
+      "claim_id": "example-rejected-overclaim",
+      "claim_text": "[EXAMPLE] Single-handedly architected the entire platform.",
+      "evidence": "Rejected — was one of several engineers; 'single-handedly/entire' is an over-claim.",
+      "technologies": [],
+      "impact": null,
+      "allowed_lanes": [],
+      "confidence": "low",
+      "review_status": "rejected",
+      "fabrication_risk": "Kept as a rejected exemplar so the same over-claim is not re-introduced."
+    }
+  ],
+  "never_claim": [
+    {
+      "text": "Years of experience with a technology you have not used in production.",
+      "reason": "Tenure inflation is easy to disprove in interviews and on background checks."
+    },
+    {
+      "text": "Sole ownership of team or multi-person achievements.",
+      "reason": "Use 'contributed to' / 'one of N engineers'; sole-credit claims are dishonest and risky."
+    },
+    {
+      "text": "Specific revenue/percentage impact without a verifiable source.",
+      "reason": "Unsourced metrics are fabrication; leave impact null instead."
+    }
+  ]
+}

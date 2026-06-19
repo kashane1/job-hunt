@@ -1707,6 +1707,15 @@ def build_parser() -> argparse.ArgumentParser:
     copilot_p.add_argument("--runs-root", default="data/runs")
     copilot_p.add_argument("--json", action="store_true")
 
+    doctor_p = subparsers.add_parser(
+        "profile-doctor",
+        help="Validate resume-lane registry, lane files, templates, and claims "
+             "bank consistency; flag any private/PII path tracked by git",
+    )
+    doctor_p.add_argument("--registry", default="config/resume-variants.json")
+    doctor_p.add_argument("--claims-bank", default="profile/claims/claims-bank.json")
+    doctor_p.add_argument("--json", action="store_true")
+
     draft = subparsers.add_parser("build-draft")
     draft.add_argument("--lead", required=True)
     draft.add_argument("--profile", default="profile/normalized/candidate-profile.json")
@@ -2400,6 +2409,19 @@ def main(argv: list[str] | None = None) -> int:
                 f"{run['jobs_needing_review']} need review -> {run_dir}"
             )
         return 0
+
+    if args.command == "profile-doctor":
+        from .profile_doctor import format_report, run_doctor
+
+        report = run_doctor(
+            registry_path=Path(args.registry),
+            claims_path=Path(args.claims_bank),
+        )
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print(format_report(report))
+        return 0 if report["ok"] else 1
 
     if args.command == "build-draft":
         draft = build_application_draft(
