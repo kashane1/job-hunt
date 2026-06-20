@@ -2164,13 +2164,47 @@ def build_parser() -> argparse.ArgumentParser:
         help="Rank recently-seen leads into a packet-readiness queue (no apply, no browser)",
     )
     watch_parser.add_argument(
-        "--since-hours", default="24",
-        help="Lookback window in hours (e.g. 1, 8, 12, 24; floats allowed). Must be > 0.",
+        "--since-hours", default=None,
+        help="Lookback window in hours (e.g. 1, 8, 12, 24; floats allowed). Must be > 0. "
+             "Overrides a --profile's since_hours; defaults to 24 when neither is set.",
+    )
+    watch_parser.add_argument(
+        "--profile", default="",
+        help="Named run profile (hourly/morning/daily/catchup or a custom one from "
+             "config/watch-profiles.yaml). Sets since_hours/top/prefs_md defaults.",
+    )
+    watch_parser.add_argument(
+        "--watch-profiles", default="config/watch-profiles.yaml",
+        help="Path to a private watch-profiles config that extends the built-ins",
     )
     watch_parser.add_argument("--leads-dir", default="data/leads")
     watch_parser.add_argument("--registry", default="config/resume-variants.json")
-    watch_parser.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    watch_parser.add_argument(
+        "--candidate-profile", default="profile/normalized/candidate-profile.json",
+        help="Normalized candidate profile JSON (used for scoring when --rescore)",
+    )
     watch_parser.add_argument("--scoring-config", default="config/scoring.yaml")
+    watch_parser.add_argument("--state-dir", default="data/watch/state")
+    watch_parser.add_argument(
+        "--update-state", action="store_true",
+        help="Write non-private last-run state for the profile after a successful run",
+    )
+    watch_parser.add_argument(
+        "--show-state", action="store_true",
+        help="Print a compact non-private summary of the profile's last-run state and exit",
+    )
+    watch_parser.add_argument(
+        "--reset-state", action="store_true",
+        help="Remove the profile's last-run state file and exit",
+    )
+    watch_parser.add_argument(
+        "--suppress-seen", action="store_true",
+        help="Mark leads seen in the profile's prior run with seen_in_previous_watch",
+    )
+    watch_parser.add_argument(
+        "--hide-seen", action="store_true",
+        help="With --suppress-seen, omit seen leads from the displayed summary (counts kept)",
+    )
     watch_parser.add_argument("--watchlist", default="config/watchlist.yaml")
     watch_parser.add_argument("--queue-dir", default="data/watch")
     watch_parser.add_argument("--data-root", default="data")
@@ -2216,8 +2250,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Print a full read-only classification trace for one lead_id (no packet generated)",
     )
     watch_parser.add_argument(
-        "--top", type=int, default=3,
-        help="How many packet_ready / needs_review rows to show in the summary (default 3)",
+        "--top", type=int, default=None,
+        help="How many packet_ready / needs_review rows to show (overrides profile; default 3)",
     )
     watch_parser.add_argument(
         "--verbose-rejects", action="store_true",
@@ -3072,14 +3106,55 @@ def main(argv: list[str] | None = None) -> int:
         from .resume_registry import load_registry
         from .utils import StructuredError
 
+        # --- resolve run profile (overridden by explicit flags) ---
+        profile_name = args.profile or "default"
+        profile_cfg: dict = {}
+        if args.profile:
+            try:
+                profile_cfg = watcher.resolve_profile(
+                    args.profile, config_path=args.watch_profiles
+                )
+            except watcher.WatcherError as exc:
+                print(json.dumps({"status": "error", "error_code": "unknown_profile",
+                                  "message": str(exc)}, indent=2))
+                return 2
+
+        state_dir = Path(args.state_dir)
+        state_path = state_dir / f"{profile_name}.json"
+
+        # --- standalone state actions (no run) ---
+        if args.show_state:
+            state = read_json(state_path) if state_path.exists() else None
+            print(json.dumps({"status": "ok", "profile": profile_name,
+                              "state_path": str(state_path),
+                              "state": watcher.state_summary(state)}, indent=2))
+            return 0
+        if args.reset_state:
+            removed = False
+            if state_path.exists():
+                state_path.unlink()
+                removed = True
+            print(json.dumps({"status": "ok", "profile": profile_name,
+                              "state_path": str(state_path), "removed": removed}, indent=2))
+            return 0
+
+        # since_hours: explicit flag > profile > 24
+        raw_since = args.since_hours
+        if raw_since is None:
+            raw_since = profile_cfg.get("since_hours", 24)
         try:
-            since_hours = watcher.parse_since_hours(args.since_hours)
+            since_hours = watcher.parse_since_hours(raw_since)
         except watcher.WatcherError as exc:
             print(json.dumps({"status": "error", "error_code": "invalid_since_hours",
                               "message": str(exc)}, indent=2))
             return 2
 
-        profile_path = Path(args.profile)
+        # top: explicit flag > profile > 3
+        top = args.top if args.top is not None else int(profile_cfg.get("top", 3))
+        # prefs-md path: explicit flag > profile prefs_md > none
+        prefs_md_path = args.prefs_md or profile_cfg.get("prefs_md", "") or ""
+
+        profile_path = Path(args.candidate_profile)
         profile = read_json(profile_path) if profile_path.exists() else {}
         scoring_config = load_yaml_file(Path(args.scoring_config), {})
         data_root = Path(args.data_root)
@@ -3144,9 +3219,9 @@ def main(argv: list[str] | None = None) -> int:
         # only a non-sensitive booleans/counts summary is surfaced.
         prefs: dict = {}
         prefs_warnings: list[str] = []
-        if args.prefs_md:
+        if prefs_md_path:
             try:
-                prefs.update(watcher.load_preferences_md(Path(args.prefs_md)))
+                prefs.update(watcher.load_preferences_md(Path(prefs_md_path)))
             except watcher.WatcherError as exc:
                 # Do not echo the path's contents; report only the code + path.
                 prefs_warnings.append(f"prefs_md_unavailable: {exc}")
@@ -3184,7 +3259,7 @@ def main(argv: list[str] | None = None) -> int:
                 since_hours=since_hours,
                 packeted_lead_ids=packeted_lead_ids,
                 prefs=prefs,
-                prefs_md=(args.prefs_md or None),
+                prefs_md=(prefs_md_path or None),
             )
             if prefs_warnings:
                 explanation["prefs_warnings"] = prefs_warnings
@@ -3214,6 +3289,15 @@ def main(argv: list[str] | None = None) -> int:
             queue["prefs_warnings"] = prefs_warnings
         if discovery_summary is not None:
             queue["discovery"] = discovery_summary
+
+        # Seen-suppression: mark leads that appeared in this profile's prior run.
+        # Advisory only — never changes a lead's status; --hide-seen withholds
+        # them from display while keeping counts.
+        if args.suppress_seen:
+            prior = read_json(state_path) if state_path.exists() else None
+            seen_ids = set((prior or {}).get("seen_lead_ids") or [])
+            marked = watcher.apply_seen_suppression(queue, seen_ids, hide=args.hide_seen)
+            queue["seen_suppressed"] = marked
 
         # Optional single-packet handoff (capped to exactly one, human-submit only).
         packet_result: dict | None = None
@@ -3259,8 +3343,8 @@ def main(argv: list[str] | None = None) -> int:
         watcher.finalize_queue(
             queue,
             since_hours=since_hours,
-            prefs_md=(args.prefs_md or None),
-            top=args.top,
+            prefs_md=(prefs_md_path or None),
+            top=top,
             source_mode="discovery" if args.discover else "offline",
             queue_artifact=queue["queue_artifact"],
         )
@@ -3268,10 +3352,32 @@ def main(argv: list[str] | None = None) -> int:
         if queue_path is not None:
             write_json(queue_path, queue)
 
+        # Optional last-run state (non-private). Off unless --update-state.
+        state_written = None
+        if args.update_state:
+            packet_lead_id = (packet_result or {}).get("lead_id") \
+                if (packet_result or {}).get("status") == "prepared" else None
+            record = watcher.build_state_record(
+                profile_name, last_run_at=now.isoformat(), since_hours=since_hours,
+                queue=queue, queue_artifact=queue["queue_artifact"],
+                packet_lead_id=packet_lead_id,
+            )
+            state_dir.mkdir(parents=True, exist_ok=True)
+            write_json(state_path, record)
+            state_written = str(state_path)
+        queue["state_written"] = state_written
+
         if args.json:
             print(json.dumps(queue, indent=2))
         else:
             _print_watch_summary(queue, verbose_rejects=args.verbose_rejects)
+            if args.profile:
+                print(f"\nprofile: {profile_name} (since_hours={watcher._fmt_hours(since_hours)}, top={top})")
+            if queue.get("seen_suppressed"):
+                print(f"seen-suppressed: {queue['seen_suppressed']} lead(s) "
+                      f"({'hidden' if args.hide_seen else 'marked'})")
+            if state_written:
+                print(f"state: written -> {state_written}")
         return 0
 
     if args.command == "discovery-state":

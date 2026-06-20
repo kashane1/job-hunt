@@ -780,10 +780,16 @@ def build_review_summary(
     source_mode: str = "offline",
     queue_artifact: str | None = None,
 ) -> dict:
-    """A compact, non-private structured summary of a (finalized) queue."""
+    """A compact, non-private structured summary of a (finalized) queue.
+
+    Items flagged ``hidden`` (e.g. seen in a prior run with --hide-seen) are
+    excluded from the displayed top lists but still counted; ``hidden_seen``
+    reports how many display rows were withheld.
+    """
     items = queue.get("items", [])
-    by_status = {s: [it for it in items if it.get("status") == s] for s in READINESS_STATUSES}
-    rejects = by_status["reject"]
+    visible = [it for it in items if not it.get("hidden")]
+    by_status = {s: [it for it in visible if it.get("status") == s] for s in READINESS_STATUSES}
+    rejects = [it for it in items if it.get("status") == "reject"]
     reject_counts: dict = {}
     for it in rejects:
         code = primary_reason(it)
@@ -798,6 +804,7 @@ def build_review_summary(
         "dropped_stale": queue.get("dropped_stale", 0),
         "dropped_for_cap": queue.get("dropped_for_cap", 0),
         "already_packeted": queue.get("already_packeted", 0),
+        "hidden_seen": sum(1 for it in items if it.get("hidden")),
         "packet_ready": [
             _summary_row(it, include_command=True) for it in by_status["packet_ready"][:top]
         ],
@@ -859,6 +866,8 @@ REASON_GLOSSARY: dict[str, str] = {
         "Location metadata is too sparse to confirm work-mode fit.",
     "remote_pref_conflict":
         "Onsite or out-of-area role conflicts with a soft remote preference (review).",
+    "seen_in_previous_watch":
+        "This lead already appeared in a prior watch run for this profile.",
 }
 
 
@@ -967,3 +976,128 @@ def build_explanation(
             "requires_human_review": classification["requires_human_review"],
         },
     }
+
+
+# --------------------------------------------------------------------------- #
+# Run profiles + last-run state + seen-suppression (all local, non-private)
+# --------------------------------------------------------------------------- #
+# Tracked-safe built-in profiles. A private config/watch-profiles.yaml may
+# override or extend these; explicit CLI flags override either.
+BUILTIN_WATCH_PROFILES: dict[str, dict] = {
+    "hourly": {"since_hours": 1, "top": 5},
+    "morning": {"since_hours": 12, "top": 5},
+    "daily": {"since_hours": 24, "top": 5},
+    "catchup": {"since_hours": 72, "top": 10},
+}
+
+# Keys a profile is allowed to set (anything else is ignored).
+_PROFILE_KEYS = frozenset({"since_hours", "top", "prefs_md"})
+
+
+def load_watch_profiles(path: str | Path | None = None) -> dict:
+    """Merge built-in profiles with an optional private YAML config.
+
+    File profiles override built-ins by name (shallow per-profile merge). Only
+    recognized keys are kept. A missing path returns the built-ins unchanged; a
+    malformed file raises :class:`WatcherError`.
+    """
+    profiles = {name: dict(cfg) for name, cfg in BUILTIN_WATCH_PROFILES.items()}
+    if path is None:
+        return profiles
+    p = Path(path)
+    if not p.exists():
+        return profiles
+    try:
+        data = _yaml_loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise WatcherError(f"could not parse watch-profiles config: {exc}")
+    # The repo's YAML loader caps mapping depth at 2, so profiles are a list of
+    # dicts each carrying a `name` (same shape as the watchlist's companies).
+    file_profiles = (data or {}).get("profiles") if isinstance(data, dict) else None
+    if isinstance(file_profiles, list):
+        for cfg in file_profiles:
+            if not isinstance(cfg, dict):
+                continue
+            name = cfg.get("name")
+            if not name:
+                continue
+            merged = dict(profiles.get(str(name), {}))
+            for k, v in cfg.items():
+                if k in _PROFILE_KEYS:
+                    merged[k] = v
+            profiles[str(name)] = merged
+    return profiles
+
+
+def resolve_profile(name: str, *, config_path: str | Path | None = None) -> dict:
+    """Resolve a profile name to its config dict, or raise WatcherError."""
+    profiles = load_watch_profiles(config_path)
+    if name not in profiles:
+        known = ", ".join(sorted(profiles)) or "(none)"
+        raise WatcherError(f"unknown watch profile {name!r}; known profiles: {known}")
+    return profiles[name]
+
+
+def build_state_record(
+    profile: str,
+    *,
+    last_run_at: str,
+    since_hours: float,
+    queue: dict,
+    queue_artifact: str | None,
+    packet_lead_id: str | None = None,
+) -> dict:
+    """A non-private last-run state record. No profile/preference values, no
+    generated content — just run metadata + the lead IDs that surfaced."""
+    seen = [it.get("lead_id", "") for it in queue.get("items", []) if it.get("lead_id")]
+    return {
+        "schema_version": 1,
+        "profile": profile,
+        "last_run_at": last_run_at,
+        "since_hours": since_hours,
+        "queue_artifact": queue_artifact,
+        "counts": dict(queue.get("totals", {})),
+        "seen_lead_ids": seen,
+        "packet_lead_id": packet_lead_id,
+    }
+
+
+def state_summary(state: dict | None) -> dict:
+    """Compact non-private summary of a state record for --show-state."""
+    if not state:
+        return {"exists": False}
+    return {
+        "exists": True,
+        "profile": state.get("profile"),
+        "last_run_at": state.get("last_run_at"),
+        "since_hours": state.get("since_hours"),
+        "counts": state.get("counts", {}),
+        "seen_lead_count": len(state.get("seen_lead_ids") or []),
+        "packet_lead_id": state.get("packet_lead_id"),
+        "queue_artifact": state.get("queue_artifact"),
+    }
+
+
+def apply_seen_suppression(
+    queue: dict, seen_ids: set[str], *, hide: bool = False
+) -> int:
+    """Mark items whose lead_id appeared in a prior run.
+
+    Adds the ``seen_in_previous_watch`` reason code and a ``seen_before`` flag;
+    never changes a lead's status (seen-ness is advisory, not a hard reject).
+    When ``hide`` is set, flags items ``hidden`` so the summary withholds them
+    from display (counts are preserved). Returns the number of items marked.
+    """
+    if not seen_ids:
+        return 0
+    marked = 0
+    for it in queue.get("items", []):
+        if it.get("lead_id") in seen_ids:
+            it["seen_before"] = True
+            reasons = it.setdefault("reasons", [])
+            if "seen_in_previous_watch" not in reasons:
+                reasons.append("seen_in_previous_watch")
+            if hide:
+                it["hidden"] = True
+            marked += 1
+    return marked

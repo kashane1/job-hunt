@@ -1,0 +1,35 @@
+# Watcher run profiles — copy to config/watch-profiles.yaml (gitignored) to
+# override or extend the built-in profiles. Built-ins (in code) are:
+#   hourly  -> since_hours: 1,  top: 5
+#   morning -> since_hours: 12, top: 5
+#   daily   -> since_hours: 24, top: 5
+#   catchup -> since_hours: 72, top: 10
+#
+# `profiles` is a LIST of entries (the repo's YAML loader caps mapping depth at
+# 2, so each profile is a list item with a `name`). Recognized keys:
+#   name:        string         — the profile name passed to --profile
+#   since_hours: number (> 0)   — lookback window
+#   top:         integer        — rows shown per status in the summary
+#   prefs_md:    path           — private preferences markdown to apply
+#
+# Explicit CLI flags always override profile values:
+#   --since-hours overrides since_hours, --top overrides top,
+#   --prefs-md overrides prefs_md. Network discovery (--discover) is ALWAYS
+#   explicit and is never enabled by a profile.
+#
+# This example carries no private data. Do not put private values here; put
+# them only in the gitignored config/watch-profiles.yaml.
+profiles:
+  - name: hourly
+    since_hours: 1
+    top: 5
+  - name: morning
+    since_hours: 12
+    top: 5
+    # prefs_md: profile/raw/preferences.md   # uncomment in your private copy
+  - name: daily
+    since_hours: 24
+    top: 5
+  - name: catchup
+    since_hours: 72
+    top: 10

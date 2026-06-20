@@ -54,6 +54,10 @@ docs/reports/profile-*.md
 # Track config/watchlist.example.yaml as the template.
 config/watchlist.yaml
 
+# Local watcher run profiles may reference private prefs paths / cadence.
+# Track config/watch-profiles.example.yaml as the template.
+config/watch-profiles.yaml
+
 # Batch 4 (Indeed auto-apply) PII-bearing runtime artifacts.
 # Template seed `data/answer-bank.seed.json` IS tracked; working copy is not.
 data/_intake/

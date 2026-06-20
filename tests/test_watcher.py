@@ -900,5 +900,245 @@ def _route_fn_default(lead, registry):
     return _route()
 
 
+# --------------------------------------------------------------------------- #
+# Profiles + state + seen-suppression
+# --------------------------------------------------------------------------- #
+def _recent_lead(**kw) -> dict:
+    """A sanitized lead stamped relative to the real clock so it stays in-window
+    for CLI tests regardless of when they run."""
+    now = datetime.now(timezone.utc)
+    iso = (now - timedelta(hours=1)).isoformat()
+    base = _lead(**kw)
+    base["ingested_at"] = iso
+    base["discovered_via"] = [{"discovered_at": iso, "listing_updated_at": iso}]
+    base["observed_sources"] = [{"listing_updated_at": iso}]
+    return base
+
+
+class WatchProfilesTest(unittest.TestCase):
+    def test_builtin_profiles(self) -> None:
+        self.assertEqual(watcher.resolve_profile("hourly")["since_hours"], 1)
+        self.assertEqual(watcher.resolve_profile("morning")["since_hours"], 12)
+        self.assertEqual(watcher.resolve_profile("daily")["since_hours"], 24)
+        cu = watcher.resolve_profile("catchup")
+        self.assertEqual(cu["since_hours"], 72)
+        self.assertEqual(cu["top"], 10)
+
+    def test_unknown_profile_raises(self) -> None:
+        with self.assertRaises(watcher.WatcherError):
+            watcher.resolve_profile("does-not-exist")
+
+    def test_config_overrides_and_extends_builtins(self) -> None:
+        p = _write_tmp("profiles:\n  - name: hourly\n    since_hours: 2\n    top: 9\n"
+                       "  - name: custom\n    since_hours: 6\n")
+        try:
+            profs = watcher.load_watch_profiles(p)
+        finally:
+            p.unlink()
+        self.assertEqual(profs["hourly"]["since_hours"], 2)
+        self.assertEqual(profs["hourly"]["top"], 9)
+        self.assertEqual(profs["custom"]["since_hours"], 6)
+        self.assertEqual(profs["daily"]["since_hours"], 24)  # builtin survives
+
+    def test_config_ignores_unknown_keys(self) -> None:
+        p = _write_tmp("profiles:\n  - name: hourly\n    since_hours: 3\n    evil: bad\n")
+        try:
+            profs = watcher.load_watch_profiles(p)
+        finally:
+            p.unlink()
+        self.assertEqual(profs["hourly"]["since_hours"], 3)
+        self.assertNotIn("evil", profs["hourly"])
+
+    def test_missing_config_returns_builtins(self) -> None:
+        profs = watcher.load_watch_profiles(Path("/nonexistent/watch-profiles.yaml"))
+        self.assertEqual(set(profs), set(watcher.BUILTIN_WATCH_PROFILES))
+
+
+class StateRecordTest(unittest.TestCase):
+    def _queue(self):
+        return {
+            "totals": {"packet_ready": 1, "needs_review": 1, "reject": 0},
+            "items": [
+                {"lead_id": "a", "status": "packet_ready"},
+                {"lead_id": "b", "status": "needs_review"},
+            ],
+        }
+
+    def test_record_has_non_private_fields(self) -> None:
+        rec = watcher.build_state_record(
+            "daily", last_run_at="2026-06-19T00:00:00+00:00", since_hours=24,
+            queue=self._queue(), queue_artifact="data/watch/x.json", packet_lead_id="a",
+        )
+        self.assertEqual(rec["profile"], "daily")
+        self.assertEqual(rec["since_hours"], 24)
+        self.assertEqual(rec["seen_lead_ids"], ["a", "b"])
+        self.assertEqual(rec["packet_lead_id"], "a")
+        self.assertEqual(rec["counts"], {"packet_ready": 1, "needs_review": 1, "reject": 0})
+
+    def test_record_has_no_private_content(self) -> None:
+        # Even if items carried PII-ish keys, the record only takes lead_id/status.
+        q = {"totals": {}, "items": [{"lead_id": "a", "status": "reject",
+                                      "company": "Acme", "fit_rationale": "Kashane secret"}]}
+        rec = watcher.build_state_record(
+            "p", last_run_at="t", since_hours=1, queue=q, queue_artifact=None)
+        blob = json.dumps(rec)
+        self.assertNotIn("Kashane", blob)
+        self.assertNotIn("fit_rationale", blob)
+        self.assertNotIn("Acme", blob)
+
+    def test_state_summary_compact(self) -> None:
+        rec = watcher.build_state_record(
+            "daily", last_run_at="t", since_hours=24, queue=self._queue(),
+            queue_artifact=None, packet_lead_id=None)
+        s = watcher.state_summary(rec)
+        self.assertTrue(s["exists"])
+        self.assertEqual(s["seen_lead_count"], 2)
+        self.assertEqual(watcher.state_summary(None), {"exists": False})
+
+
+class SeenSuppressionTest(unittest.TestCase):
+    def _queue(self):
+        return {
+            "totals": {"packet_ready": 1, "needs_review": 0, "reject": 1},
+            "items": [
+                {"lead_id": "a", "status": "packet_ready", "reasons": ["fit_strong_lane_ready_in_window"]},
+                {"lead_id": "b", "status": "reject", "reasons": ["no_ready_lane:x"]},
+            ],
+        }
+
+    def test_marks_seen_without_changing_status(self) -> None:
+        q = self._queue()
+        n = watcher.apply_seen_suppression(q, {"a"})
+        self.assertEqual(n, 1)
+        a = q["items"][0]
+        self.assertTrue(a["seen_before"])
+        self.assertIn("seen_in_previous_watch", a["reasons"])
+        self.assertEqual(a["status"], "packet_ready")  # status unchanged
+        self.assertNotIn("hidden", a)
+
+    def test_hide_flag_sets_hidden(self) -> None:
+        q = self._queue()
+        watcher.apply_seen_suppression(q, {"a"}, hide=True)
+        self.assertTrue(q["items"][0]["hidden"])
+
+    def test_empty_seen_is_noop(self) -> None:
+        q = self._queue()
+        self.assertEqual(watcher.apply_seen_suppression(q, set()), 0)
+
+    def test_hidden_excluded_from_summary_but_counted(self) -> None:
+        q = self._queue()
+        watcher.apply_seen_suppression(q, {"a"}, hide=True)
+        rs = watcher.build_review_summary(q, top=5)
+        self.assertEqual(rs["packet_ready"], [])         # hidden from display
+        self.assertEqual(rs["counts"]["packet_ready"], 1)  # still counted
+        self.assertEqual(rs["hidden_seen"], 1)
+
+
+def _seed(d: str, leads: list[dict]) -> None:
+    for i, l in enumerate(leads):
+        (Path(d) / f"lead{i}.json").write_text(json.dumps(l))
+
+
+def _watch_argv(leads_dir: str, data_root: str, extra: list[str]) -> list[str]:
+    return [
+        "watch-new-jobs", "--leads-dir", leads_dir, "--data-root", data_root,
+        "--queue-dir", str(Path(data_root) / "q"), "--state-dir", str(Path(data_root) / "state"),
+        "--registry", str(ROOT / "config" / "resume-variants.json"),
+    ] + extra
+
+
+class WatchProfileStateCliTest(unittest.TestCase):
+    def _run(self, leads_dir, data_root, extra):
+        import contextlib
+        import io
+
+        from job_hunt import core
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = core.main(_watch_argv(leads_dir, data_root, extra))
+        return rc, buf.getvalue()
+
+    def test_profile_sets_since_hours(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            rc, out = self._run(ld, dr, ["--profile", "hourly", "--dry-run", "--json"])
+            self.assertEqual(rc, 0)
+            self.assertEqual(json.loads(out)["review_summary"]["lookback_hours"], 1.0)
+
+    def test_explicit_since_overrides_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "8",
+                                         "--dry-run", "--json"])
+            self.assertEqual(json.loads(out)["review_summary"]["lookback_hours"], 8.0)
+
+    def test_invalid_profile_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            rc, out = self._run(ld, dr, ["--profile", "bogus", "--dry-run"])
+            self.assertEqual(rc, 2)
+            self.assertIn("unknown_profile", out)
+
+    def test_since_hours_validation_with_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            rc, out = self._run(ld, dr, ["--profile", "hourly", "--since-hours", "0", "--dry-run"])
+            self.assertEqual(rc, 2)
+            self.assertIn("invalid_since_hours", out)
+
+    def test_no_state_written_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240"])
+            self.assertFalse((Path(dr) / "state" / "daily.json").exists())
+
+    def test_update_state_writes_non_private_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a", company="Acme")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            sp = Path(dr) / "state" / "daily.json"
+            self.assertTrue(sp.exists())
+            rec = json.loads(sp.read_text())
+            self.assertEqual(rec["profile"], "daily")
+            self.assertIn("a", rec["seen_lead_ids"])
+            self.assertNotIn("fit_rationale", sp.read_text())
+
+    def test_show_state(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--show-state"])
+            self.assertEqual(rc, 0)
+            self.assertTrue(json.loads(out)["state"]["exists"])
+
+    def test_reset_state(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            sp = Path(dr) / "state" / "daily.json"
+            self.assertTrue(sp.exists())
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--reset-state"])
+            self.assertEqual(rc, 0)
+            self.assertTrue(json.loads(out)["removed"])
+            self.assertFalse(sp.exists())
+
+    def test_suppress_seen_marks_prior_leads(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--suppress-seen", "--json"])
+            q = json.loads(out)
+            self.assertEqual(q["seen_suppressed"], 1)
+            self.assertTrue(any("seen_in_previous_watch" in (it.get("reasons") or [])
+                                for it in q["items"]))
+
+    def test_hide_seen_hides_from_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--suppress-seen", "--hide-seen", "--json"])
+            q = json.loads(out)
+            self.assertEqual(q["review_summary"]["hidden_seen"], 1)
+            self.assertEqual(q["review_summary"]["packet_ready"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
