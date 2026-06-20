@@ -419,6 +419,65 @@ def _print_explanation(e: dict) -> None:
         print(f"    -> {na['no_command_reason']}")
 
 
+def _print_review_report(r: dict) -> None:
+    """Render the concise daily-review brief (non-private)."""
+    h = r.get("header", {})
+    d = r.get("delta", {})
+    dec = r.get("decision", {})
+    ta = r.get("top_action", {})
+    cmds = r.get("commands", {})
+    ps = r.get("prefs_applied", {})
+    hrs = h.get("lookback_hours")
+    if isinstance(hrs, (int, float)) and float(hrs).is_integer():
+        hrs = int(hrs)
+
+    print("=== watch-new-jobs review report ===")
+    print(f"profile: {h.get('profile')}  |  lookback: {hrs}h  |  mode: {h.get('source_mode')}")
+    print(f"queue artifact: {h.get('queue_artifact') or '(not written)'}")
+    print(f"state: {h.get('state_path')}  (updated this run: {h.get('state_written')})")
+
+    print("\nwhat changed:")
+    nl = d.get("new_leads")
+    print(f"  leads considered={d.get('leads_considered', 0)}"
+          + (f"  new={nl}" if nl is not None else "")
+          + f"  already_packeted={d.get('already_packeted', 0)}"
+          + f"  dropped_stale={d.get('dropped_stale', 0)}")
+    if d.get("suppress_seen_active"):
+        print(f"  suppress-seen: ON — seen marked={d.get('seen_suppressed', 0)}, "
+              f"hidden={d.get('hidden_seen', 0)}")
+
+    print("\ndecision:")
+    print(f"  packet_ready={dec.get('packet_ready', 0)}  "
+          f"needs_review={dec.get('needs_review', 0)}  reject={dec.get('reject', 0)}")
+    if dec.get("top_reject_reasons"):
+        codes = ", ".join(f"{x['code']} x{x['count']}" for x in dec["top_reject_reasons"])
+        print(f"  top rejects: {codes}")
+
+    print(f"\ntop action [{ta.get('kind')}]: {ta.get('message')}")
+    if ta.get("command"):
+        print(f"  {ta['command']}")
+
+    print("\ncommands:")
+    for label, key in (("packet (best packet-ready)", "packet"),
+                       ("explain (best needs-review)", "explain"),
+                       ("rerun with discovery", "rerun_discovery"),
+                       ("widen lookback", "wider_lookback")):
+        if cmds.get(key):
+            print(f"  - {label}:\n      {cmds[key]}")
+
+    if ps:
+        print(f"\nprefs (counts/booleans only): remote_only={ps.get('remote_only')} "
+              f"remote_preferred={ps.get('remote_preferred')} "
+              f"preferred_locations={ps.get('preferred_locations_count')} "
+              f"blocked_locations={ps.get('blocked_locations_count')} "
+              f"comp_floor_set={ps.get('compensation_floor_set')} "
+              f"requires_sponsorship={ps.get('requires_sponsorship')}")
+
+    print("\nsafety:")
+    for line in r.get("safety", []):
+        print(f"  - {line}")
+
+
 def _deep_merge_humanize_override(
     apply_policy: dict, humanize_override: dict
 ) -> dict:
@@ -2257,6 +2316,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose-rejects", action="store_true",
         help="List rejected leads individually instead of just reason-code counts",
     )
+    watch_parser.add_argument(
+        "--review-report", action="store_true",
+        help="Print a concise daily-review brief (header, delta, decision, top action, commands)",
+    )
     watch_parser.add_argument("--runtime-config", default="config/runtime.yaml")
     watch_parser.add_argument("--dry-run", action="store_true")
     watch_parser.add_argument("--json", action="store_true")
@@ -3125,9 +3188,18 @@ def main(argv: list[str] | None = None) -> int:
         # --- standalone state actions (no run) ---
         if args.show_state:
             state = read_json(state_path) if state_path.exists() else None
-            print(json.dumps({"status": "ok", "profile": profile_name,
-                              "state_path": str(state_path),
-                              "state": watcher.state_summary(state)}, indent=2))
+            prefs_md_for_cmd = args.prefs_md or (
+                watcher.resolve_profile(args.profile, config_path=args.watch_profiles).get("prefs_md")
+                if args.profile and args.profile in watcher.load_watch_profiles(args.watch_profiles)
+                else ""
+            )
+            print(json.dumps({
+                "status": "ok", "profile": profile_name,
+                "state_path": str(state_path),
+                "state": watcher.state_summary(state),
+                "next_command": watcher.state_next_command(
+                    state, profile_name, prefs_md=(prefs_md_for_cmd or None)),
+            }, indent=2))
             return 0
         if args.reset_state:
             removed = False
@@ -3349,9 +3421,6 @@ def main(argv: list[str] | None = None) -> int:
             queue_artifact=queue["queue_artifact"],
         )
 
-        if queue_path is not None:
-            write_json(queue_path, queue)
-
         # Optional last-run state (non-private). Off unless --update-state.
         state_written = None
         if args.update_state:
@@ -3367,8 +3436,26 @@ def main(argv: list[str] | None = None) -> int:
             state_written = str(state_path)
         queue["state_written"] = state_written
 
+        # Daily-review brief (non-private). Attached to the artifact + JSON.
+        report = watcher.build_review_report(
+            queue,
+            profile=(args.profile or None),
+            prefs_md=(prefs_md_path or None),
+            since_hours=since_hours,
+            state_path=str(state_path),
+            state_written=state_written,
+            suppress_seen=args.suppress_seen,
+            source_mode="discovery" if args.discover else "offline",
+        )
+        queue["review_report"] = report
+
+        if queue_path is not None:
+            write_json(queue_path, queue)
+
         if args.json:
             print(json.dumps(queue, indent=2))
+        elif args.review_report:
+            _print_review_report(report)
         else:
             _print_watch_summary(queue, verbose_rejects=args.verbose_rejects)
             if args.profile:

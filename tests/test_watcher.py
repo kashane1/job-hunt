@@ -1140,5 +1140,174 @@ class WatchProfileStateCliTest(unittest.TestCase):
             self.assertEqual(q["review_summary"]["packet_ready"], [])
 
 
+class ReviewReportTest(unittest.TestCase):
+    def _finalized(self, leads, route_map, *, suppress_seen_ids=None, **kw):
+        rf = lambda l, r: route_map[l["lead_id"]]
+        q = watcher.build_queue(leads, registry=REGISTRY, now=NOW, since_hours=24,
+                                route_fn=rf, **kw)
+        if suppress_seen_ids:
+            watcher.apply_seen_suppression(q, set(suppress_seen_ids))
+        q["leads_considered"] = len(leads)
+        q["already_packeted"] = 0
+        q["prefs_applied"] = watcher.preferences_summary(None)
+        watcher.finalize_queue(q, since_hours=24, prefs_md="profile/raw/preferences.md",
+                               top=3, source_mode="offline", queue_artifact="data/watch/x.json")
+        return q
+
+    def _report(self, q, **kw):
+        kw.setdefault("profile", "daily")
+        kw.setdefault("prefs_md", "profile/raw/preferences.md")
+        kw.setdefault("since_hours", 24)
+        return watcher.build_review_report(q, **kw)
+
+    def test_header_metadata(self) -> None:
+        q = self._finalized([_lead(lead_id="pr1")], {"pr1": _route()})
+        r = self._report(q, state_path="data/watch/state/daily.json", state_written="x")
+        h = r["header"]
+        self.assertEqual(h["profile"], "daily")
+        self.assertEqual(h["lookback_hours"], 24)
+        self.assertEqual(h["source_mode"], "offline")
+        self.assertEqual(h["queue_artifact"], "data/watch/x.json")
+        self.assertEqual(h["state_path"], "data/watch/state/daily.json")
+        self.assertTrue(h["state_written"])
+
+    def test_packet_ready_top_action_has_command(self) -> None:
+        q = self._finalized([_lead(lead_id="pr1", company="Acme")], {"pr1": _route()})
+        r = self._report(q)
+        self.assertEqual(r["top_action"]["kind"], "generate_packet")
+        self.assertIn("--emit-packet", r["top_action"]["command"])
+        self.assertIn("--lead-id pr1", r["top_action"]["command"])
+
+    def test_needs_review_top_action_has_explain_command(self) -> None:
+        nr = _lead(lead_id="nr1", company="Beta",
+                   fit_assessment={"fit_score": 60, "fit_recommendation": "maybe", "missing_skills": []})
+        q = self._finalized([nr], {"nr1": _route()})
+        r = self._report(q)
+        self.assertEqual(r["top_action"]["kind"], "review")
+        self.assertIn("--explain nr1", r["top_action"]["command"])
+
+    def test_rejects_only_suggests_widen_or_discover(self) -> None:
+        rj = _lead(lead_id="rj1")
+        q = self._finalized([rj], {"rj1": _route(selected_variant_id="generalist_swe")})
+        r = self._report(q)
+        self.assertEqual(r["top_action"]["kind"], "widen_or_discover")
+        self.assertTrue(r["top_action"]["command"])
+        msg = r["top_action"]["message"].lower()
+        self.assertTrue("lane" in msg or "lookback" in msg or "discovery" in msg)
+
+    def test_seen_suppression_reflected(self) -> None:
+        pr = _lead(lead_id="pr1")
+        q = self._finalized([pr], {"pr1": _route()}, suppress_seen_ids=["pr1"])
+        q["seen_suppressed"] = 1
+        r = self._report(q, suppress_seen=True)
+        self.assertTrue(r["delta"]["suppress_seen_active"])
+        self.assertEqual(r["delta"]["new_leads"], 0)  # pr1 was seen before
+
+    def test_decision_top_reject_reasons(self) -> None:
+        leads = [_lead(lead_id="a"), _lead(lead_id="b"), _lead(lead_id="c")]
+        routes = {"a": _route(selected_variant_id="generalist_swe"),
+                  "b": _route(selected_variant_id="generalist_swe"),
+                  "c": _route(selected_variant_id="ai_engineer")}
+        q = self._finalized(leads, routes)
+        r = self._report(q)
+        self.assertEqual(r["decision"]["reject"], 3)
+        top = {x["code"]: x["count"] for x in r["decision"]["top_reject_reasons"]}
+        self.assertEqual(top["no_ready_lane:generalist_swe"], 2)
+
+    def test_safety_footer_present(self) -> None:
+        q = self._finalized([_lead(lead_id="pr1")], {"pr1": _route()})
+        r = self._report(q)
+        self.assertEqual(len(r["safety"]), 3)
+        joined = " ".join(r["safety"]).lower()
+        self.assertIn("human submit", joined)
+        self.assertIn("no apply", joined)
+
+    def test_commands_are_valid_and_present(self) -> None:
+        q = self._finalized([_lead(lead_id="pr1")], {"pr1": _route()})
+        r = self._report(q)
+        c = r["commands"]
+        self.assertTrue(c["rerun_discovery"].endswith("--discover"))
+        self.assertIn("--profile catchup", c["wider_lookback"])
+        for cmd in c.values():
+            if cmd:
+                self.assertTrue(cmd.startswith("python3 scripts/job_hunt.py watch-new-jobs"))
+
+    def test_report_has_no_private_content(self) -> None:
+        pr = _lead(lead_id="pr1", company="Acme", fit_assessment={
+            "fit_score": 90, "fit_recommendation": "strong_yes", "missing_skills": [],
+            "fit_rationale": "candidate Kashane private@example.com",
+        })
+        q = self._finalized([pr], {"pr1": _route()})
+        r = self._report(q)
+        blob = json.dumps(r)
+        self.assertNotIn("Kashane", blob)
+        self.assertNotIn("@example.com", blob)
+        self.assertNotIn("fit_rationale", blob)
+
+    def test_state_next_command(self) -> None:
+        cmd = watcher.state_next_command(None, "morning", prefs_md="profile/raw/preferences.md")
+        self.assertIn("--profile morning", cmd)
+        self.assertIn("--prefs-md profile/raw/preferences.md", cmd)
+        self.assertIn("--update-state", cmd)
+
+
+class ReviewReportCliTest(unittest.TestCase):
+    def _run(self, leads_dir, data_root, extra):
+        import contextlib
+        import io
+
+        from job_hunt import core
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = core.main(_watch_argv(leads_dir, data_root, extra))
+        return rc, buf.getvalue()
+
+    def test_review_report_json_includes_report(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--review-report", "--json"])
+            self.assertEqual(rc, 0)
+            q = json.loads(out)
+            self.assertIn("review_report", q)
+            self.assertIn("safety", q["review_report"])
+
+    def test_review_report_text_has_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--review-report"])
+            self.assertEqual(rc, 0)
+            for marker in ("review report", "what changed", "decision", "top action", "safety"):
+                self.assertIn(marker, out.lower())
+
+    def test_state_update_reflected_in_report(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--update-state", "--review-report", "--json"])
+            q = json.loads(out)
+            self.assertTrue(q["review_report"]["header"]["state_written"])
+
+    def test_no_state_written_without_flag_in_report(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--review-report", "--json"])
+            q = json.loads(out)
+            self.assertFalse(q["review_report"]["header"]["state_written"])
+            self.assertFalse((Path(dr) / "state" / "daily.json").exists())
+
+    def test_show_state_has_next_command(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--show-state"])
+            self.assertEqual(rc, 0)
+            d = json.loads(out)
+            self.assertIn("next_command", d)
+            self.assertIn("--profile daily", d["next_command"])
+
+
 if __name__ == "__main__":
     unittest.main()

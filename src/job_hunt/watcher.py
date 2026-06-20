@@ -759,6 +759,7 @@ def finalize_queue(
 def _summary_row(item: dict, *, include_command: bool) -> dict:
     row = {
         "rank": item.get("rank"),
+        "lead_id": item.get("lead_id", ""),
         "company": item.get("company", ""),
         "title": (item.get("title") or "").strip(),
         "source": item.get("source", ""),
@@ -1101,3 +1102,171 @@ def apply_seen_suppression(
                 it["hidden"] = True
             marked += 1
     return marked
+
+
+# --------------------------------------------------------------------------- #
+# Daily review report (non-private operational brief)
+# --------------------------------------------------------------------------- #
+def _profile_or_since(profile: str | None, since_hours: float | None) -> list[str]:
+    if profile and profile != "default":
+        return ["--profile", profile]
+    if since_hours is not None:
+        return ["--since-hours", _fmt_hours(since_hours)]
+    return []
+
+
+def profile_command(
+    profile: str | None,
+    *,
+    prefs_md: str | None = None,
+    since_hours: float | None = None,
+    extra: tuple[str, ...] = (),
+) -> str:
+    """Build a copy-pasteable watch-new-jobs command for a profile/window."""
+    parts = [CLI_PROG, "watch-new-jobs", *_profile_or_since(profile, since_hours)]
+    if prefs_md:
+        parts += ["--prefs-md", prefs_md]
+    parts += list(extra)
+    return " ".join(parts)
+
+
+def explain_command(
+    lead_id: str,
+    *,
+    profile: str | None = None,
+    prefs_md: str | None = None,
+    since_hours: float | None = None,
+) -> str:
+    """Build a read-only explain command for one lead."""
+    return profile_command(
+        profile, prefs_md=prefs_md, since_hours=since_hours, extra=("--explain", lead_id)
+    )
+
+
+def build_review_report(
+    queue: dict,
+    *,
+    profile: str | None = None,
+    prefs_md: str | None = None,
+    since_hours: float | None = None,
+    state_path: str | None = None,
+    state_written: str | None = None,
+    suppress_seen: bool = False,
+    source_mode: str = "offline",
+) -> dict:
+    """Assemble a concise, non-private daily-review brief from a finalized queue.
+
+    Combines run metadata, a delta/seen summary, the decision counts, the single
+    best next action (with an exact command), a set of copy-pasteable follow-up
+    commands, and a safety footer. Carries no private profile/preference values.
+    """
+    rs = queue.get("review_summary", {}) or build_review_summary(queue)
+    counts = rs.get("counts", {}) or {}
+    reject_counts = (rs.get("reject", {}) or {}).get("reason_counts", {}) or {}
+    top_reject = sorted(reject_counts.items(), key=lambda kv: -kv[1])[:3]
+    items = queue.get("items", [])
+
+    new_leads = None
+    if suppress_seen:
+        new_leads = sum(1 for it in items if not it.get("seen_before"))
+
+    pr_rows = rs.get("packet_ready", [])
+    nr_rows = rs.get("needs_review", [])
+
+    # Follow-up commands (always valid, copy-pasteable).
+    wider_profile = "catchup" if profile != "catchup" else None
+    wider_cmd = (
+        profile_command(wider_profile, prefs_md=prefs_md)
+        if wider_profile
+        else profile_command(None, prefs_md=prefs_md,
+                             since_hours=(since_hours * 2 if since_hours else 168))
+    )
+    commands = {
+        "packet": pr_rows[0].get("packet_command") if pr_rows else None,
+        "explain": (
+            explain_command(nr_rows[0]["lead_id"], profile=profile, prefs_md=prefs_md)
+            if nr_rows and nr_rows[0].get("lead_id") else None
+        ),
+        "rerun_discovery": profile_command(
+            profile, prefs_md=prefs_md, since_hours=since_hours, extra=("--discover",)
+        ),
+        "wider_lookback": wider_cmd,
+    }
+
+    # Single best next action.
+    if pr_rows:
+        best = pr_rows[0]
+        top_action = {
+            "kind": "generate_packet",
+            "message": f"Generate a packet for {best['company']} — {best['title']} "
+                       f"(human-submit required).",
+            "command": commands["packet"],
+        }
+    elif nr_rows:
+        best = nr_rows[0]
+        top_action = {
+            "kind": "review",
+            "message": f"No packet-ready leads. Review the top needs-review lead: "
+                       f"{best['company']} — {best['title']}.",
+            "command": commands["explain"],
+        }
+    else:
+        hints = []
+        if rs.get("dropped_stale", 0) and not counts.get("packet_ready") and not counts.get("needs_review"):
+            hints.append("widen the lookback window")
+        if any(code.startswith("no_ready_lane") for code, _ in top_reject):
+            hints.append("author another resume lane")
+        if rs.get("already_packeted", 0) and len(items) <= rs.get("already_packeted", 0):
+            hints.append("run scoped discovery for fresh leads")
+        if not hints:
+            hints.append("run scoped discovery or widen the lookback window")
+        # Prefer discovery command when "discovery" was hinted, else wider lookback.
+        cmd = commands["rerun_discovery"] if "run scoped discovery for fresh leads" in hints \
+            else commands["wider_lookback"]
+        top_action = {
+            "kind": "widen_or_discover",
+            "message": "Nothing actionable this run; consider: " + "; ".join(hints) + ".",
+            "command": cmd,
+        }
+
+    return {
+        "header": {
+            "profile": profile or "default",
+            "lookback_hours": rs.get("lookback_hours", since_hours),
+            "source_mode": source_mode,
+            "queue_artifact": rs.get("queue_artifact"),
+            "state_path": state_path,
+            "state_written": bool(state_written),
+        },
+        "delta": {
+            "leads_considered": queue.get("leads_considered", len(items)),
+            "new_leads": new_leads,
+            "hidden_seen": rs.get("hidden_seen", 0),
+            "seen_suppressed": queue.get("seen_suppressed", 0),
+            "suppress_seen_active": bool(suppress_seen),
+            "already_packeted": rs.get("already_packeted", 0),
+            "dropped_stale": rs.get("dropped_stale", 0),
+            "dropped_for_cap": rs.get("dropped_for_cap", 0),
+        },
+        "decision": {
+            "packet_ready": counts.get("packet_ready", 0),
+            "needs_review": counts.get("needs_review", 0),
+            "reject": counts.get("reject", 0),
+            "top_reject_reasons": [{"code": c, "count": n} for c, n in top_reject],
+        },
+        "top_action": top_action,
+        "commands": commands,
+        "prefs_applied": rs.get("prefs_applied", {}),
+        "safety": [
+            "No apply, browser, or submit actions were taken.",
+            "Any packet command still requires human review and human submit.",
+            "Private preferences are summarized as counts/booleans only.",
+        ],
+    }
+
+
+def state_next_command(
+    state: dict | None, profile: str, *, prefs_md: str | None = None
+) -> str:
+    """Suggested watcher command to re-run a profile (for --show-state)."""
+    return profile_command(profile, prefs_md=prefs_md, extra=("--suppress-seen", "--update-state"))
