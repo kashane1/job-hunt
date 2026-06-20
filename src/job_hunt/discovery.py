@@ -36,7 +36,9 @@ from .ingestion import (
     HARD_FAIL_URL_PATTERNS,
     IngestionError,
     LEVER_URL_RE,
+    canonical_greenhouse_url,
     canonicalize_url,
+    extract_gh_jid,
     fetch,
     is_hard_fail_url,
 )
@@ -143,6 +145,7 @@ Bucket = Literal[
     "already_known",
     "skipped_by_robots",
     "skipped_by_budget",
+    "dropped_by_url_guard",
     "failed",
     "low_confidence",
 ]
@@ -154,6 +157,7 @@ BUCKETS: Final = (
     "already_known",
     "skipped_by_robots",
     "skipped_by_budget",
+    "dropped_by_url_guard",
     "failed",
     "low_confidence",
 )
@@ -286,12 +290,21 @@ def _fetch_listing(url: str) -> FetchResult:
 def discover_greenhouse_board(
     company: str,
     rate_limiter: DomainRateLimiter,
-) -> tuple[list[ListingEntry], bool]:
-    """Fetch Greenhouse public board listings. Returns (entries, truncated).
+) -> tuple[list[ListingEntry], bool, list[dict]]:
+    """Fetch Greenhouse public board listings. Returns (entries, truncated, url_guard_drops).
 
     Uses `GET /v1/boards/{company}/jobs`. Unknown companies return 404 which
     surfaces as an `IngestionError(not_found)` — discovery callers translate
     that to an empty result, not a failure.
+
+    Each job's `absolute_url` may point at a custom company domain (e.g.
+    `stripe.com/jobs/...?gh_jid=123`) rather than boards.greenhouse.io. We accept
+    those when they carry a `gh_jid` marker, but rewrite `posting_url` to the
+    canonical boards.greenhouse.io form (built from this board's company slug and
+    the API's own job id) so ingestion fetches the trusted Greenhouse JSON API,
+    never the custom host. Postings that are neither greenhouse-hosted nor carry
+    a `gh_jid` marker are dropped and reported in `url_guard_drops` so the failure
+    mode is visible instead of silently shrinking the board to zero.
     """
     api_url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
     rate_limiter.acquire(api_url)
@@ -299,15 +312,33 @@ def discover_greenhouse_board(
         result = _fetch_listing(api_url)
     except IngestionError as exc:
         if exc.error_code == "not_found":
-            return [], False
+            return [], False, []
         raise
     truncated = len(result.body) >= MAX_LISTING_BYTES - 1
     payload = json.loads(result.body)
     jobs = payload.get("jobs", []) or []
     entries: list[ListingEntry] = []
+    url_guard_drops: list[dict] = []
     for job in jobs:
-        posting_url = str(job.get("absolute_url", ""))
-        if not GREENHOUSE_URL_RE.match(posting_url):
+        absolute_url = str(job.get("absolute_url", ""))
+        job_id = str(job.get("id", ""))
+        gh_jid = extract_gh_jid(absolute_url)
+        if GREENHOUSE_URL_RE.match(absolute_url):
+            posting_url = absolute_url
+        elif gh_jid:
+            # Custom-domain posting trusted via its gh_jid marker. Canonicalize to
+            # boards.greenhouse.io (using the API's own numeric job id when present,
+            # else the marker) so ingestion fetches the Greenhouse API, not the host.
+            canonical_id = job_id if job_id.isdigit() else gh_jid
+            posting_url = canonical_greenhouse_url(company, canonical_id)
+        else:
+            url_guard_drops.append({
+                "reason": "non_greenhouse_url_no_gh_jid",
+                "source": "greenhouse",
+                "source_company": company,
+                "rejected_url": absolute_url,
+                "title": str(job.get("title", "")),
+            })
             continue
         location_obj = job.get("location") or {}
         entries.append(ListingEntry(
@@ -316,12 +347,12 @@ def discover_greenhouse_board(
             posting_url=posting_url,
             source="greenhouse",
             source_company=company,
-            internal_id=str(job.get("id", "")),
+            internal_id=job_id,
             updated_at=str(job.get("updated_at", "")),
             signals=(),
             confidence="high",
         ))
-    return entries, truncated
+    return entries, truncated, url_guard_drops
 
 
 def discover_lever_board(
@@ -963,6 +994,12 @@ def _run_source(
         truncated = page.truncated
         provider_next_cursor = page.next_cursor
         ats_spawned = list(page.ats_hits)
+        for drop in page.url_guard_drops:
+            outcomes.append(Outcome(
+                bucket="dropped_by_url_guard",
+                entry=None,
+                detail=dict(drop),
+            ))
         for low in page.low_confidence:
             entry_id = _entry_id_from_url(low.candidate_url)
             try:
@@ -1025,7 +1062,13 @@ def _run_source(
         slug = m.group(1)
         try:
             if platform == "greenhouse":
-                extra, extra_truncated = discover_greenhouse_board(slug, rate_limiter)
+                extra, extra_truncated, extra_drops = discover_greenhouse_board(slug, rate_limiter)
+                for drop in extra_drops:
+                    outcomes.append(Outcome(
+                        bucket="dropped_by_url_guard",
+                        entry=None,
+                        detail=dict(drop),
+                    ))
             elif platform == "lever":
                 extra, extra_truncated = discover_lever_board(slug, rate_limiter)
             elif platform == "ashby":

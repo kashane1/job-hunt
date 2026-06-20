@@ -22,6 +22,10 @@ class DiscoveryPage:
     next_cursor: str | None = None
     ats_hits: tuple[tuple[str, str], ...] = ()
     low_confidence: tuple[DiscoveryLowConfidenceEntry, ...] = ()
+    # Postings the provider dropped because their URL was neither greenhouse-hosted
+    # nor carried a trusted marker. Surfaced as `dropped_by_url_guard` outcomes so a
+    # board with API jobs but URL-guard drops never looks like a clean empty board.
+    url_guard_drops: tuple[dict, ...] = ()
 
 
 class DiscoveryProvider(Protocol):

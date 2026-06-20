@@ -38,7 +38,14 @@ from job_hunt.discovery import (
 from job_hunt.discovery_providers.ashby import discover_ashby_board
 from job_hunt.discovery_providers.usajobs import USAJobsSearchProfile, discover_usajobs_profile
 from job_hunt.discovery_providers.workable import discover_workable_account
-from job_hunt.ingestion import FetchResult, GREENHOUSE_URL_RE, IngestionError, LEVER_URL_RE
+from job_hunt.ingestion import (
+    FetchResult,
+    GREENHOUSE_URL_RE,
+    IngestionError,
+    LEVER_URL_RE,
+    extract_gh_jid,
+    greenhouse_posting_url_acceptable,
+)
 from job_hunt.net_policy import DomainRateLimiter
 from job_hunt.source_provenance import compare_source_precedence
 from job_hunt.utils import load_yaml_file
@@ -58,9 +65,10 @@ class GreenhouseBoardTest(unittest.TestCase):
     def test_valid_slug_returns_entries(self) -> None:
         body = (FIXTURES / "greenhouse-board-valid.json").read_text(encoding="utf-8")
         with patch("job_hunt.discovery.fetch", return_value=_fetch_ok(body)):
-            entries, truncated = discover_greenhouse_board("examplegh", self.limiter)
+            entries, truncated, drops = discover_greenhouse_board("examplegh", self.limiter)
         self.assertEqual(len(entries), 2)
         self.assertFalse(truncated)
+        self.assertEqual(drops, [])
         self.assertEqual(entries[0].title, "Senior Backend Engineer")
         self.assertEqual(entries[0].source, "greenhouse")
         self.assertEqual(entries[0].source_company, "examplegh")
@@ -74,9 +82,10 @@ class GreenhouseBoardTest(unittest.TestCase):
             raise IngestionError("not found", error_code="not_found", url="x")
 
         with patch("job_hunt.discovery.fetch", side_effect=raise_404):
-            entries, truncated = discover_greenhouse_board("nope", self.limiter)
+            entries, truncated, drops = discover_greenhouse_board("nope", self.limiter)
         self.assertEqual(entries, [])
         self.assertFalse(truncated)
+        self.assertEqual(drops, [])
 
     def test_http_5xx_propagates(self) -> None:
         def raise_500(*a, **kw):
@@ -85,6 +94,75 @@ class GreenhouseBoardTest(unittest.TestCase):
         with patch("job_hunt.discovery.fetch", side_effect=raise_500):
             with self.assertRaises(IngestionError):
                 discover_greenhouse_board("anyslug", self.limiter)
+
+    def test_custom_domain_with_gh_jid_canonicalized_and_kept(self) -> None:
+        # Stripe/Databricks/Datadog-style postings live on custom company domains
+        # but carry a gh_jid marker. They must be kept, with posting_url rewritten
+        # to the canonical boards.greenhouse.io form so ingestion uses the API.
+        body = (FIXTURES / "greenhouse-board-custom-domain.json").read_text(encoding="utf-8")
+        with patch("job_hunt.discovery.fetch", return_value=_fetch_ok(body)):
+            entries, truncated, drops = discover_greenhouse_board("examplegh", self.limiter)
+        # Three of four are greenhouse-sourced via gh_jid; the off-host one is dropped.
+        self.assertEqual(len(entries), 3)
+        self.assertFalse(truncated)
+        for e in entries:
+            self.assertTrue(
+                GREENHOUSE_URL_RE.match(e.posting_url),
+                f"posting_url not canonicalized: {e.posting_url}",
+            )
+            self.assertTrue(e.posting_url.startswith("https://boards.greenhouse.io/examplegh/jobs/"))
+        # The canonical id comes from the API job id, not the raw custom host.
+        self.assertEqual(entries[0].posting_url, "https://boards.greenhouse.io/examplegh/jobs/7954688")
+        # The untrusted off-host URL (no gh_jid) is reported, not silently lost.
+        self.assertEqual(len(drops), 1)
+        self.assertEqual(drops[0]["reason"], "non_greenhouse_url_no_gh_jid")
+        self.assertEqual(drops[0]["rejected_url"], "https://example.com/careers/off-host-no-marker")
+        self.assertEqual(drops[0]["source_company"], "examplegh")
+
+
+class GreenhousePostingUrlGuardTest(unittest.TestCase):
+    def test_standard_greenhouse_url_accepted(self) -> None:
+        self.assertTrue(greenhouse_posting_url_acceptable(
+            "https://boards.greenhouse.io/cloudflare/jobs/7958059"))
+        self.assertTrue(greenhouse_posting_url_acceptable(
+            "https://job-boards.greenhouse.io/gitlab/jobs/8503792002"))
+
+    def test_custom_domain_with_gh_jid_accepted(self) -> None:
+        self.assertTrue(greenhouse_posting_url_acceptable(
+            "https://stripe.com/jobs/search?gh_jid=7954688"))
+        self.assertTrue(greenhouse_posting_url_acceptable(
+            "https://databricks.com/company/careers/open-positions/job?gh_jid=8437000"))
+        self.assertTrue(greenhouse_posting_url_acceptable(
+            "https://careers.datadoghq.com/detail/7183013/?gh_jid=7183013"))
+        # gh_jid as a non-leading query param is still honored.
+        self.assertTrue(greenhouse_posting_url_acceptable(
+            "https://www.brex.com/careers?dept=eng&gh_jid=123456"))
+
+    def test_external_url_without_gh_jid_rejected(self) -> None:
+        self.assertFalse(greenhouse_posting_url_acceptable(
+            "https://example.com/careers/off-host-no-marker"))
+        self.assertFalse(greenhouse_posting_url_acceptable(
+            "https://www.samsara.com/company/careers/role/123"))
+        # A gh_jid that is not a numeric id is not a valid marker.
+        self.assertFalse(greenhouse_posting_url_acceptable(
+            "https://evil.example.com/?gh_jid=not-a-number"))
+
+    def test_malformed_or_unsafe_urls_rejected(self) -> None:
+        for bad in (
+            "",
+            "not a url",
+            "javascript:alert(1)?gh_jid=1",
+            "ftp://example.com/?gh_jid=1",
+            "mailto:hr@example.com",
+            "//boards.greenhouse.io/x/jobs/1",
+        ):
+            self.assertFalse(greenhouse_posting_url_acceptable(bad), bad)
+
+    def test_extract_gh_jid(self) -> None:
+        self.assertEqual(extract_gh_jid("https://stripe.com/jobs?gh_jid=7954688"), "7954688")
+        self.assertEqual(extract_gh_jid("https://x.io/a?b=1&gh_jid=42"), "42")
+        self.assertIsNone(extract_gh_jid("https://example.com/careers"))
+        self.assertIsNone(extract_gh_jid("https://x.io/?gh_jid=abc"))
 
 
 class LeverBoardTest(unittest.TestCase):
@@ -186,7 +264,7 @@ class ListingEntryContractsTest(unittest.TestCase):
     def test_high_confidence_for_board_sources(self) -> None:
         body = (FIXTURES / "greenhouse-board-valid.json").read_text(encoding="utf-8")
         with patch("job_hunt.discovery.fetch", return_value=_fetch_ok(body)):
-            entries, _ = discover_greenhouse_board("examplegh", DomainRateLimiter(0.0))
+            entries, _, _ = discover_greenhouse_board("examplegh", DomainRateLimiter(0.0))
         self.assertTrue(all(e.confidence == "high" for e in entries))
         self.assertTrue(all(e.signals == () for e in entries))
 

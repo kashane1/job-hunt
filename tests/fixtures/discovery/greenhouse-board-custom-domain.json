@@ -1,0 +1,33 @@
+{
+  "jobs": [
+    {
+      "id": 7954688,
+      "title": "Software Engineer, Payments",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "location": {"name": "Remote - US"},
+      "absolute_url": "https://stripe.com/jobs/search?gh_jid=7954688"
+    },
+    {
+      "id": 8437000,
+      "title": "Backend Engineer, Platform",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "location": {"name": "San Francisco, CA"},
+      "absolute_url": "https://databricks.com/company/careers/open-positions/job?gh_jid=8437000"
+    },
+    {
+      "id": 7183013,
+      "title": "Senior Software Engineer, Infrastructure",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "location": {"name": "New York, NY"},
+      "absolute_url": "https://careers.datadoghq.com/detail/7183013/?gh_jid=7183013"
+    },
+    {
+      "id": 9990001,
+      "title": "Engineer With Off-Host Untrusted URL",
+      "updated_at": "2026-06-18T00:00:00Z",
+      "location": {"name": "Remote - US"},
+      "absolute_url": "https://example.com/careers/off-host-no-marker"
+    }
+  ],
+  "meta": {"total": 4}
+}

@@ -43,11 +43,12 @@ class DiscoveryRegistryTest(unittest.TestCase):
                 internal_id="1",
                 updated_at="2026-04-20T00:00:00Z",
             )
-        ], False)
+        ], False, [])
         provider = get_discovery_provider("greenhouse")
         page = provider.list_entries(StubCompany(), rate_limiter=object())
         self.assertEqual(len(page.entries), 1)
         self.assertFalse(page.truncated)
+        self.assertEqual(page.url_guard_drops, ())
 
     @patch("job_hunt.discovery.discover_company_careers")
     def test_careers_provider_preserves_low_confidence_and_ats_hits(self, mock_crawl) -> None:

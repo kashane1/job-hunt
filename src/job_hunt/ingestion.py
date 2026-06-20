@@ -103,6 +103,47 @@ WORKABLE_URL_RE = re.compile(
     r"https?://(?P<subdomain>[^./]+)\.workable\.com/jobs/(?P<job_id>\d+)"
 )
 
+# A Greenhouse-sourced posting can be served from a company's own domain
+# (e.g. stripe.com/jobs/...?gh_jid=123, careers.datadoghq.com/...?gh_jid=123)
+# rather than boards.greenhouse.io. The `gh_jid` query parameter is Greenhouse's
+# job-id marker and is the trust signal that an off-host URL really originated
+# from Greenhouse. We accept those, but ONLY when the marker is present — an
+# arbitrary external URL without gh_jid is rejected. Discovery never fetches the
+# custom domain itself: it rewrites accepted URLs to the canonical
+# boards.greenhouse.io form (see canonical_greenhouse_url) so ingestion stays on
+# the trusted Greenhouse JSON API.
+GH_JID_RE = re.compile(r"[?&]gh_jid=(\d+)(?:&|$)")
+
+
+def extract_gh_jid(url: str) -> str | None:
+    """Return the Greenhouse job id from a ``gh_jid`` query marker, or None."""
+    if not isinstance(url, str) or not url:
+        return None
+    m = GH_JID_RE.search(url)
+    return m.group(1) if m else None
+
+
+def canonical_greenhouse_url(company: str, job_id: str) -> str:
+    """Canonical boards.greenhouse.io posting URL — the form ``ingest_url`` fetches via API."""
+    return f"https://boards.greenhouse.io/{company}/jobs/{job_id}"
+
+
+def greenhouse_posting_url_acceptable(url: str) -> bool:
+    """True when ``url`` is a trusted Greenhouse posting URL.
+
+    Accepts canonical ``boards``/``job-boards.greenhouse.io`` posting URLs, and
+    custom-domain URLs that carry a ``gh_jid`` marker (proof of Greenhouse
+    origin). Rejects everything else: malformed / non-http(s) URLs and arbitrary
+    external URLs without the marker.
+    """
+    if not isinstance(url, str) or not url:
+        return False
+    if not (url.startswith("http://") or url.startswith("https://")):
+        return False
+    if GREENHOUSE_URL_RE.match(url):
+        return True
+    return extract_gh_jid(url) is not None
+
 # Sites that require login and cannot be reliably scraped. We refuse politely
 # rather than silently scraping a login page as the job description.
 #

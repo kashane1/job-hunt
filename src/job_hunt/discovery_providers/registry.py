@@ -25,8 +25,12 @@ class GreenhouseDiscoveryProvider:
             return DiscoveryPage(entries=(), truncated=False)
         from ..discovery import discover_greenhouse_board
 
-        entries, truncated = discover_greenhouse_board(slug, rate_limiter)
-        return DiscoveryPage(entries=tuple(entries), truncated=truncated)
+        entries, truncated, url_guard_drops = discover_greenhouse_board(slug, rate_limiter)
+        return DiscoveryPage(
+            entries=tuple(entries),
+            truncated=truncated,
+            url_guard_drops=tuple(url_guard_drops),
+        )
 
 
 class LeverDiscoveryProvider:
