@@ -152,6 +152,21 @@ def filter_recent_leads(
     return candidates
 
 
+def top_candidates(candidates: list[dict], n: int) -> list[dict]:
+    """Top ``n`` candidates ranked by fit (skillset match), then recency.
+
+    Used by the ``scan-recent-jobs --top N`` brief view. Scored leads outrank
+    unscored ones (a missing ``fit_score`` sorts last). Pure/total-order so the
+    result is stable for testing; ``n <= 0`` returns an empty list.
+    """
+    def _key(c: dict) -> tuple:
+        score = c.get("fit_score")
+        score = score if isinstance(score, (int, float)) else -1
+        return (score, c.get("effective_timestamp") or "")
+
+    return sorted(candidates, key=_key, reverse=True)[:max(0, n)]
+
+
 def scan_recent(
     leads_dir: Path,
     since: str,

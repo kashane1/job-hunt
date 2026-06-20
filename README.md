@@ -114,6 +114,9 @@ not including — submit." Every decision is a concrete artifact. See
 # 1. Recent-job scan: leads inside a wall-clock window, grouped by fit tier
 python3 scripts/job_hunt.py scan-recent-jobs --since 1h
 
+# 1b. Brief, copy-friendly top-N view ranked by fit, with apply URLs
+python3 scripts/job_hunt.py scan-recent-jobs --since 12h --top 10
+
 # 2. Route a scored lead to its best resume variant (writes a logged decision)
 python3 scripts/job_hunt.py select-resume-variant --lead data/leads/<id>.json
 

@@ -287,6 +287,33 @@ def _humanize_override_from_args(args: argparse.Namespace) -> dict | None:
     return override
 
 
+def _print_recent_scan_top(artifact: dict, n: int, since: str) -> None:
+    """Brief, copy-friendly top-N view of recent leads with apply URLs.
+
+    Ranked by fit (skillset match). Public posting metadata only — company,
+    title, tier, score, and the apply URL. No private prose.
+    """
+    from .copilot import top_candidates
+
+    candidates = artifact.get("candidates") or []
+    rows = top_candidates(candidates, n)
+    total = artifact.get("counts", {}).get("total_in_window", len(candidates))
+    print(f"=== top {len(rows)} leads since {since} (ranked by fit) ===")
+    if not rows:
+        print("(no leads in window — widen --since, or run discovery to ingest fresh postings)")
+        return
+    for i, c in enumerate(rows, 1):
+        company = c.get("company") or "?"
+        title = (c.get("title") or "?")
+        score = c.get("fit_score")
+        score_s = f"score={score}" if score is not None else "unscored"
+        print(f"{i:2}. {company} — {title}  [{c.get('tier') or '?'}, {score_s}]")
+        url = c.get("application_url") or ""
+        print(f"    {url if url else '(no apply URL recorded — search the company careers page)'}")
+    print(f"\nshowing {len(rows)} of {total} in window. These are leads to apply to — "
+          "open the URL and apply yourself (nothing here submits).")
+
+
 def _print_packets_review(packets: list, summary: dict) -> None:
     """Render the safe, prose-free packet review.
 
@@ -2121,6 +2148,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--since", default="1h", help="Window: 30m, 1h, 2d, 1w, or an ISO timestamp")
     scan_recent_p.add_argument("--leads-dir", default="data/leads")
     scan_recent_p.add_argument("--output-dir", default="data/runs")
+    scan_recent_p.add_argument(
+        "--top", type=int, default=None, metavar="N",
+        help="Print the top N leads ranked by fit (skillset match) with apply URLs")
     scan_recent_p.add_argument("--json", action="store_true", help="Print the scan artifact")
 
     copilot_p = subparsers.add_parser(
@@ -3046,6 +3076,8 @@ def main(argv: list[str] | None = None) -> int:
         write_json(out_path, artifact)
         if args.json:
             print(json.dumps(artifact, indent=2))
+        elif args.top is not None:
+            _print_recent_scan_top(artifact, args.top, args.since)
         else:
             c = artifact["counts"]
             print(

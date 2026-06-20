@@ -122,6 +122,30 @@ class FilterRecentTest(unittest.TestCase):
             self.assertEqual(cands[0]["lead_id"], "s")  # strong_yes first
 
 
+class TopCandidatesTest(unittest.TestCase):
+    @staticmethod
+    def _c(lead_id, score, ts="2026-06-18T11:30:00+00:00", tier="strong_yes"):
+        return {"lead_id": lead_id, "fit_score": score, "effective_timestamp": ts,
+                "tier": tier, "application_url": f"https://x/{lead_id}"}
+
+    def test_ranks_by_fit_score_desc(self) -> None:
+        from job_hunt.copilot import top_candidates
+        cands = [self._c("low", 60), self._c("high", 95), self._c("mid", 80)]
+        ranked = top_candidates(cands, 3)
+        self.assertEqual([c["lead_id"] for c in ranked], ["high", "mid", "low"])
+
+    def test_limit_and_unscored_sorts_last(self) -> None:
+        from job_hunt.copilot import top_candidates
+        cands = [self._c("a", 70), self._c("u", None, tier="unscored"), self._c("b", 90)]
+        ranked = top_candidates(cands, 2)
+        self.assertEqual([c["lead_id"] for c in ranked], ["b", "a"])  # unscored excluded by limit
+        self.assertEqual(top_candidates(cands, 5)[-1]["lead_id"], "u")  # unscored last
+
+    def test_non_positive_n_returns_empty(self) -> None:
+        from job_hunt.copilot import top_candidates
+        self.assertEqual(top_candidates([self._c("a", 70)], 0), [])
+
+
 class ScanRecentTest(unittest.TestCase):
     def test_counts_and_schema(self) -> None:
         with tempfile.TemporaryDirectory() as t:
