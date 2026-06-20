@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
 
+from .application import MANUAL_CLOSED_STATUSES
 from .utils import repo_root
 
 # Fix hints for known PDF-export error codes, used when a record predates the
@@ -268,6 +269,12 @@ def assess_packet(
 
     duplicate_of = [d for d in dup_map.get(lead_id, []) if d != draft_id]
 
+    # Human disposition recorded via mark-packet (separate from the browser
+    # lifecycle machine). Metadata only — never the human's prose is required.
+    manual = status.get("manual_disposition") or {}
+    manual_status = manual.get("status")
+    manual_closed = manual_status in MANUAL_CLOSED_STATUSES
+
     # Attention reasons = genuine problems a human must resolve.
     attention: list[str] = []
     if safety_error:
@@ -284,6 +291,12 @@ def assess_packet(
         attention.append("missing_artifacts")
     if pdf["overall"] == "failed":
         attention.append("pdf_export_failed")
+    if manual_status == "needs_revision":
+        attention.append("marked_needs_revision")
+    # A packet the human has already submitted/skipped/closed is out of the
+    # action queue: drop quality reasons (still surface a real safety gap).
+    if manual_closed:
+        attention = [a for a in attention if a == "missing_human_submit_flag"]
     needs_attention = bool(attention)
 
     # Soft notes worth a glance but not blockers.
@@ -294,15 +307,21 @@ def assess_packet(
         notes.append("ats_warnings")
     if duplicate_of:
         notes.append("duplicate_existing_packet")
-    if pdf["overall"] not in ("ready", "failed"):
+    if pdf["overall"] not in ("ready", "failed") and not manual_closed:
         # Not failed, but no PDF yet either — don't let it look cleanly ready.
         notes.append("pdf_not_ready")
+    if manual_status == "follow_up_later":
+        notes.append("parked_follow_up_later")
 
+    # A packet is "ready for review" only if it is clean AND the human has not
+    # already closed it (submitted/skipped/parked/needs-revision).
     ready_for_review = (
         not safety_error
         and lifecycle_state not in _TERMINAL_STATES
         and not needs_attention
         and not duplicate_of
+        and not manual_closed
+        and manual_status not in ("needs_revision", "follow_up_later")
     )
 
     record = {
@@ -326,6 +345,11 @@ def assess_packet(
         "claims": claims,
         "claim_safety_warnings": safety_warnings,
         "duplicate_of": duplicate_of,
+        "manual": {
+            "status": manual_status,
+            "updated_at": manual.get("updated_at"),
+            "next_follow_up_date": manual.get("next_follow_up_date"),
+        } if manual_status else None,
         "safety_error": safety_error,
         "needs_attention": needs_attention,
         "attention_reasons": attention,
@@ -344,6 +368,20 @@ def recommend_action(packet: dict) -> str:
     """
     if packet["safety_error"]:
         return "hold_safety"
+    # Human disposition (mark-packet) takes precedence over the auto-derived
+    # action: a packet the person has already acted on should not re-surface.
+    manual_status = (packet.get("manual") or {}).get("status")
+    if manual_status in ("manually_submitted", "interviewing"):
+        return "track"
+    if manual_status in ("skipped", "not_interested", "rejected"):
+        return "skip"
+    if manual_status == "needs_revision":
+        return "revise"
+    if manual_status == "follow_up_later":
+        return "follow_up"
+    if manual_status == "reviewed":
+        # Human-reviewed: revise if a blocker remains, else it is theirs to submit.
+        return "revise" if packet["needs_attention"] else "manual_submit"
     if packet["lifecycle_state"] in _TERMINAL_STATES:
         return "skip"
     if packet["duplicate_of"]:
@@ -403,6 +441,91 @@ def review_packets(
         return (0 if r["needs_attention"] else 1, -score, age)
     out.sort(key=_sort_key)
     return out
+
+
+def packet_history(
+    draft_id: str,
+    *,
+    data_root: Path | None = None,
+    claims_path: Path | None = None,
+    now: datetime | None = None,
+) -> dict:
+    """Read-only safe history for a single packet (no prose).
+
+    Returns the current manual + browser-lifecycle status, both timelines, packet
+    readiness, and whether human submit is required. Reads only JSON metadata
+    (status.json, plan.json, generated descriptors, lead) — never resume /
+    cover-letter prose. ``found`` is False for an unknown draft id (safe, no raise).
+    """
+    data_root = data_root or (repo_root() / "data")
+    now = now or datetime.now(timezone.utc)
+    draft_dir = data_root / "applications" / draft_id
+    if not (draft_dir / "status.json").exists():
+        return {"found": False, "draft_id": draft_id}
+    claims_index = load_claims_index(claims_path)
+    rec = assess_packet(
+        draft_dir, data_root=data_root, claims_index=claims_index, now=now, dup_map={},
+    )
+    if rec is None:
+        return {"found": False, "draft_id": draft_id}
+
+    status = _read_json_safe(draft_dir / "status.json")
+    disp = status.get("manual_disposition") or {}
+
+    manual_timeline = [
+        {
+            "status": e.get("status"),
+            "at": e.get("at"),
+            "note": e.get("note", ""),
+            "submitted_url": e.get("submitted_url", ""),
+            "portal_url": e.get("portal_url", ""),
+            "next_follow_up_date": e.get("next_follow_up_date", ""),
+        }
+        for e in (disp.get("history") or []) if isinstance(e, dict)
+    ]
+    # Browser-lifecycle transitions + events are metadata only (no prose).
+    lifecycle_timeline = [
+        {
+            "from_stage": t.get("from_stage"),
+            "to_stage": t.get("to_stage"),
+            "timestamp": t.get("timestamp"),
+            "note": t.get("note", ""),
+        }
+        for t in (status.get("transitions") or []) if isinstance(t, dict)
+    ]
+    events = [
+        {"type": ev.get("type"), "occurred_at": ev.get("occurred_at")}
+        for ev in (status.get("events") or []) if isinstance(ev, dict)
+    ]
+
+    return {
+        "found": True,
+        "draft_id": rec["draft_id"],
+        "lead_id": rec["lead_id"],
+        "company": rec["company"],
+        "title": rec["title"],
+        "lane": rec["lane"],
+        "manual_status": (rec.get("manual") or {}).get("status"),
+        "lifecycle_state": rec["lifecycle_state"],
+        "current_stage": rec["current_stage"],
+        "requires_human_submit": rec["requires_human_submit"],
+        "readiness": {
+            "ready_for_review": rec["ready_for_review"],
+            "needs_attention": rec["needs_attention"],
+            "attention_reasons": rec["attention_reasons"],
+            "pdf": (rec.get("pdf") or {}).get("overall"),
+            "artifacts_present": rec["artifacts_present"],
+        },
+        "recommended_action": rec["recommended_action"],
+        "manual_timeline": manual_timeline,
+        "lifecycle_timeline": lifecycle_timeline,
+        "events": events,
+        "follow_up": {
+            "next_follow_up_date": disp.get("next_follow_up_date"),
+            "submitted_url": disp.get("submitted_url"),
+            "portal_url": disp.get("portal_url"),
+        },
+    }
 
 
 def apply_filters(

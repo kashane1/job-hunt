@@ -174,6 +174,41 @@ you:
   >> data/watch/scheduled-review.log 2>&1
 ```
 
+### Manual packet lifecycle (after you review/submit by hand)
+
+Once you have personally reviewed a packet and (optionally) submitted it through
+the company's own site, record what happened with `mark-packet`. It updates only
+the local, gitignored packet `status.json` — it never submits, opens a browser,
+fills a form, or touches an account, and it never flips the `requires_human_submit`
+invariant.
+
+```bash
+# Record that YOU submitted it (URL is stored, never opened)
+python3 scripts/job_hunt.py mark-packet --draft-id <draft-id> \
+  --status manually_submitted --submitted-url https://company.com/careers/123
+
+# Park, skip, or flag for rework
+python3 scripts/job_hunt.py mark-packet --draft-id <draft-id> --status follow_up_later \
+  --follow-up-date 2026-07-01
+python3 scripts/job_hunt.py mark-packet --draft-id <draft-id> --status skipped
+python3 scripts/job_hunt.py mark-packet --draft-id <draft-id> --status needs_revision
+
+# Preview a transition without writing anything
+python3 scripts/job_hunt.py mark-packet --draft-id <draft-id> --status reviewed --dry-run
+```
+
+Supported dispositions: `reviewed`, `manually_submitted`, `skipped`,
+`not_interested`, `needs_revision`, `follow_up_later`, `interviewing`, `rejected`
+(`rejected` is terminal). Illegal transitions and unknown draft ids are rejected
+with a clear error. Packets you have submitted / skipped / closed drop out of the
+`packets-review` and `run-scheduled-review` action queues automatically.
+
+Inspect a single packet's timeline (read-only, never prints private prose):
+
+```bash
+python3 scripts/job_hunt.py packet-history --draft-id <draft-id>
+```
+
 ## Batch 4: Autonomous Indeed Apply
 
 End-to-end pipeline for applying to Indeed postings: lead discovery →

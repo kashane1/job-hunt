@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Final, Iterable
 
 from . import scheduled_review
+from .application import MANUAL_PACKET_STATUSES as _MANUAL_PACKET_STATUSES
 from .humanize import HUMANIZE_DEFAULTS
 from .schema_checks import validate
 from .simple_yaml import loads as load_yaml
@@ -347,6 +348,66 @@ def _print_packets_review(packets: list, summary: dict) -> None:
             print(f"   attention: {', '.join(p['attention_reasons'])}")
         print(f"   -> recommended: {p['recommended_action'].upper()}")
     print("\nNote: all packets are human-submit only; this tool never applies or submits.")
+
+
+def _print_mark_packet(payload: dict) -> None:
+    """Render the result of a mark-packet write/dry-run (safe metadata only)."""
+    if payload.get("dry_run"):
+        print("=== mark-packet (DRY-RUN; nothing written) ===")
+        print(f"draft: {payload['draft_id']}")
+        print(f"transition: {payload.get('from_status') or '(none)'} -> {payload['to_status']}")
+        wr = payload.get("would_record") or {}
+        for k in ("note", "submitted_url", "portal_url", "next_follow_up_date"):
+            if wr.get(k):
+                print(f"   {k}: {wr[k]}")
+        print(f"requires_human_submit (unchanged): {payload.get('requires_human_submit')}")
+        print("\nSafety: no submit/browser/form action; re-run without --dry-run to record.")
+        return
+    print("=== mark-packet ===")
+    print(f"draft: {payload['draft_id']}")
+    print(f"manual_status: {payload.get('manual_status')}  "
+          f"(timeline entries: {payload.get('history_len')})")
+    print(f"requires_human_submit (unchanged): {payload.get('requires_human_submit')}")
+    print("\nNote: recorded locally only; nothing was submitted.")
+
+
+def _print_packet_history(h: dict) -> None:
+    """Render the read-only packet history (no private prose)."""
+    print("=== packet-history (read-only; no apply/submit) ===")
+    print(f"{h.get('company') or '?'} — {(h.get('title') or '?')[:60]}")
+    print(f"draft: {h['draft_id']}   lane={h.get('lane') or '?'}")
+    print(f"manual_status: {h.get('manual_status') or '(none)'}   "
+          f"lifecycle={h.get('lifecycle_state')}/{h.get('current_stage')}")
+    print(f"requires_human_submit: {h.get('requires_human_submit')}")
+    r = h.get("readiness", {})
+    print(f"readiness: ready_for_review={r.get('ready_for_review')}  "
+          f"needs_attention={r.get('needs_attention')}  pdf={r.get('pdf')}  "
+          f"artifacts_present={r.get('artifacts_present')}")
+    if r.get("attention_reasons"):
+        print(f"   attention: {', '.join(r['attention_reasons'])}")
+    fu = h.get("follow_up", {})
+    if fu.get("next_follow_up_date") or fu.get("submitted_url") or fu.get("portal_url"):
+        bits = []
+        if fu.get("next_follow_up_date"):
+            bits.append(f"follow_up={fu['next_follow_up_date']}")
+        if fu.get("submitted_url"):
+            bits.append(f"submitted_url={fu['submitted_url']}")
+        if fu.get("portal_url"):
+            bits.append(f"portal_url={fu['portal_url']}")
+        print("   " + "  ".join(bits))
+    mt = h.get("manual_timeline") or []
+    if mt:
+        print("manual timeline:")
+        for e in mt:
+            note = f"  note: {e['note']}" if e.get("note") else ""
+            print(f"   {e.get('at')}  {e.get('status')}{note}")
+    lt = h.get("lifecycle_timeline") or []
+    if lt:
+        print("lifecycle timeline:")
+        for t in lt:
+            print(f"   {t.get('timestamp')}  {t.get('from_stage')} -> {t.get('to_stage')}")
+    print(f"\n-> recommended: {h.get('recommended_action', '?').upper()}")
+    print("Safety: human-submit only; this view never submits or prints private prose.")
 
 
 def _print_scheduled_review(report: dict) -> None:
@@ -2756,6 +2817,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     preview.add_argument("--json", action="store_true", help="Emit JSON instead of text")
 
+    mark_pkt = subparsers.add_parser(
+        "mark-packet",
+        help="Record a human disposition for a generated packet after you review/"
+             "submit/skip it yourself (no apply/browser/form/submit; local state only)",
+    )
+    mark_pkt.add_argument("--draft-id", required=True, help="Packet draft id (see packets-review)")
+    mark_pkt.add_argument(
+        "--status", required=True,
+        choices=sorted(_MANUAL_PACKET_STATUSES),
+        help="Human disposition to record",
+    )
+    mark_pkt.add_argument("--note", default="", help="Optional short note")
+    mark_pkt.add_argument(
+        "--submitted-url", default="",
+        help="Optional URL where YOU submitted (recorded only, never opened)")
+    mark_pkt.add_argument(
+        "--portal-url", default="",
+        help="Optional company application-portal URL (recorded only, never opened)")
+    mark_pkt.add_argument(
+        "--follow-up-date", default="", help="Optional next follow-up date (YYYY-MM-DD)")
+    mark_pkt.add_argument("--data-root", default="data")
+    mark_pkt.add_argument(
+        "--dry-run", action="store_true",
+        help="Validate the transition and preview the change without writing")
+    mark_pkt.add_argument("--json", action="store_true")
+
+    pkt_hist = subparsers.add_parser(
+        "packet-history",
+        help="Read-only safe history for one packet: status, timeline, readiness, "
+             "human-submit requirement (no apply/browser; never prints private prose)",
+    )
+    pkt_hist.add_argument("--draft-id", required=True)
+    pkt_hist.add_argument("--data-root", default="data")
+    pkt_hist.add_argument(
+        "--claims", default="profile/claims/claims-bank.json",
+        help="Claims bank for approval check (counts/booleans only)")
+    pkt_hist.add_argument("--json", action="store_true")
+
     refresh = subparsers.add_parser(
         "refresh-application",
         help="Re-snapshot the profile into plan.json without regenerating resume",
@@ -4349,6 +4448,71 @@ def main(argv: list[str] | None = None) -> int:
             _print_packets_review(filtered, summary)
         # Non-zero exit when a safety error exists anywhere, so scripts can gate on it.
         return 3 if summary["safety_errors_all"] else 0
+
+    if args.command == "mark-packet":
+        from .application import PlanError, mark_packet_status
+
+        try:
+            result = mark_packet_status(
+                args.draft_id,
+                args.status,
+                note=args.note,
+                submitted_url=args.submitted_url,
+                portal_url=args.portal_url,
+                next_follow_up_date=args.follow_up_date,
+                dry_run=args.dry_run,
+                data_root=Path(args.data_root),
+            )
+        except PlanError as exc:
+            print(json.dumps({"status": "error", "draft_id": args.draft_id, **exc.to_dict()}, indent=2))
+            return 2
+
+        if args.dry_run:
+            payload = {
+                "status": "ok",
+                "dry_run": True,
+                "draft_id": result["draft_id"],
+                "from_status": result["from_status"],
+                "to_status": result["to_status"],
+                "requires_human_submit": result["requires_human_submit"],
+                "would_record": {k: v for k, v in result["would_record"].items() if v},
+            }
+        else:
+            disp = result.get("manual_disposition") or {}
+            payload = {
+                "status": "ok",
+                "draft_id": result.get("draft_id", args.draft_id),
+                "manual_status": disp.get("status"),
+                "manual_updated_at": disp.get("updated_at"),
+                "history_len": len(disp.get("history") or []),
+                # Safety invariant: marking a disposition NEVER flips this.
+                "requires_human_submit": result.get("requires_human_submit") is True,
+            }
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            _print_mark_packet(payload)
+        return 0
+
+    if args.command == "packet-history":
+        from . import packet_review as pr
+
+        claims_path = Path(args.claims) if args.claims else None
+        hist = pr.packet_history(
+            args.draft_id,
+            data_root=Path(args.data_root),
+            claims_path=claims_path if (claims_path and claims_path.exists()) else None,
+        )
+        if not hist.get("found"):
+            print(json.dumps({"status": "error", "error_code": "unknown_draft",
+                              "draft_id": args.draft_id,
+                              "message": f"no packet found for draft {args.draft_id!r}"}, indent=2))
+            return 2
+        if args.json:
+            print(json.dumps({"status": "ok", "history": hist}, indent=2))
+        else:
+            _print_packet_history(hist)
+        return 0
 
     if args.command == "refresh-application":
         from .application import PlanError, refresh_application

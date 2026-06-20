@@ -1922,6 +1922,184 @@ def reopen_application(
 
 
 # =============================================================================
+# Manual (human-driven) packet lifecycle — no browser, no submit
+# =============================================================================
+# Dispositions a person records AFTER personally reviewing / submitting / skipping
+# a generated packet. This layer is intentionally SEPARATE from the browser-
+# attempt-driven ``lifecycle_state`` machine above: marking a packet
+# "manually_submitted" only records that the HUMAN submitted it elsewhere — the
+# tool never submits, opens a browser, fills a form, or touches an account, and
+# ``requires_human_submit`` is never flipped by this path.
+MANUAL_PACKET_STATUSES: Final = frozenset({
+    "reviewed",
+    "manually_submitted",
+    "skipped",
+    "not_interested",
+    "needs_revision",
+    "follow_up_later",
+    "rejected",
+    "interviewing",
+})
+
+# Dispositions that take a packet OUT of the "needs a human action" queue
+# (already submitted/parked/closed by the human). Mirrored in packet_review.
+MANUAL_CLOSED_STATUSES: Final = frozenset({
+    "manually_submitted", "skipped", "not_interested", "rejected", "interviewing",
+})
+
+# Allowed transitions. ``None`` = no disposition recorded yet. ``rejected`` is
+# terminal (no outbound). Permissive enough for real review flows while guarding
+# nonsensical jumps (e.g. rejected -> manually_submitted).
+_MANUAL_TRANSITIONS: Final = {
+    None: {"reviewed", "manually_submitted", "skipped", "not_interested",
+           "needs_revision", "follow_up_later"},
+    "reviewed": {"manually_submitted", "skipped", "not_interested",
+                 "needs_revision", "follow_up_later"},
+    "needs_revision": {"reviewed", "manually_submitted", "skipped",
+                       "not_interested", "follow_up_later"},
+    "follow_up_later": {"reviewed", "manually_submitted", "skipped",
+                        "not_interested", "needs_revision"},
+    "skipped": {"reviewed", "follow_up_later"},
+    "not_interested": {"reviewed", "follow_up_later"},
+    "manually_submitted": {"interviewing", "rejected", "follow_up_later",
+                           "not_interested"},
+    "interviewing": {"rejected", "follow_up_later", "manually_submitted"},
+    "rejected": set(),  # terminal
+}
+
+
+def _validate_safe_url(url: str, *, field: str) -> str:
+    """Light, non-fetching validation for a recorded URL. We never open it.
+
+    Only http(s) is accepted (no javascript:/file:/data:); an empty value is
+    allowed. Raises PlanError on a malformed value.
+    """
+    url = (url or "").strip()
+    if not url:
+        return ""
+    if not re.match(r"^https?://", url, re.IGNORECASE):
+        raise PlanError(
+            f"{field} must be an http(s) URL",
+            error_code="plan_schema_invalid",
+            remediation="Provide a full https:// URL or omit the field.",
+        )
+    return url
+
+
+def _validate_follow_up_date(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise PlanError(
+            "next follow-up date must be an ISO calendar date (YYYY-MM-DD)",
+            error_code="plan_schema_invalid",
+            remediation="Use e.g. 2026-07-15, or omit the field.",
+        )
+    return value
+
+
+def mark_packet_status(
+    draft_id: str,
+    status: str,
+    *,
+    note: str = "",
+    submitted_url: str = "",
+    portal_url: str = "",
+    next_follow_up_date: str = "",
+    dry_run: bool = False,
+    data_root: Path | None = None,
+) -> dict:
+    """Record a human disposition for a generated packet (no submit, no browser).
+
+    Validates the status vocabulary and the transition from the packet's current
+    manual disposition, then (unless ``dry_run``) appends a timeline entry and
+    updates the ``manual_disposition`` block in the packet's ``status.json``.
+
+    NEVER changes ``requires_human_submit`` and NEVER performs a submission —
+    'manually_submitted' merely records that the human did so externally. Raises
+    PlanError on an unknown status, an illegal transition, a missing draft, or a
+    malformed url/date.
+    """
+    if status not in MANUAL_PACKET_STATUSES:
+        raise PlanError(
+            f"Unknown manual status: {status!r}",
+            error_code="plan_schema_invalid",
+            remediation=f"Use one of {sorted(MANUAL_PACKET_STATUSES)}.",
+        )
+    data_root = data_root or (repo_root() / "data")
+    status_path = _draft_dir(data_root, draft_id) / "status.json"
+    if not status_path.exists():
+        raise PlanError(
+            f"No packet status.json for draft {draft_id!r}",
+            error_code="profile_field_missing",
+            remediation="Check the draft id (see packets-review) or run prepare-application first.",
+        )
+
+    submitted_url = _validate_safe_url(submitted_url, field="--submitted-url")
+    portal_url = _validate_safe_url(portal_url, field="--portal-url")
+    next_follow_up_date = _validate_follow_up_date(next_follow_up_date)
+
+    current_doc = read_json(status_path)
+    current = (current_doc.get("manual_disposition") or {}).get("status")
+    allowed = _MANUAL_TRANSITIONS.get(current, set())
+    if status != current and status not in allowed:
+        nxt = ", ".join(sorted(allowed)) or "(none — terminal)"
+        raise PlanError(
+            f"Invalid manual transition {current or '(none)'} -> {status}",
+            error_code="plan_schema_invalid",
+            remediation=f"From {current or '(none)'} you may move to: {nxt}.",
+        )
+
+    ts = now_iso()
+    entry = {
+        "status": status,
+        "at": ts,
+        "note": note,
+        "submitted_url": submitted_url,
+        "portal_url": portal_url,
+        "next_follow_up_date": next_follow_up_date,
+    }
+
+    if dry_run:
+        return {
+            "dry_run": True,
+            "draft_id": draft_id,
+            "from_status": current,
+            "to_status": status,
+            "requires_human_submit": current_doc.get("requires_human_submit") is True,
+            "would_record": entry,
+        }
+
+    def mutate(doc: dict) -> None:
+        disp = doc.setdefault("manual_disposition", {"history": []})
+        disp.setdefault("history", []).append(entry)
+        disp["status"] = status
+        disp["note"] = note
+        disp["updated_at"] = ts
+        # Sticky URLs: keep the last non-empty so a later status update does not
+        # erase where it was submitted.
+        if submitted_url:
+            disp["submitted_url"] = submitted_url
+        if portal_url:
+            disp["portal_url"] = portal_url
+        if next_follow_up_date:
+            disp["next_follow_up_date"] = next_follow_up_date
+        elif status not in ("follow_up_later", "interviewing"):
+            disp.pop("next_follow_up_date", None)
+
+    return _mutate_status(
+        draft_id,
+        mutate,
+        event_type=f"manual_{status}",
+        source_id=f"cli:mark_packet:{status}:{uuid.uuid4().hex[:12]}",
+        data_root=data_root,
+    )
+
+
+# =============================================================================
 # Phase 7: apply_batch
 # =============================================================================
 
