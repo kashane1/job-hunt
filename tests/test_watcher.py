@@ -1458,8 +1458,11 @@ class RealRegistryLaneTest(unittest.TestCase):
         self.assertTrue(watcher.lane_is_ready(reg, "generalist_swe"))
         self.assertTrue(watcher.lane_is_ready(reg, "platform_backend"))
         self.assertTrue(watcher.lane_is_ready(reg, "fullstack_product"))
-        # ai_engineer resume is not authored yet -> not a ready lane.
-        self.assertFalse(watcher.lane_is_ready(reg, "ai_engineer"))
+        self.assertTrue(watcher.lane_is_ready(reg, "ai_engineer"))
+        # Every repo lane is now ready_local -> no no_ready_lane buckets remain.
+        self.assertTrue(all(
+            watcher.lane_is_ready(reg, v["id"]) for v in reg["variants"]
+        ))
 
 
 if __name__ == "__main__":

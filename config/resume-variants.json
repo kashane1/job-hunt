@@ -5,27 +5,26 @@
   "variants": [
     {
       "id": "ai_engineer",
-      "label": "AI / ML Engineer",
+      "label": "Applied AI / Agentic Engineer",
       "title_patterns": [
         "ai engineer",
-        "ml engineer",
-        "machine learning",
         "applied ai",
-        "applied scientist",
-        "llm",
+        "ai tools",
+        "ai platform",
+        "agentic",
         "genai",
         "ai systems",
-        "nlp"
+        "llm"
       ],
       "emphasis_skills": [
         "python",
-        "pytorch",
-        "llm",
-        "rag",
-        "ml",
-        "nlp",
+        "typescript",
+        "javascript",
         "ai",
-        "automation"
+        "api",
+        "aws",
+        "automation",
+        "agents"
       ],
       "seniority_bands": [
         "mid",
@@ -33,7 +32,8 @@
         "staff"
       ],
       "resume_path": "profile/resumes/ai-engineer.md",
-      "notes": "Use for roles centered on model/LLM/ML work. Author the resume file before relying on this lane in a live run."
+      "review_status": "ready_local",
+      "notes": "Applied-AI / agentic-engineering lane (NOT ML research). Resume authored locally (gitignored) from the 3 approved ai_engineer-allowed claims only (Amazon Q Business assistant, ai-company-os agentic control plane with dated snapshot, Better Business Web as a product/project). Deliberately omits ML-research signals (pytorch/rag/ml/nlp) and research-only titles (machine learning / applied scientist / nlp) so deep-ML roles do not misroute here; the lane targets applied-AI/tooling software roles. Thinnest backing of the ready lanes (3 claims) - keep claims-bank-safe. Like the other lanes the file is private/gitignored (profile-doctor reports ready_local as info, never error)."
     },
     {
       "id": "platform_backend",

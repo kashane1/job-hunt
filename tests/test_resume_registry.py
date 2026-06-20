@@ -68,6 +68,20 @@ class LoadRegistryTest(unittest.TestCase):
         self.assertEqual(v["resume_path"], "profile/resumes/fullstack-product.md")
         self.assertNotIn("examples/", v["resume_path"])
 
+    def test_ai_engineer_registered_ready_local_private(self) -> None:
+        # Applied-AI lane backed by a private, gitignored resume (metadata only).
+        reg = load_registry()
+        v = next(x for x in reg["variants"] if x["id"] == "ai_engineer")
+        self.assertEqual(v.get("review_status"), "ready_local")
+        self.assertEqual(v["resume_path"], "profile/resumes/ai-engineer.md")
+        self.assertNotIn("examples/", v["resume_path"])
+
+    def test_all_repo_lanes_are_ready_local(self) -> None:
+        # No no_ready_lane buckets remain: every registry variant is ready_local.
+        reg = load_registry()
+        for v in reg["variants"]:
+            self.assertEqual(v.get("review_status"), "ready_local", v["id"])
+
     def test_duplicate_ids_raise(self) -> None:
         with tempfile.TemporaryDirectory() as t:
             p = Path(t) / "r.json"
@@ -129,8 +143,22 @@ class RouteLeadTest(unittest.TestCase):
         self.assertTrue(any("near_tie" in r for r in d["review_reasons"]))
 
     def test_missing_resume_flags_review(self) -> None:
-        d = route_lead(_scored_lead("Senior AI Engineer", ["python", "llm"]), self.reg)
-        # ai-engineer resume file is not authored yet in the repo.
+        # Env-robust: route against a synthetic registry whose matched lane
+        # points at a guaranteed-missing file (the real repo lanes are all
+        # authored locally now, so we can't rely on one being absent).
+        reg = {
+            "schema_version": 1,
+            "default_variant": "d",
+            "variants": [
+                {"id": "spec", "title_patterns": ["ai engineer"],
+                 "emphasis_skills": ["python"], "seniority_bands": ["mid", "senior", "staff"],
+                 "resume_path": "profile/resumes/__missing_spec__.md"},
+                {"id": "d", "title_patterns": [],
+                 "resume_path": "profile/resumes/__missing_default__.md"},
+            ],
+        }
+        d = route_lead(_scored_lead("Senior AI Engineer", ["python"]), reg)
+        self.assertEqual(d["selected_variant_id"], "spec")
         self.assertFalse(d["selected_resume_exists"])
         self.assertTrue(any("resume_source_missing" in r for r in d["review_reasons"]))
 
@@ -159,11 +187,28 @@ class PickRegistryResumeTest(unittest.TestCase):
         if path is not None:
             self.assertTrue(path.exists())
 
-    def test_specialized_missing_file_falls_through(self) -> None:
-        # AI title routes to ai_engineer whose file is absent -> (None, decision).
+    def test_specialized_lane_routes_for_ai_title(self) -> None:
+        # AI title routes to ai_engineer (now a ready_local lane). Its resume is
+        # private/gitignored, so the path resolves only when present locally; a
+        # clean checkout lacks it and falls through to (None, decision).
         path, decision = pick_registry_resume(_scored_lead("Senior AI Engineer", ["llm"]))
-        self.assertIsNone(path)
         self.assertEqual(decision["selected_variant_id"], "ai_engineer")
+        if path is not None:
+            self.assertTrue(path.exists())
+
+    def test_missing_lane_file_marks_resume_absent(self) -> None:
+        # Env-robust: a variant pointing at a guaranteed-missing file reports
+        # selected_resume_exists=False (the signal pick_registry_resume uses to
+        # fall through). route_lead accepts an explicit registry.
+        reg = {
+            "schema_version": 1,
+            "default_variant": "x",
+            "variants": [{"id": "x", "title_patterns": [],
+                          "resume_path": "profile/resumes/__definitely_missing__.md"}],
+        }
+        d = route_lead(_scored_lead("Anything", []), reg)
+        self.assertEqual(d["selected_variant_id"], "x")
+        self.assertFalse(d["selected_resume_exists"])
 
 
 if __name__ == "__main__":

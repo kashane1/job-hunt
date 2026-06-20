@@ -374,15 +374,19 @@ class CuratedResumeLaneTest(unittest.TestCase):
             self.assertEqual(warning, "")
 
     def test_generate_resume_variants_emits_missing_source_warning(self) -> None:
-        # Temporarily monkey-patch CURATED_RESUME_LANES so the AI-engineer
-        # lane points at a nonexistent file. Verify the variant record
-        # surfaces generation_warnings.code="curated_source_missing".
+        # Monkey-patch CURATED_RESUME_LANES so the AI-engineer lane points at a
+        # nonexistent file, AND neutralize the registry resolver (which now finds
+        # a real private ai-engineer.md locally) so the curated-fallback path is
+        # exercised. Verify the record surfaces curated_source_missing.
         import job_hunt.generation as gen
+        import job_hunt.resume_registry as rr
         original = gen.CURATED_RESUME_LANES
+        original_pick = rr.pick_registry_resume
         gen.CURATED_RESUME_LANES = [
             (("ai engineer",), "nonexistent/curated.md"),
             ((), "also/nonexistent.md"),
         ]
+        rr.pick_registry_resume = lambda lead: (None, None)
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 results = gen.generate_resume_variants(
@@ -398,6 +402,7 @@ class CuratedResumeLaneTest(unittest.TestCase):
                 self.assertIn("curated_source_missing", codes)
         finally:
             gen.CURATED_RESUME_LANES = original
+            rr.pick_registry_resume = original_pick
 
 
 if __name__ == "__main__":
