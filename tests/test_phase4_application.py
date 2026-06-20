@@ -46,6 +46,8 @@ from job_hunt.application import (
     reopen_application,
     withdraw_application,
 )
+from job_hunt.application import load_schema
+from job_hunt.schema_checks import validate
 from job_hunt.utils import read_json, write_json
 
 
@@ -411,6 +413,33 @@ class PreparePipelineTest(unittest.TestCase):
             detail = plan["coherence_warnings"][0]["detail"]
             self.assertNotIn("Kashane", detail)
             self.assertNotIn("@", detail)
+
+    def test_generated_plan_validates_against_schema(self) -> None:
+        # End-to-end: a prepared plan (with coherence_warnings + cover-letter
+        # lane_id) must conform to the application-plan schema.
+        with tempfile.TemporaryDirectory() as tmp:
+            data_root = Path(tmp)
+            _seed_bank(data_root)
+            with patch("job_hunt.application._run_ats_check", return_value=("passed", [], [])), \
+                 patch("job_hunt.application._routed_resume_variant", return_value="platform_backend"), \
+                 patch("job_hunt.application._build_resume_asset_ref", return_value={
+                     "content_id": "resume-1", "available": True,
+                     "preferred_upload_kind": "pdf", "pdf_export_status": "ready",
+                 }), \
+                 patch("job_hunt.application._build_cover_letter_asset_ref", return_value={
+                     "content_id": "cover-1", "available": True,
+                     "generation_status": "generated",
+                     "lane_id": "product_minded_engineer",
+                     "preferred_upload_kind": "pdf", "pdf_export_status": "ready",
+                 }):
+                result = prepare_application(
+                    MINIMAL_LEAD, MINIMAL_PROFILE, SIMPLE_POLICY,
+                    output_root=data_root / "applications", data_root=data_root,
+                )
+            plan = read_json(result.draft_dir / "plan.json")
+            # Mismatch path populated, then the whole plan validates.
+            self.assertEqual(plan["coherence_warnings"][0]["code"], "cover_letter_lane_mismatch")
+            validate(plan, load_schema("application-plan"))
 
     def test_prepare_cover_letter_pdf_failure_is_nonfatal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

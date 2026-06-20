@@ -146,6 +146,10 @@
             "available": { "type": "boolean" },
             "generation_status": { "type": "string", "enum": ["generated", "failed"] },
             "generation_error_code": { "type": "string" },
+            "lane_id": {
+              "type": "string",
+              "description": "Cover-letter lane the letter was framed in (e.g. platform_internal_tools). Present for cover-letter refs when generated; optional — resumes/answers do not carry one. Used for packet lane coherence."
+            },
             "preferred_upload_kind": { "type": "string", "enum": ["pdf", "markdown"] },
             "pdf_export_status": { "type": "string", "enum": ["ready", "failed", "not_attempted", "unavailable"] }
           }
@@ -159,6 +163,43 @@
         "preferred_stage": { "type": "string" },
         "text_area_policy": { "type": "string", "enum": ["manual_only"] },
         "required_slot_without_asset_policy": { "type": "string", "enum": ["pause_for_human_review"] }
+      }
+    },
+    "handoff_context": {
+      "type": "object",
+      "description": "Surfaced to the human reviewer at handoff. Other keys (requires_human_submit, kind, review_items) are allowed; coherence_warnings mirrors any packet-level lane mismatch.",
+      "properties": {
+        "coherence_warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["code", "severity", "detail"],
+            "properties": {
+              "code": { "type": "string" },
+              "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+              "detail": {
+                "type": "string",
+                "description": "Non-private reason string (lane IDs / reasons only — never candidate content)."
+              }
+            }
+          }
+        }
+      }
+    },
+    "coherence_warnings": {
+      "type": "array",
+      "description": "Packet lane-coherence findings (e.g. cover_letter_lane_mismatch). Empty when the cover-letter lane matches the routed resume lane. Advisory: present for human review, never blocks the human-submit invariant.",
+      "items": {
+        "type": "object",
+        "required": ["code", "severity", "detail"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+          "detail": {
+            "type": "string",
+            "description": "Non-private reason string (lane IDs / reasons only — never candidate content)."
+          }
+        }
       }
     },
     "prepared_at": { "type": "string", "format": "date-time" }

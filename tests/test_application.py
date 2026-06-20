@@ -25,6 +25,7 @@ from job_hunt.application import (
     load_schema,
     run_preflight,
 )
+from job_hunt.schema_checks import ValidationError, validate
 from job_hunt.utils import StructuredError
 
 
@@ -138,6 +139,106 @@ class PreflightReportShapeTest(unittest.TestCase):
         report = run_preflight({"apply_policy": {"auto_submit_tiers": ["tier_1"]}})
         checks = {c["name"]: c for c in report["checks"]}
         self.assertFalse(checks["auto_submit_tiers_empty_invariant"]["ok"])
+
+
+def _minimal_plan(**overrides: object) -> dict:
+    """A sanitized plan satisfying application-plan required fields. No private
+    content — placeholder identity/company only."""
+    plan = {
+        "schema_version": 1,
+        "draft_id": "acme-backend-apply-0001",
+        "lead_id": "acme-backend-0001",
+        "surface": "ashby_redirect",
+        "playbook_path": "playbooks/application/ashby-redirect.md",
+        "correlation_keys": {
+            "posting_url": "https://jobs.ashbyhq.com/acme/0001",
+            "company": "Acme",
+            "title": "Backend Engineer",
+        },
+        "profile_snapshot": {"snapshot_version": 1, "snapshot_at": "2026-06-19T00:00:00+00:00"},
+        "untrusted_fetched_content": {"job_description": "Build backend systems.", "nonce": "0123456789abcdef"},
+        "fields": [],
+        "tier": "tier_1",
+        "prepared_at": "2026-06-19T00:00:00+00:00",
+    }
+    plan.update(overrides)
+    return plan
+
+
+class PacketCoherenceSchemaTest(unittest.TestCase):
+    """The application-plan schema must formally back the packet-coherence
+    metadata (coherence_warnings + cover-letter lane_id)."""
+
+    def setUp(self) -> None:
+        self.schema = load_schema("application-plan")
+
+    def _mismatch_warning(self) -> dict:
+        return {
+            "code": "cover_letter_lane_mismatch",
+            "severity": "warning",
+            "detail": "resume variant 'platform_backend' expects cover-letter lane "
+                      "'platform_internal_tools' but packet cover letter is 'product_minded_engineer'",
+        }
+
+    def test_empty_coherence_warnings_validates(self) -> None:
+        validate(_minimal_plan(coherence_warnings=[]), self.schema)
+
+    def test_mismatch_warning_validates(self) -> None:
+        validate(_minimal_plan(coherence_warnings=[self._mismatch_warning()]), self.schema)
+
+    def test_handoff_context_coherence_warnings_validates(self) -> None:
+        plan = _minimal_plan(
+            coherence_warnings=[self._mismatch_warning()],
+            handoff_context={
+                "requires_human_submit": True,
+                "kind": "automation_playbook",
+                "coherence_warnings": [self._mismatch_warning()],
+            },
+        )
+        validate(plan, self.schema)
+
+    def test_cover_letter_lane_id_validates(self) -> None:
+        plan = _minimal_plan(generated_asset_refs={
+            "resume": {"content_id": "r1", "available": True,
+                       "preferred_upload_kind": "pdf", "pdf_export_status": "ready"},
+            "cover_letter": {"content_id": "c1", "available": True,
+                             "generation_status": "generated",
+                             "lane_id": "platform_internal_tools",
+                             "preferred_upload_kind": "pdf", "pdf_export_status": "ready"},
+        })
+        validate(plan, self.schema)
+
+    def test_asset_refs_without_lane_id_still_validate(self) -> None:
+        # Backward compatibility: a pre-existing ref with no lane_id is fine.
+        plan = _minimal_plan(generated_asset_refs={
+            "resume": {"content_id": "r1", "available": True,
+                       "preferred_upload_kind": "pdf", "pdf_export_status": "ready"},
+            "cover_letter": {"content_id": "c1", "available": True,
+                             "generation_status": "generated",
+                             "preferred_upload_kind": "pdf", "pdf_export_status": "ready"},
+        })
+        validate(plan, self.schema)
+
+    def test_warning_missing_required_code_fails(self) -> None:
+        bad = {"severity": "warning", "detail": "lane mismatch"}
+        with self.assertRaises(ValidationError):
+            validate(_minimal_plan(coherence_warnings=[bad]), self.schema)
+
+    def test_warning_bad_severity_enum_fails(self) -> None:
+        bad = {"code": "cover_letter_lane_mismatch", "severity": "critical", "detail": "x"}
+        with self.assertRaises(ValidationError):
+            validate(_minimal_plan(coherence_warnings=[bad]), self.schema)
+
+    def test_warning_non_string_detail_fails(self) -> None:
+        bad = {"code": "cover_letter_lane_mismatch", "severity": "warning", "detail": {"a": 1}}
+        with self.assertRaises(ValidationError):
+            validate(_minimal_plan(coherence_warnings=[bad]), self.schema)
+
+    def test_warning_detail_carries_no_private_content(self) -> None:
+        # The contract is lane-IDs/reasons only; assert the sanitized detail has none.
+        detail = self._mismatch_warning()["detail"]
+        self.assertNotIn("Kashane", detail)
+        self.assertNotIn("@", detail)
 
 
 if __name__ == "__main__":
