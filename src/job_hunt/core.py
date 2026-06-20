@@ -285,6 +285,59 @@ def _humanize_override_from_args(args: argparse.Namespace) -> dict | None:
     return override
 
 
+def _print_packets_review(packets: list, summary: dict) -> None:
+    """Render the safe, prose-free packet review.
+
+    Prints only public posting metadata (company/title) plus statuses, counts,
+    and booleans. Never prints resume/cover-letter prose or claim text.
+    """
+    print("=== packets-review (read-only; no apply/submit) ===")
+    print(
+        f"total={summary['total']}  ready_for_review={summary['ready_for_review']}  "
+        f"needs_attention={summary['needs_attention']}  safety_errors={summary['safety_errors_all']}"
+    )
+    by_action = summary.get("by_action") or {}
+    if by_action:
+        print("  actions: " + ", ".join(f"{k}={v}" for k, v in sorted(by_action.items())))
+    if not packets:
+        print("\n(no packets match)")
+        return
+    for i, p in enumerate(packets, 1):
+        flag = "SAFETY!" if p["safety_error"] else ("ATTN" if p["needs_attention"] else "ok")
+        company = p.get("company") or "?"
+        title = (p.get("title") or "?")[:60]
+        print(f"\n{i}. [{flag}] {company} — {title}")
+        print(f"   draft: {p['draft_id']}")
+        lane = p.get("lane") or "?"
+        tier = p.get("tier") or "?"
+        score = p.get("score")
+        score_s = f"{score}" if score is not None else "?"
+        print(f"   lane={lane}  tier={tier}  score={score_s} ({p.get('score_label') or '?'})")
+        fr = p.get("freshness")
+        if fr:
+            print(f"   freshness: {fr['basis']} age={fr['age_hours']}h")
+        print(
+            f"   lifecycle={p['lifecycle_state']}/{p['current_stage']}  "
+            f"requires_human_submit={p['requires_human_submit']}  "
+            f"artifacts_present={p['artifacts_present']}"
+        )
+        cl = p["claims"]
+        print(
+            f"   ats: {p['ats']['errors']} err / {p['ats']['warnings']} warn  |  "
+            f"coherence: {p['coherence_warnings']}  |  "
+            f"claims: {cl['approved']}/{cl['total']} approved"
+            + ("" if cl["all_approved"] else " (NOT all approved)")
+        )
+        if p["claim_safety_warnings"]:
+            print(f"   claim-safety: {', '.join(p['claim_safety_warnings'])}")
+        if p["duplicate_of"]:
+            print(f"   duplicate_of: {len(p['duplicate_of'])} other packet(s) for same lead")
+        if p["attention_reasons"]:
+            print(f"   attention: {', '.join(p['attention_reasons'])}")
+        print(f"   -> recommended: {p['recommended_action'].upper()}")
+    print("\nNote: all packets are human-submit only; this tool never applies or submits.")
+
+
 def _print_watch_summary(queue: dict, *, verbose_rejects: bool = False) -> None:
     """Render the compact, non-private watch-new-jobs review summary.
 
@@ -2541,6 +2594,29 @@ def build_parser() -> argparse.ArgumentParser:
     dlist.add_argument("--status", default="")
     dlist.add_argument("--source", default="")
 
+    preview = subparsers.add_parser(
+        "packets-review",
+        help="Safe read-only review of generated packets (no apply/submit/browser); "
+             "summarizes metadata only, never private resume/cover-letter prose",
+    )
+    preview.add_argument("--data-root", default="data")
+    preview.add_argument(
+        "--claims", default="profile/claims/claims-bank.json",
+        help="Claims bank used to check approval status (counts/booleans only)",
+    )
+    preview.add_argument("--lane", default="", help="Filter by resume lane/variant")
+    preview.add_argument("--company", default="", help="Filter by company substring")
+    preview.add_argument("--limit", type=int, default=None, help="Max packets to show")
+    preview.add_argument(
+        "--ready-only", action="store_true",
+        help="Only packets clean and ready for human review",
+    )
+    preview.add_argument(
+        "--needs-attention", action="store_true",
+        help="Only packets with a problem to resolve (safety/ATS/claims/artifacts)",
+    )
+    preview.add_argument("--json", action="store_true", help="Emit JSON instead of text")
+
     refresh = subparsers.add_parser(
         "refresh-application",
         help="Re-snapshot the profile into plan.json without regenerating resume",
@@ -3893,6 +3969,36 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(json.dumps({"status": "ok", "count": len(drafts), "drafts": drafts}, indent=2))
         return 0
+
+    if args.command == "packets-review":
+        from . import packet_review as pr
+
+        claims_path = Path(args.claims) if args.claims else None
+        reviews = pr.review_packets(
+            data_root=Path(args.data_root),
+            claims_path=claims_path if (claims_path and claims_path.exists()) else None,
+        )
+        filtered = pr.apply_filters(
+            reviews,
+            lane=args.lane or None,
+            company=args.company or None,
+            ready_only=args.ready_only,
+            needs_attention=args.needs_attention,
+            limit=args.limit,
+        )
+        summary = pr.summarize(filtered)
+        # Safety surfacing: any missing human-submit flag is an error regardless of filters.
+        summary["safety_errors_all"] = pr.summarize(reviews)["safety_errors"]
+        if args.json:
+            print(json.dumps({
+                "status": "ok",
+                "summary": summary,
+                "packets": filtered,
+            }, indent=2))
+        else:
+            _print_packets_review(filtered, summary)
+        # Non-zero exit when a safety error exists anywhere, so scripts can gate on it.
+        return 3 if summary["safety_errors_all"] else 0
 
     if args.command == "refresh-application":
         from .application import PlanError, refresh_application

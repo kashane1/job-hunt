@@ -1,0 +1,381 @@
+"""packet_review: safe, read-only review of generated application packets.
+
+Reads ONLY JSON metadata from ``data/applications/<draft>/`` (plan.json,
+status.json) plus the linked ``data/generated/*`` content descriptors and the
+lead JSON. It NEVER opens the private resume / cover-letter markdown prose or the
+claims-bank prose — it derives claim counts and an approval boolean from
+claims-bank metadata only. The module performs no apply / submit / browser /
+form actions; it strictly reports so a human can decide what to inspect next.
+
+Safety invariant: a packet whose ``requires_human_submit`` is not exactly True is
+flagged as a hard ``safety_error`` (recommended action ``hold_safety``).
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable
+
+from .utils import repo_root
+
+# Lifecycle states that mean the packet is finished / out of the review queue.
+_TERMINAL_STATES = frozenset({
+    "submitted",
+    "applied",
+    "applied_externally",
+    "withdrawn",
+    "closed",
+    "rejected",
+})
+
+
+def _read_json_safe(path: Path) -> dict:
+    """Read a JSON object, returning {} on any error (best-effort, never raises)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _parse_dt(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def load_claims_index(claims_path: Path | None) -> dict[str, bool]:
+    """Map claim_id -> is_approved from the claims bank.
+
+    Only the approval boolean is retained — no claim text ever leaves this
+    function. Returns {} when the file is absent/unreadable (claims approval then
+    reports as unknown rather than failing the review).
+    """
+    if claims_path is None or not claims_path.exists():
+        return {}
+    data = _read_json_safe(claims_path)
+    claims = data.get("claims") if isinstance(data, dict) else None
+    out: dict[str, bool] = {}
+    if isinstance(claims, list):
+        for c in claims:
+            if isinstance(c, dict) and c.get("claim_id"):
+                out[str(c["claim_id"])] = c.get("review_status") == "approved"
+    return out
+
+
+def _freshness(lead: dict, now: datetime) -> dict | None:
+    """Best-effort posting freshness from the lead's discovery metadata.
+
+    Prefers the most recent ``listing_updated_at`` (the posting's own update
+    time); falls back to ``ingested_at``. Returns basis/timestamp/age_hours, or
+    None when no usable timestamp exists.
+    """
+    candidates: list[tuple[str, datetime]] = []
+    for src in lead.get("discovered_via") or []:
+        if isinstance(src, dict):
+            dt = _parse_dt(src.get("listing_updated_at"))
+            if dt:
+                candidates.append(("posted_at", dt))
+    if candidates:
+        basis, dt = max(candidates, key=lambda t: t[1])
+    else:
+        dt = _parse_dt(lead.get("ingested_at"))
+        if not dt:
+            return None
+        basis = "ingested_at"
+    age_hours = round((now - dt).total_seconds() / 3600.0, 1)
+    return {"basis": basis, "timestamp": dt.isoformat(), "age_hours": age_hours}
+
+
+def _claim_ids(*descriptors: dict) -> set[str]:
+    """Collect ``claim:`` source-document ids from generated content descriptors."""
+    ids: set[str] = set()
+    for d in descriptors:
+        for ref in d.get("source_document_ids") or []:
+            if isinstance(ref, str) and ref.startswith("claim:"):
+                ids.add(ref[len("claim:"):])
+    return ids
+
+
+def _warning_codes(descriptor: dict) -> list[str]:
+    out: list[str] = []
+    for w in descriptor.get("generation_warnings") or []:
+        if isinstance(w, dict) and w.get("code"):
+            out.append(str(w["code"]))
+        elif isinstance(w, str):
+            out.append(w)
+    return out
+
+
+def _find_generated(generated_dir: Path, content_id: str) -> dict:
+    """Locate a generated content descriptor JSON by content_id under any subdir."""
+    if not content_id:
+        return {}
+    for sub in ("cover-letters", "resumes", "ats-checks"):
+        p = generated_dir / sub / f"{content_id}.json"
+        if p.exists():
+            return _read_json_safe(p)
+    return {}
+
+
+def assess_packet(
+    draft_dir: Path,
+    *,
+    data_root: Path,
+    claims_index: dict[str, bool],
+    now: datetime,
+    dup_map: dict[str, list[str]],
+) -> dict | None:
+    """Assemble a safe, prose-free review record for a single packet directory."""
+    plan = _read_json_safe(draft_dir / "plan.json")
+    status = _read_json_safe(draft_dir / "status.json")
+    if not plan and not status:
+        return None
+
+    draft_id = plan.get("draft_id") or status.get("draft_id") or draft_dir.name
+    lead_id = plan.get("lead_id") or status.get("lead_id") or ""
+
+    lead = _read_json_safe(data_root / "leads" / f"{lead_id}.json") if lead_id else {}
+    fit = lead.get("fit_assessment") or {}
+
+    generated_dir = data_root / "generated"
+    content_ids = status.get("generated_content_ids") or []
+    cover = resume = {}
+    for cid in content_ids:
+        if "cover-letter" in str(cid):
+            cover = _find_generated(generated_dir, str(cid))
+        else:
+            resume = _find_generated(generated_dir, str(cid))
+
+    # Lane: prefer the resume variant style, then the cover-letter lane.
+    lane = (
+        resume.get("variant_style")
+        or cover.get("variant_style")
+        or cover.get("lane_id")
+        or None
+    )
+
+    # ATS counts from plan.json's embedded check (self-contained, already parsed).
+    ats = plan.get("ats_check") or {}
+    ats_errors = len(ats.get("errors") or [])
+    ats_warnings = len(ats.get("warnings") or [])
+
+    coherence = len(plan.get("coherence_warnings") or [])
+
+    # Artifact availability from plan's generated_asset_refs (no prose read).
+    refs = plan.get("generated_asset_refs") or {}
+    resume_ref = refs.get("resume") or {}
+    cover_ref = refs.get("cover_letter") or {}
+    artifacts = {
+        "plan": (draft_dir / "plan.json").exists(),
+        "status": (draft_dir / "status.json").exists(),
+        "resume": bool(resume_ref.get("available")) or bool(resume),
+        "cover_letter": bool(cover_ref.get("available")) or bool(cover),
+    }
+    artifacts_present = all(artifacts.values())
+
+    # Claims: count + approval, derived only from metadata booleans.
+    claim_ids = _claim_ids(resume, cover)
+    claims_total = len(claim_ids)
+    if claims_index:
+        approved = sum(1 for cid in claim_ids if claims_index.get(cid))
+        unknown = sum(1 for cid in claim_ids if cid not in claims_index)
+        all_approved = claims_total > 0 and approved == claims_total
+    else:
+        approved = 0
+        unknown = claims_total
+        all_approved = False
+    claims = {
+        "total": claims_total,
+        "approved": approved,
+        "unknown": unknown,
+        "all_approved": all_approved,
+    }
+
+    safety_warnings = sorted(set(_warning_codes(cover) + _warning_codes(resume)))
+
+    requires_human_submit = status.get("requires_human_submit")
+    safety_error = requires_human_submit is not True
+
+    lifecycle_state = status.get("lifecycle_state") or "unknown"
+    current_stage = status.get("current_stage") or "unknown"
+
+    duplicate_of = [d for d in dup_map.get(lead_id, []) if d != draft_id]
+
+    # Attention reasons = genuine problems a human must resolve.
+    attention: list[str] = []
+    if safety_error:
+        attention.append("missing_human_submit_flag")
+    if ats_errors:
+        attention.append("ats_errors")
+    if coherence:
+        attention.append("coherence_warnings")
+    if claims_total == 0:
+        attention.append("no_claim_sources")
+    elif not all_approved:
+        attention.append("claims_not_all_approved")
+    if not artifacts_present:
+        attention.append("missing_artifacts")
+    needs_attention = bool(attention)
+
+    # Soft notes worth a glance but not blockers.
+    notes: list[str] = []
+    if safety_warnings:
+        notes.append("claim_safety_filtered")
+    if ats_warnings:
+        notes.append("ats_warnings")
+    if duplicate_of:
+        notes.append("duplicate_existing_packet")
+
+    ready_for_review = (
+        not safety_error
+        and lifecycle_state not in _TERMINAL_STATES
+        and not needs_attention
+        and not duplicate_of
+    )
+
+    record = {
+        "draft_id": draft_id,
+        "lead_id": lead_id,
+        "company": lead.get("company") or "",
+        "title": lead.get("title") or "",
+        "lane": lane,
+        "tier": plan.get("tier") or status.get("tier") or None,
+        "score": fit.get("fit_score"),
+        "score_label": fit.get("fit_recommendation"),
+        "freshness": _freshness(lead, now),
+        "lifecycle_state": lifecycle_state,
+        "current_stage": current_stage,
+        "requires_human_submit": requires_human_submit is True,
+        "artifacts": artifacts,
+        "artifacts_present": artifacts_present,
+        "ats": {"errors": ats_errors, "warnings": ats_warnings, "status": ats.get("status")},
+        "coherence_warnings": coherence,
+        "claims": claims,
+        "claim_safety_warnings": safety_warnings,
+        "duplicate_of": duplicate_of,
+        "safety_error": safety_error,
+        "needs_attention": needs_attention,
+        "attention_reasons": attention,
+        "notes": notes,
+        "ready_for_review": ready_for_review,
+    }
+    record["recommended_action"] = recommend_action(record)
+    return record
+
+
+def recommend_action(packet: dict) -> str:
+    """Map a packet record to a single safe human action.
+
+    Never returns an auto-submit action — 'manual_submit' means the human's next
+    concrete step is to review and submit by hand. The tool submits nothing.
+    """
+    if packet["safety_error"]:
+        return "hold_safety"
+    if packet["lifecycle_state"] in _TERMINAL_STATES:
+        return "skip"
+    if packet["duplicate_of"]:
+        return "skip"
+    if packet["needs_attention"]:
+        return "revise"
+    if packet["notes"]:
+        # Clean enough to submit, but has soft notes worth a human glance first.
+        return "review"
+    return "manual_submit"
+
+
+def _build_dup_map(draft_dirs: Iterable[Path]) -> dict[str, list[str]]:
+    dup: dict[str, list[str]] = {}
+    for d in draft_dirs:
+        status = _read_json_safe(d / "status.json")
+        plan = _read_json_safe(d / "plan.json")
+        lead_id = plan.get("lead_id") or status.get("lead_id")
+        draft_id = plan.get("draft_id") or status.get("draft_id") or d.name
+        if lead_id:
+            dup.setdefault(str(lead_id), []).append(str(draft_id))
+    return dup
+
+
+def review_packets(
+    *,
+    data_root: Path | None = None,
+    claims_path: Path | None = None,
+    now: datetime | None = None,
+) -> list[dict]:
+    """Review every packet under ``data_root/applications`` (read-only)."""
+    data_root = data_root or (repo_root() / "data")
+    now = now or datetime.now(timezone.utc)
+    apps_root = data_root / "applications"
+    if not apps_root.is_dir():
+        return []
+    draft_dirs = [
+        d for d in sorted(apps_root.iterdir())
+        if d.is_dir() and d.name not in ("batches", "_suspicious", "manual-drafts")
+        and (d / "status.json").exists()
+    ]
+    claims_index = load_claims_index(claims_path)
+    dup_map = _build_dup_map(draft_dirs)
+    out: list[dict] = []
+    for d in draft_dirs:
+        rec = assess_packet(
+            d, data_root=data_root, claims_index=claims_index, now=now, dup_map=dup_map,
+        )
+        if rec is not None:
+            out.append(rec)
+    # Stable, useful order: needs-attention first, then by score desc, then fresh.
+    def _sort_key(r: dict):
+        score = r.get("score")
+        score = score if isinstance(score, (int, float)) else -1
+        age = (r.get("freshness") or {}).get("age_hours")
+        age = age if isinstance(age, (int, float)) else 1e9
+        return (0 if r["needs_attention"] else 1, -score, age)
+    out.sort(key=_sort_key)
+    return out
+
+
+def apply_filters(
+    reviews: list[dict],
+    *,
+    lane: str | None = None,
+    company: str | None = None,
+    ready_only: bool = False,
+    needs_attention: bool = False,
+    limit: int | None = None,
+) -> list[dict]:
+    rows = reviews
+    if lane:
+        rows = [r for r in rows if (r.get("lane") or "").casefold() == lane.casefold()]
+    if company:
+        rows = [r for r in rows if company.casefold() in (r.get("company") or "").casefold()]
+    if ready_only:
+        rows = [r for r in rows if r["ready_for_review"]]
+    if needs_attention:
+        rows = [r for r in rows if r["needs_attention"]]
+    if limit is not None and limit >= 0:
+        rows = rows[:limit]
+    return rows
+
+
+def summarize(reviews: list[dict]) -> dict:
+    """Aggregate counts over a (possibly filtered) review list."""
+    actions: dict[str, int] = {}
+    for r in reviews:
+        actions[r["recommended_action"]] = actions.get(r["recommended_action"], 0) + 1
+    return {
+        "total": len(reviews),
+        "ready_for_review": sum(1 for r in reviews if r["ready_for_review"]),
+        "needs_attention": sum(1 for r in reviews if r["needs_attention"]),
+        "safety_errors": sum(1 for r in reviews if r["safety_error"]),
+        "by_action": actions,
+    }
