@@ -437,9 +437,15 @@ def _print_review_report(r: dict) -> None:
     print(f"state: {h.get('state_path')}  (updated this run: {h.get('state_written')})")
 
     print("\nwhat changed:")
-    nl = d.get("new_leads")
+    rdl = r.get("run_delta", {})
+    if rdl.get("has_prior_state"):
+        print(f"  since last {h.get('profile')} run at {rdl.get('prior_last_run_at')}: "
+              f"{rdl.get('new_since_last_run')} new, "
+              f"{rdl.get('seen_again_since_last_run')} seen again, "
+              f"{rdl.get('resolved_since_last_run')} cleared")
+    else:
+        print(f"  no prior {h.get('profile')} state found")
     print(f"  leads considered={d.get('leads_considered', 0)}"
-          + (f"  new={nl}" if nl is not None else "")
           + f"  already_packeted={d.get('already_packeted', 0)}"
           + f"  dropped_stale={d.get('dropped_stale', 0)}")
     if d.get("suppress_seen_active"):
@@ -3199,6 +3205,9 @@ def main(argv: list[str] | None = None) -> int:
                 "state": watcher.state_summary(state),
                 "next_command": watcher.state_next_command(
                     state, profile_name, prefs_md=(prefs_md_for_cmd or None)),
+                "delta_command": watcher.profile_command(
+                    profile_name if args.profile else None,
+                    prefs_md=(prefs_md_for_cmd or None), extra=("--review-report",)),
             }, indent=2))
             return 0
         if args.reset_state:
@@ -3231,6 +3240,10 @@ def main(argv: list[str] | None = None) -> int:
         scoring_config = load_yaml_file(Path(args.scoring_config), {})
         data_root = Path(args.data_root)
         leads_dir = Path(args.leads_dir)
+
+        # Capture the profile's prior state BEFORE this run (delta + suppress-seen
+        # both read it; --update-state overwrites it only after the run).
+        prior_state = read_json(state_path) if state_path.exists() else None
 
         discovery_summary: dict | None = None
         if args.discover:
@@ -3366,8 +3379,7 @@ def main(argv: list[str] | None = None) -> int:
         # Advisory only — never changes a lead's status; --hide-seen withholds
         # them from display while keeping counts.
         if args.suppress_seen:
-            prior = read_json(state_path) if state_path.exists() else None
-            seen_ids = set((prior or {}).get("seen_lead_ids") or [])
+            seen_ids = set((prior_state or {}).get("seen_lead_ids") or [])
             marked = watcher.apply_seen_suppression(queue, seen_ids, hide=args.hide_seen)
             queue["seen_suppressed"] = marked
 
@@ -3446,8 +3458,10 @@ def main(argv: list[str] | None = None) -> int:
             state_written=state_written,
             suppress_seen=args.suppress_seen,
             source_mode="discovery" if args.discover else "offline",
+            prior_state=prior_state,
         )
         queue["review_report"] = report
+        queue["run_delta"] = report["run_delta"]
 
         if queue_path is not None:
             write_json(queue_path, queue)

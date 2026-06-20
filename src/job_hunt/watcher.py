@@ -1143,6 +1143,44 @@ def explain_command(
     )
 
 
+_DELTA_ID_CAP = 20
+
+
+def compute_run_delta(prior_state: dict | None, queue: dict) -> dict:
+    """Run-over-run delta between a profile's prior state and the current queue.
+
+    Compares lead IDs only (non-private). ``new`` = surfaced now but not in the
+    prior run; ``seen_again`` = in both; ``resolved`` = in the prior run but not
+    surfaced now (e.g. went stale or dropped off). With no prior state, counts
+    are null and ``has_prior_state`` is False.
+    """
+    current_ids = [it.get("lead_id", "") for it in queue.get("items", []) if it.get("lead_id")]
+    current_set = set(current_ids)
+    if not prior_state:
+        return {
+            "has_prior_state": False,
+            "prior_last_run_at": None,
+            "new_since_last_run": None,
+            "seen_again_since_last_run": None,
+            "resolved_since_last_run": None,
+            "new_lead_ids": [],
+            "resolved_lead_ids": [],
+        }
+    prior_ids = set(prior_state.get("seen_lead_ids") or [])
+    new_ids = [i for i in current_ids if i not in prior_ids]
+    seen_again = [i for i in current_ids if i in prior_ids]
+    resolved = sorted(i for i in prior_ids if i not in current_set)
+    return {
+        "has_prior_state": True,
+        "prior_last_run_at": prior_state.get("last_run_at"),
+        "new_since_last_run": len(new_ids),
+        "seen_again_since_last_run": len(seen_again),
+        "resolved_since_last_run": len(resolved),
+        "new_lead_ids": new_ids[:_DELTA_ID_CAP],
+        "resolved_lead_ids": resolved[:_DELTA_ID_CAP],
+    }
+
+
 def build_review_report(
     queue: dict,
     *,
@@ -1153,6 +1191,7 @@ def build_review_report(
     state_written: str | None = None,
     suppress_seen: bool = False,
     source_mode: str = "offline",
+    prior_state: dict | None = None,
 ) -> dict:
     """Assemble a concise, non-private daily-review brief from a finalized queue.
 
@@ -1169,6 +1208,8 @@ def build_review_report(
     new_leads = None
     if suppress_seen:
         new_leads = sum(1 for it in items if not it.get("seen_before"))
+
+    run_delta = compute_run_delta(prior_state, queue)
 
     pr_rows = rs.get("packet_ready", [])
     nr_rows = rs.get("needs_review", [])
@@ -1248,6 +1289,7 @@ def build_review_report(
             "dropped_stale": rs.get("dropped_stale", 0),
             "dropped_for_cap": rs.get("dropped_for_cap", 0),
         },
+        "run_delta": run_delta,
         "decision": {
             "packet_ready": counts.get("packet_ready", 0),
             "needs_review": counts.get("needs_review", 0),

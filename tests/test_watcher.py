@@ -1309,5 +1309,140 @@ class ReviewReportCliTest(unittest.TestCase):
             self.assertIn("--profile daily", d["next_command"])
 
 
+class RunDeltaTest(unittest.TestCase):
+    def _queue(self, lead_ids):
+        return {"items": [{"lead_id": i, "status": "reject"} for i in lead_ids]}
+
+    def _prior(self, lead_ids, last_run_at="2026-06-18T00:00:00+00:00"):
+        return {"seen_lead_ids": list(lead_ids), "last_run_at": last_run_at}
+
+    def test_first_run_no_prior_state(self) -> None:
+        d = watcher.compute_run_delta(None, self._queue(["a", "b"]))
+        self.assertFalse(d["has_prior_state"])
+        self.assertIsNone(d["new_since_last_run"])
+        self.assertIsNone(d["resolved_since_last_run"])
+        self.assertEqual(d["new_lead_ids"], [])
+
+    def test_all_new(self) -> None:
+        d = watcher.compute_run_delta(self._prior([]), self._queue(["a", "b"]))
+        self.assertTrue(d["has_prior_state"])
+        self.assertEqual(d["new_since_last_run"], 2)
+        self.assertEqual(d["seen_again_since_last_run"], 0)
+        self.assertEqual(d["resolved_since_last_run"], 0)
+        self.assertEqual(set(d["new_lead_ids"]), {"a", "b"})
+
+    def test_partial_overlap(self) -> None:
+        # prior: a,b,c ; now: b,c,d -> new=d, seen_again=b,c, resolved=a
+        d = watcher.compute_run_delta(self._prior(["a", "b", "c"]), self._queue(["b", "c", "d"]))
+        self.assertEqual(d["new_since_last_run"], 1)
+        self.assertEqual(d["seen_again_since_last_run"], 2)
+        self.assertEqual(d["resolved_since_last_run"], 1)
+        self.assertEqual(d["new_lead_ids"], ["d"])
+        self.assertEqual(d["resolved_lead_ids"], ["a"])
+
+    def test_all_seen_again(self) -> None:
+        d = watcher.compute_run_delta(self._prior(["a", "b"]), self._queue(["a", "b"]))
+        self.assertEqual(d["new_since_last_run"], 0)
+        self.assertEqual(d["seen_again_since_last_run"], 2)
+        self.assertEqual(d["resolved_since_last_run"], 0)
+
+    def test_resolved_when_prior_absent_now(self) -> None:
+        d = watcher.compute_run_delta(self._prior(["a", "b", "c"]), self._queue(["a"]))
+        self.assertEqual(d["resolved_since_last_run"], 2)
+        self.assertEqual(d["resolved_lead_ids"], ["b", "c"])
+
+    def test_prior_last_run_at_surfaced(self) -> None:
+        d = watcher.compute_run_delta(self._prior(["a"], last_run_at="2026-06-19T09:00:00+00:00"),
+                                      self._queue(["a"]))
+        self.assertEqual(d["prior_last_run_at"], "2026-06-19T09:00:00+00:00")
+
+    def test_id_lists_capped(self) -> None:
+        many = [f"lead-{i}" for i in range(50)]
+        d = watcher.compute_run_delta(self._prior([]), self._queue(many))
+        self.assertEqual(d["new_since_last_run"], 50)        # count is full
+        self.assertEqual(len(d["new_lead_ids"]), 20)         # id list is capped
+
+    def test_report_includes_run_delta(self) -> None:
+        q = {"items": [{"lead_id": "a", "status": "reject", "reasons": ["no_ready_lane:x"]}],
+             "review_summary": {"counts": {"packet_ready": 0, "needs_review": 0, "reject": 1},
+                                "reject": {"reason_counts": {"no_ready_lane:x": 1}},
+                                "packet_ready": [], "needs_review": []}}
+        r = watcher.build_review_report(q, profile="daily", prior_state=self._prior(["z"]))
+        self.assertTrue(r["run_delta"]["has_prior_state"])
+        self.assertEqual(r["run_delta"]["new_since_last_run"], 1)   # 'a' is new vs prior {'z'}
+        self.assertEqual(r["run_delta"]["resolved_since_last_run"], 1)  # 'z' cleared
+
+    def test_no_private_content_in_delta(self) -> None:
+        prior = self._prior(["acme-backend-1"])
+        prior["candidate_name"] = "Kashane"  # should never be read
+        q = {"items": [{"lead_id": "beta-platform-2", "status": "reject"}]}
+        d = watcher.compute_run_delta(prior, q)
+        self.assertNotIn("Kashane", json.dumps(d))
+
+
+class RunDeltaCliTest(unittest.TestCase):
+    def _run(self, leads_dir, data_root, extra):
+        import contextlib
+        import io
+
+        from job_hunt import core
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = core.main(_watch_argv(leads_dir, data_root, extra))
+        return rc, buf.getvalue()
+
+    def test_first_run_reports_no_prior_state(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--review-report"])
+            self.assertIn("no prior daily state found", out)
+
+    def test_second_run_shows_delta_without_suppress_seen(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            # Second run: no --suppress-seen, but delta still computed.
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--review-report", "--json"])
+            q = json.loads(out)
+            rd = q["run_delta"]
+            self.assertTrue(rd["has_prior_state"])
+            self.assertEqual(rd["seen_again_since_last_run"], 1)
+            self.assertEqual(rd["new_since_last_run"], 0)
+
+    def test_delta_computed_before_state_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            # Add a new lead, then rerun WITH --update-state: delta must reflect
+            # the prior (single-lead) state, not the about-to-be-written one.
+            _seed(ld, [_recent_lead(lead_id="a"), _recent_lead(lead_id="b", company="Beta")])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--update-state", "--json"])
+            rd = json.loads(out)["run_delta"]
+            self.assertEqual(rd["new_since_last_run"], 1)   # 'b' is new
+            self.assertEqual(rd["seen_again_since_last_run"], 1)  # 'a' seen again
+
+    def test_delta_works_with_suppress_seen(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--since-hours", "240",
+                                         "--suppress-seen", "--json"])
+            q = json.loads(out)
+            self.assertTrue(q["run_delta"]["has_prior_state"])
+            self.assertEqual(q["run_delta"]["seen_again_since_last_run"], 1)
+
+    def test_show_state_has_delta_command(self) -> None:
+        with tempfile.TemporaryDirectory() as ld, tempfile.TemporaryDirectory() as dr:
+            _seed(ld, [_recent_lead(lead_id="a")])
+            self._run(ld, dr, ["--profile", "daily", "--since-hours", "240", "--update-state"])
+            rc, out = self._run(ld, dr, ["--profile", "daily", "--show-state"])
+            d = json.loads(out)
+            self.assertIn("delta_command", d)
+            self.assertIn("--review-report", d["delta_command"])
+
+
 if __name__ == "__main__":
     unittest.main()
