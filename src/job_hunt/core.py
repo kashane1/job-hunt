@@ -362,6 +362,63 @@ def _print_watch_summary(queue: dict, *, verbose_rejects: bool = False) -> None:
                  if packet.get("status") == "prepared" else ""))
 
 
+def _print_explanation(e: dict) -> None:
+    """Render the read-only single-lead classification trace (non-private)."""
+    fr = e.get("freshness", {})
+    rt = e.get("routing", {})
+    rd = e.get("readiness", {})
+    ps = e.get("prefs_applied", {})
+    na = e.get("next_action", {})
+    hrs = fr.get("lookback_hours")
+    if isinstance(hrs, (int, float)) and float(hrs).is_integer():
+        hrs = int(hrs)
+
+    print(f"explain — lead {e.get('lead_id')}")
+    print(f"  identity: {e.get('company')} — {e.get('title')}  [{e.get('source')}]")
+    if e.get("url"):
+        print(f"            {e['url']}")
+
+    print("  freshness:")
+    print(f"    lookback={hrs}h  basis={fr.get('freshness_basis')}  "
+          f"confidence={fr.get('timestamp_confidence')}  within_window={fr.get('within_window')}")
+    age = fr.get("age_hours")
+    print(f"    posted_at={fr.get('posted_at')}  discovered_at={fr.get('discovered_at')}"
+          + (f"  age={round(age, 1)}h" if isinstance(age, (int, float)) else ""))
+
+    print("  routing:")
+    print(f"    selected_lane={rt.get('selected_lane')}  score={rt.get('route_score')}  "
+          f"confidence={rt.get('route_confidence')}  lane_ready={rt.get('lane_ready')}  "
+          f"needs_review={rt.get('needs_human_review')}")
+    for rr in rt.get("review_reasons", []):
+        print(f"      route flag: {rr}")
+    for alt in rt.get("alternatives", []):
+        print(f"      alt: {alt.get('lane_id')} (score={alt.get('score')}, "
+              f"resume_exists={alt.get('resume_exists')})")
+
+    print("  readiness:")
+    print(f"    status={rd.get('status')}  primary_reason={rd.get('primary_reason')}  "
+          f"already_packeted={rd.get('already_packeted')}")
+    for r in rd.get("reasons", []):
+        print(f"    - {r.get('code')}: {r.get('gloss')}")
+
+    print(f"  prefs applied: remote_only={ps.get('remote_only')} "
+          f"remote_preferred={ps.get('remote_preferred')} "
+          f"preferred_locations={ps.get('preferred_locations_count')} "
+          f"blocked_locations={ps.get('blocked_locations_count')} "
+          f"comp_floor_set={ps.get('compensation_floor_set')} "
+          f"requires_sponsorship={ps.get('requires_sponsorship')}")
+    for w in e.get("prefs_warnings", []):
+        print(f"    warning: {w}")
+
+    print("  next action:")
+    print(f"    requires_human_review={na.get('requires_human_review')}")
+    if na.get("packet_command"):
+        print("    -> generate packet (human-submit only):")
+        print(f"       {na['packet_command']}")
+    elif na.get("no_command_reason"):
+        print(f"    -> {na['no_command_reason']}")
+
+
 def _deep_merge_humanize_override(
     apply_policy: dict, humanize_override: dict
 ) -> dict:
@@ -2155,6 +2212,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Focus on a single lead by lead_id (used by the printed packet command)",
     )
     watch_parser.add_argument(
+        "--explain", default="",
+        help="Print a full read-only classification trace for one lead_id (no packet generated)",
+    )
+    watch_parser.add_argument(
         "--top", type=int, default=3,
         help="How many packet_ready / needs_review rows to show in the summary (default 3)",
     )
@@ -3106,6 +3167,33 @@ def main(argv: list[str] | None = None) -> int:
         }
 
         now = datetime.now(timezone.utc)
+
+        # Explain mode: read-only single-lead trace. Generates nothing (ignores
+        # --emit-packet by design) and writes no artifact.
+        if args.explain:
+            target = next((l for l in leads if l.get("lead_id") == args.explain), None)
+            if target is None:
+                print(json.dumps({"status": "error", "error_code": "lead_not_found",
+                                  "message": f"no lead with lead_id {args.explain!r} in {leads_dir}"},
+                                 indent=2))
+                return 2
+            explanation = watcher.build_explanation(
+                target,
+                registry=registry,
+                now=now,
+                since_hours=since_hours,
+                packeted_lead_ids=packeted_lead_ids,
+                prefs=prefs,
+                prefs_md=(args.prefs_md or None),
+            )
+            if prefs_warnings:
+                explanation["prefs_warnings"] = prefs_warnings
+            if args.json:
+                print(json.dumps(explanation, indent=2))
+            else:
+                _print_explanation(explanation)
+            return 0
+
         queue = watcher.build_queue(
             leads,
             registry=registry,

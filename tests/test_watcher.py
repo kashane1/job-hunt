@@ -744,5 +744,161 @@ class ReviewSummaryTest(unittest.TestCase):
         self.assertNotIn("fit_rationale", blob)
 
 
+class ReasonGlossTest(unittest.TestCase):
+    def test_exact_code(self) -> None:
+        self.assertIn("local packet already exists",
+                      watcher.reason_gloss("duplicate_existing_packet"))
+
+    def test_suffixed_codes_strip_to_base(self) -> None:
+        self.assertEqual(watcher.reason_gloss("no_ready_lane:generalist_swe"),
+                         watcher.REASON_GLOSSARY["no_ready_lane"])
+        self.assertEqual(watcher.reason_gloss("outside_lookback_window:posted_at"),
+                         watcher.REASON_GLOSSARY["outside_lookback_window"])
+
+    def test_route_confidence_variants(self) -> None:
+        self.assertEqual(watcher.reason_gloss("route_confidence_medium"),
+                         watcher.REASON_GLOSSARY["route_confidence"])
+
+    def test_unknown_code_falls_back(self) -> None:
+        self.assertIn("no description", watcher.reason_gloss("totally_made_up_code"))
+
+    def test_every_emitted_base_has_a_gloss(self) -> None:
+        # Guard against drift: each glossary entry resolves to a real string.
+        for code in watcher.REASON_GLOSSARY:
+            self.assertTrue(watcher.reason_gloss(code))
+
+
+class ExplainTest(unittest.TestCase):
+    def _explain(self, lead, route=None, **kw):
+        rf = (lambda l, r: route) if route is not None else _route_fn_default
+        return watcher.build_explanation(
+            lead, registry=REGISTRY, now=NOW, since_hours=24,
+            prefs_md="profile/raw/preferences.md", route_fn=rf, **kw,
+        )
+
+    def test_packet_ready_includes_packet_command(self) -> None:
+        e = self._explain(_lead(lead_id="pr1"))
+        self.assertEqual(e["readiness"]["status"], "packet_ready")
+        cmd = e["next_action"]["packet_command"]
+        self.assertIsNotNone(cmd)
+        self.assertIn("--lead-id pr1", cmd)
+        self.assertIn("--emit-packet", cmd)
+        self.assertIsNone(e["next_action"]["no_command_reason"])
+
+    def test_needs_review_has_glosses_and_no_command(self) -> None:
+        lead = _lead(lead_id="nr1",
+                     fit_assessment={"fit_score": 60, "fit_recommendation": "maybe", "missing_skills": []})
+        e = self._explain(lead)
+        self.assertEqual(e["readiness"]["status"], "needs_review")
+        self.assertIsNone(e["next_action"]["packet_command"])
+        self.assertIsNotNone(e["next_action"]["no_command_reason"])
+        codes = [r["code"] for r in e["readiness"]["reasons"]]
+        self.assertIn("fit_recommendation_maybe", codes)
+        for r in e["readiness"]["reasons"]:
+            self.assertTrue(r["gloss"])
+
+    def test_reject_includes_primary_reason_and_glosses(self) -> None:
+        e = self._explain(_lead(lead_id="rj1"), route=_route(selected_variant_id="generalist_swe"))
+        self.assertEqual(e["readiness"]["status"], "reject")
+        self.assertEqual(e["readiness"]["primary_reason"], "no_ready_lane:generalist_swe")
+        self.assertEqual(e["readiness"]["reasons"][0]["gloss"],
+                         watcher.REASON_GLOSSARY["no_ready_lane"])
+
+    def test_includes_freshness_details(self) -> None:
+        e = self._explain(_lead())
+        fr = e["freshness"]
+        self.assertEqual(fr["freshness_basis"], "posted_at")
+        self.assertEqual(fr["timestamp_confidence"], "high")
+        self.assertTrue(fr["within_window"])
+        self.assertIsNotNone(fr["age_hours"])
+
+    def test_includes_routing_details_with_alternatives(self) -> None:
+        route = _route(score=72.5, confidence="high")
+        route["alternatives"] = [
+            {"variant_id": "ai_engineer", "score": 10.0, "resume_exists": False},
+            {"variant_id": "generalist_swe", "score": 10.0, "resume_exists": True},
+        ]
+        e = self._explain(_lead(), route=route)
+        rt = e["routing"]
+        self.assertEqual(rt["selected_lane"], "platform_backend")
+        self.assertEqual(rt["route_score"], 72.5)
+        self.assertEqual(len(rt["alternatives"]), 2)
+        self.assertEqual(rt["alternatives"][0]["lane_id"], "ai_engineer")
+
+    def test_prefs_applied_has_no_raw_values(self) -> None:
+        prefs = watcher.normalize_preferences({
+            "remote_preference": "remote", "preferred_locations": ["Springfield", "Remote"],
+            "minimum_compensation": "$150,000", "current_location": "Springfield",
+            "work_authorization": "citizen",
+        })
+        e = self._explain(_lead(), prefs=prefs)
+        blob = json.dumps(e["prefs_applied"])
+        self.assertNotIn("Springfield", blob)
+        self.assertNotIn("150", blob)
+        self.assertNotIn("citizen", blob)
+        self.assertEqual(e["prefs_applied"]["preferred_locations_count"], 2)
+
+    def test_no_private_content_anywhere(self) -> None:
+        lead = _lead(fit_assessment={
+            "fit_score": 90, "fit_recommendation": "strong_yes", "missing_skills": [],
+            "fit_rationale": "candidate Kashane private@example.com",
+        })
+        e = self._explain(lead)
+        blob = json.dumps(e)
+        self.assertNotIn("Kashane", blob)
+        self.assertNotIn("@example.com", blob)
+        self.assertNotIn("fit_rationale", blob)
+
+
+class ExplainCliTest(unittest.TestCase):
+    def test_lead_not_found_returns_error(self) -> None:
+        import contextlib
+        import io
+
+        from job_hunt import core
+
+        with tempfile.TemporaryDirectory() as leads_dir, \
+                tempfile.TemporaryDirectory() as data_root:
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = core.main([
+                    "watch-new-jobs", "--explain", "no-such-lead",
+                    "--leads-dir", leads_dir, "--data-root", data_root,
+                    "--queue-dir", data_root,
+                    "--registry", str(ROOT / "config" / "resume-variants.json"),
+                ])
+            out = buf.getvalue()
+        self.assertEqual(rc, 2)
+        self.assertIn("lead_not_found", out)
+
+    def test_explain_does_not_generate_packet(self) -> None:
+        # An empty data root means no packet dirs before OR after an explain run.
+        import contextlib
+        import io
+
+        from job_hunt import core
+
+        with tempfile.TemporaryDirectory() as leads_dir, \
+                tempfile.TemporaryDirectory() as data_root:
+            # Seed one sanitized lead file.
+            (Path(leads_dir) / "acme.json").write_text(json.dumps(_lead(lead_id="acme1")))
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = core.main([
+                    "watch-new-jobs", "--explain", "acme1",
+                    "--leads-dir", leads_dir, "--data-root", data_root,
+                    "--queue-dir", data_root,
+                    "--registry", str(ROOT / "config" / "resume-variants.json"),
+                ])
+            self.assertEqual(rc, 0)
+            apps = Path(data_root) / "applications"
+            self.assertFalse(apps.exists() and any(apps.iterdir()))
+
+
+# Default route_fn for ExplainTest: a high-confidence platform_backend route.
+def _route_fn_default(lead, registry):
+    return _route()
+
+
 if __name__ == "__main__":
     unittest.main()
