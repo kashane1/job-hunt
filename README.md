@@ -208,6 +208,16 @@ brew install pango cairo gdk-pixbuf libffi
 apt install libpango-1.0-0 libpangoft2-1.0-0
 ```
 
+On macOS (esp. Apple Silicon with the python.org framework Python), WeasyPrint
+imports but cannot find the Homebrew native libraries at runtime unless the
+loader path is exported — symptom: "WeasyPrint could not import some external
+libraries". Prefix `export-pdf` with the Homebrew lib path:
+
+```bash
+DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib \
+  python3 scripts/job_hunt.py export-pdf --content-id <content-id>
+```
+
 ```bash
 # Primary: path-based (matches batch 1 convention)
 python3 scripts/job_hunt.py export-pdf \

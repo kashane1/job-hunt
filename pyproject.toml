@@ -17,6 +17,9 @@ dependencies = [
 # Requires native Cairo/Pango libraries:
 #   macOS:  brew install pango cairo gdk-pixbuf libffi
 #   Linux:  apt install libpango-1.0-0 libpangoft2-1.0-0
+# macOS runtime note: with the python.org framework Python (esp. Apple Silicon),
+# WeasyPrint imports but fails to load the Homebrew dylibs unless the loader path
+# is set. Prefix commands with `DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`.
 # The core pipeline works without this — only `export-pdf` needs it.
 pdf = ["weasyprint>=66"]
 
