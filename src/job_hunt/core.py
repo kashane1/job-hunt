@@ -2041,8 +2041,13 @@ def build_parser() -> argparse.ArgumentParser:
     watch_parser.add_argument("--queue-dir", default="data/watch")
     watch_parser.add_argument("--data-root", default="data")
     watch_parser.add_argument(
+        "--prefs-md", default="",
+        help="Optional private markdown preferences file (e.g. profile/raw/preferences.md). "
+             "Parsed for location/work-mode/compensation gating; values never printed/committed.",
+    )
+    watch_parser.add_argument(
         "--prefs-json", default="",
-        help="Optional JSON file with {remote_only, blocked_locations} for location gating",
+        help="Optional JSON prefs {remote_only, blocked_locations, ...}; overrides --prefs-md keys",
     )
     watch_parser.add_argument(
         "--max-candidates", type=int, default=25,
@@ -2975,11 +2980,26 @@ def main(argv: list[str] | None = None) -> int:
 
         registry = load_registry(Path(args.registry))
 
-        prefs = None
+        # Preferences: load private markdown first, then let explicit JSON
+        # override individual keys. Raw values are never printed or persisted —
+        # only a non-sensitive booleans/counts summary is surfaced.
+        prefs: dict = {}
+        prefs_warnings: list[str] = []
+        if args.prefs_md:
+            try:
+                prefs.update(watcher.load_preferences_md(Path(args.prefs_md)))
+            except watcher.WatcherError as exc:
+                # Do not echo the path's contents; report only the code + path.
+                prefs_warnings.append(f"prefs_md_unavailable: {exc}")
         if args.prefs_json:
-            prefs_path = Path(args.prefs_json)
-            if prefs_path.exists():
-                prefs = read_json(prefs_path)
+            prefs_json_path = Path(args.prefs_json)
+            if prefs_json_path.exists():
+                raw_json = read_json(prefs_json_path)
+                if isinstance(raw_json, dict):
+                    prefs.update(watcher.normalize_preferences(raw_json))
+            else:
+                prefs_warnings.append("prefs_json_unavailable: file not found")
+        prefs = prefs or None
 
         packeted_lead_ids = {
             lead["lead_id"]
@@ -3002,6 +3022,10 @@ def main(argv: list[str] | None = None) -> int:
         queue["generated_at"] = now.isoformat()
         queue["leads_considered"] = len(leads)
         queue["already_packeted"] = len(packeted_lead_ids)
+        # Only a non-sensitive booleans/counts summary — never raw pref values.
+        queue["prefs_applied"] = watcher.preferences_summary(prefs)
+        if prefs_warnings:
+            queue["prefs_warnings"] = prefs_warnings
         if discovery_summary is not None:
             queue["discovery"] = discovery_summary
 
@@ -3052,6 +3076,14 @@ def main(argv: list[str] | None = None) -> int:
                   f"(already packeted: {queue['already_packeted']}, "
                   f"dropped stale: {queue['dropped_stale']}, dropped for cap: {queue['dropped_for_cap']})")
             print(f"  packet_ready={t['packet_ready']}  needs_review={t['needs_review']}  reject={t['reject']}")
+            ps = queue["prefs_applied"]
+            print(f"  prefs: remote_only={ps['remote_only']} remote_preferred={ps['remote_preferred']} "
+                  f"preferred_locations={ps['preferred_locations_count']} "
+                  f"blocked_locations={ps['blocked_locations_count']} "
+                  f"comp_floor_set={ps['compensation_floor_set']} "
+                  f"requires_sponsorship={ps['requires_sponsorship']}")
+            for w in queue.get("prefs_warnings", []):
+                print(f"  warning: {w}")
             for it in queue["items"][:15]:
                 print(f"  [{it['status']}] {it['company']} — {it['title']} "
                       f"(score={it['score']}, lane={it['selected_lane']}, "

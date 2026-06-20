@@ -13,9 +13,12 @@ scoring, and packet generation around these functions.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .resume_registry import route_lead
+from .simple_yaml import loads as _yaml_loads
 
 # --- vocabularies (kept in sync with tests + schema-free queue artifact) ---
 READINESS_STATUSES: tuple[str, ...] = ("packet_ready", "needs_review", "reject")
@@ -206,22 +209,244 @@ def is_senior_only(title: str) -> bool:
     return any(_word_in(title_lc, m) for m in _SENIOR_ONLY_MARKERS)
 
 
-def _location_conflicts(lead: dict, prefs: dict | None) -> bool:
-    """Conservative, prefs-driven location/work-mode conflict check.
+_MONEY = re.compile(r"\$?\s*(\d[\d,]*(?:\.\d+)?)\s*([kKmM])?")
 
-    Returns False when no prefs are supplied (cannot judge → not a hard block).
+
+def parse_money(text: object) -> float | None:
+    """Best-effort extraction of the largest money figure from a string.
+
+    Returns the max numeric value found (so a salary range yields its upper
+    bound, used for "clearly below floor" comparisons). Bare numbers under 1000
+    with no k/m suffix are ignored as noise (years, counts). None when nothing
+    parseable is found.
     """
+    if isinstance(text, (int, float)) and not isinstance(text, bool):
+        return float(text)
+    if not isinstance(text, str):
+        return None
+    best: float | None = None
+    for num, suffix in _MONEY.findall(text):
+        try:
+            value = float(num.replace(",", ""))
+        except ValueError:
+            continue
+        if suffix in ("k", "K"):
+            value *= 1_000
+        elif suffix in ("m", "M"):
+            value *= 1_000_000
+        elif value < 10000:
+            continue  # bare small number (count, year) — not a salary figure
+        if best is None or value > best:
+            best = value
+    return best
+
+
+def _preference_signals(lead: dict, prefs: dict | None) -> tuple[list[str], list[str]]:
+    """Compute (hard_reject_reasons, soft_review_reasons) from preferences.
+
+    Conservative and privacy-safe: returns only normalized reason CODES, never
+    raw preference values. Empty prefs → no signals (cannot judge).
+    """
+    hard: list[str] = []
+    soft: list[str] = []
     if not prefs:
-        return False
-    loc = (lead.get("location") or "").lower()
-    if not loc:
-        return False
-    if prefs.get("remote_only") and "remote" not in loc:
-        return True
-    for bad in prefs.get("blocked_locations") or []:
-        if isinstance(bad, str) and bad.lower() in loc:
+        return hard, soft
+
+    loc = (lead.get("location") or "").strip().lower()
+    blocked = [b.lower() for b in (prefs.get("blocked_locations") or []) if isinstance(b, str)]
+    preferred = [p.lower() for p in (prefs.get("preferred_locations") or []) if isinstance(p, str)]
+    is_remote = "remote" in loc
+    in_preferred = bool(loc) and any(p and (p in loc or loc in p) for p in preferred)
+
+    # Blocked location is a hard conflict.
+    if loc and any(b and b in loc for b in blocked):
+        hard.append("blocked_location")
+
+    # Remote / location-area gating.
+    remote_only = bool(prefs.get("remote_only"))
+    remote_matters = remote_only or bool(prefs.get("remote_preferred"))
+    if loc:
+        if not is_remote and not in_preferred:
+            if remote_only:
+                hard.append("remote_only_pref_conflict")
+            elif remote_matters:
+                soft.append("remote_pref_conflict")
+    elif remote_matters:
+        # No location metadata but remote preference matters → can't confirm.
+        soft.append("location_ambiguous")
+
+    # Compensation floor: reject only when the lead's stated upper bound is
+    # clearly below the floor. Missing comp never rejects.
+    floor = prefs.get("compensation_floor")
+    if isinstance(floor, (int, float)) and not isinstance(floor, bool):
+        lead_comp = parse_money(lead.get("compensation"))
+        if lead_comp is not None and lead_comp < floor:
+            hard.append("compensation_below_floor")
+
+    # Work authorization: reject only on an explicit no-sponsorship statement
+    # when the candidate requires sponsorship.
+    if prefs.get("requires_sponsorship"):
+        text = ((lead.get("raw_description") or "") + " " + loc).lower()
+        if any(
+            phrase in text
+            for phrase in (
+                "no sponsorship",
+                "not sponsor",
+                "without sponsorship",
+                "not provide sponsorship",
+                "unable to sponsor",
+                "no visa sponsorship",
+                "do not offer sponsorship",
+            )
+        ):
+            hard.append("work_authorization_conflict")
+
+    return hard, soft
+
+
+# --------------------------------------------------------------------------- #
+# Private preferences (markdown frontmatter) — never logged/committed
+# --------------------------------------------------------------------------- #
+# Source-file key -> normalized key. Normalized names are also accepted directly
+# so sanitized fixtures can use either vocabulary.
+_REMOTE_ONLY_VALUES = frozenset(
+    {"remote_only", "remote-only", "remote only", "only remote", "fully remote", "strictly remote"}
+)
+# Safe keys allowed into the normalized prefs dict. Anything else is ignored.
+_SAFE_NORMALIZED_KEYS = frozenset(
+    {
+        "remote_only",
+        "remote_preferred",
+        "blocked_locations",
+        "preferred_locations",
+        "current_location",
+        "compensation_floor",
+        "work_authorization",
+        "requires_sponsorship",
+        "relocation",
+    }
+)
+
+
+def _as_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "yes", "required", "y", "1"):
             return True
-    return False
+        if v in ("false", "no", "none", "n", "0", "not required"):
+            return False
+    return None
+
+
+def _as_str_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def normalize_preferences(raw: dict) -> dict:
+    """Map a raw preferences mapping to the safe normalized prefs dict.
+
+    Accepts both the private file's vocabulary (e.g. ``remote_preference``,
+    ``minimum_compensation``, ``sponsorship_required``) and the normalized
+    names directly. Unknown keys are ignored. Ambiguous values are left unset
+    rather than guessed.
+    """
+    out: dict = {}
+
+    # remote_preference / remote_only / remote_preferred
+    remote_raw = raw.get("remote_preference")
+    if "remote_only" in raw:
+        b = _as_bool(raw.get("remote_only"))
+        if b is not None:
+            out["remote_only"] = b
+            out["remote_preferred"] = b or bool(raw.get("remote_preferred"))
+    if isinstance(remote_raw, str) and remote_raw.strip():
+        rv = remote_raw.strip().lower()
+        out.setdefault("remote_only", rv in _REMOTE_ONLY_VALUES)
+        out.setdefault("remote_preferred", "remote" in rv)
+    if "remote_preferred" in raw and "remote_preferred" not in out:
+        b = _as_bool(raw.get("remote_preferred"))
+        if b is not None:
+            out["remote_preferred"] = b
+
+    # locations
+    blocked = _as_str_list(raw.get("blocked_locations"))
+    if blocked:
+        out["blocked_locations"] = blocked
+    preferred = _as_str_list(raw.get("preferred_locations"))
+    if preferred:
+        out["preferred_locations"] = preferred
+    current = raw.get("current_location")
+    if isinstance(current, str) and current.strip():
+        out["current_location"] = current.strip()
+
+    # compensation floor (compensation_floor or minimum_compensation)
+    comp_raw = raw.get("compensation_floor", raw.get("minimum_compensation"))
+    comp = parse_money(comp_raw)
+    if comp is not None:
+        out["compensation_floor"] = comp
+
+    # work authorization (kept for explicit-conflict detection; never printed)
+    wa = raw.get("work_authorization")
+    if isinstance(wa, str) and wa.strip():
+        out["work_authorization"] = wa.strip()
+
+    # sponsorship -> requires_sponsorship
+    spon = _as_bool(raw.get("requires_sponsorship", raw.get("sponsorship_required")))
+    if spon is not None:
+        out["requires_sponsorship"] = spon
+
+    # relocation (only if explicitly present; never invented)
+    relo = raw.get("relocation")
+    if isinstance(relo, str) and relo.strip():
+        out["relocation"] = relo.strip()
+
+    return {k: v for k, v in out.items() if k in _SAFE_NORMALIZED_KEYS}
+
+
+def load_preferences_md(path: str | Path) -> dict:
+    """Load private preferences from a markdown file's YAML frontmatter.
+
+    Returns a normalized, privacy-safe prefs dict (see
+    :func:`normalize_preferences`). Raises :class:`WatcherError` for a missing
+    file or unparseable frontmatter so the caller can warn and continue.
+    """
+    p = Path(path)
+    if not p.exists():
+        raise WatcherError(f"preferences file not found: {p}")
+    text = p.read_text(encoding="utf-8")
+    m = re.match(r"^﻿?---\s*\n(.*?)\n---\s*(?:\n|$)", text, re.DOTALL)
+    block = m.group(1) if m else text
+    try:
+        raw = _yaml_loads(block)
+    except Exception as exc:  # malformed frontmatter
+        raise WatcherError(f"could not parse preferences frontmatter: {exc}")
+    if not isinstance(raw, dict):
+        raise WatcherError("preferences frontmatter is not a mapping")
+    return normalize_preferences(raw)
+
+
+def preferences_summary(prefs: dict | None) -> dict:
+    """A non-sensitive summary of which prefs are active (booleans/counts only).
+
+    Safe to log or persist — carries no raw preference VALUES.
+    """
+    prefs = prefs or {}
+    return {
+        "remote_only": bool(prefs.get("remote_only")),
+        "remote_preferred": bool(prefs.get("remote_preferred")),
+        "blocked_locations_count": len(prefs.get("blocked_locations") or []),
+        "preferred_locations_count": len(prefs.get("preferred_locations") or []),
+        "compensation_floor_set": prefs.get("compensation_floor") is not None,
+        "requires_sponsorship": bool(prefs.get("requires_sponsorship")),
+        "current_location_set": bool(prefs.get("current_location")),
+        "relocation_set": bool(prefs.get("relocation")),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -278,6 +503,7 @@ def classify_readiness(
     metadata_ok = bool((lead.get("raw_description") or "").strip()) and bool(
         norm.get("keywords") or norm.get("required")
     )
+    hard_prefs, soft_prefs = _preference_signals(lead, prefs)
 
     # ----- hard rejects (ordered: most decisive first) -----
     if already_packeted:
@@ -286,8 +512,8 @@ def classify_readiness(
         return _result("reject", [f"outside_lookback_window:{basis}"])
     if is_senior_only(title):
         return _result("reject", ["senior_staff_only"])
-    if _location_conflicts(lead, prefs):
-        return _result("reject", ["location_work_mode_conflict"])
+    if hard_prefs:
+        return _result("reject", hard_prefs)
     if not lane_ready:
         return _result("reject", [f"no_ready_lane:{variant_id or 'none'}"])
     if recommendation == "no":
@@ -316,6 +542,7 @@ def classify_readiness(
         reasons.append("sparse_metadata")
     if not (lead.get("location") or "").strip():
         reasons.append("location_ambiguous")
+    reasons.extend(soft_prefs)
 
     if reasons:
         # Deduplicate while preserving order.

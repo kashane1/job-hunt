@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -257,7 +258,7 @@ class ClassifyReadinessTest(unittest.TestCase):
             prefs={"remote_only": True},
         )
         self.assertEqual(res["status"], "reject")
-        self.assertIn("location_work_mode_conflict", res["reasons"])
+        self.assertIn("remote_only_pref_conflict", res["reasons"])
 
     def test_needs_review_on_fallback_freshness(self) -> None:
         res = watcher.classify_readiness(
@@ -388,6 +389,230 @@ class BuildQueueTest(unittest.TestCase):
             "recommend_packet", "requires_human_review",
         }
         self.assertEqual(set(q["items"][0].keys()), allowed)
+
+
+# --------------------------------------------------------------------------- #
+# Sanitized preferences fixtures (NEVER the real profile/raw/preferences.md).
+# Mirrors the real file's frontmatter vocabulary with fake values.
+_PREFS_MD = """---
+document_type: preferences
+title: Sanitized Prefs
+candidate_name: Pat Placeholder
+target_titles:
+  - Backend Engineer
+preferred_locations:
+  - Remote
+  - Springfield
+  - Capital City
+remote_preference: remote
+excluded_keywords:
+  - clearance
+work_authorization: citizen
+sponsorship_required: false
+minimum_compensation: $150,000
+---
+
+Free-text notes that must be ignored by the parser.
+"""
+
+_PREFS_MD_REMOTE_ONLY = """---
+remote_preference: remote_only
+preferred_locations:
+  - Springfield
+minimum_compensation: 170000
+sponsorship_required: false
+---
+"""
+
+
+def _write_tmp(text: str) -> Path:
+    fd = tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, encoding="utf-8")
+    fd.write(text)
+    fd.close()
+    return Path(fd.name)
+
+
+class ParseMoneyTest(unittest.TestCase):
+    def test_parses_dollar_commas(self) -> None:
+        self.assertEqual(watcher.parse_money("$150,000"), 150000.0)
+
+    def test_parses_k_m_suffix(self) -> None:
+        self.assertEqual(watcher.parse_money("180k"), 180000.0)
+        self.assertEqual(watcher.parse_money("1.2M"), 1_200_000.0)
+
+    def test_range_returns_upper_bound(self) -> None:
+        self.assertEqual(watcher.parse_money("$150,000 - $200,000"), 200000.0)
+
+    def test_ignores_small_bare_numbers(self) -> None:
+        self.assertIsNone(watcher.parse_money("posted 5 days ago, 2026"))
+
+    def test_none_for_empty(self) -> None:
+        self.assertIsNone(watcher.parse_money(""))
+        self.assertIsNone(watcher.parse_money(None))
+
+
+class LoadPreferencesMdTest(unittest.TestCase):
+    def test_parses_frontmatter_and_maps_keys(self) -> None:
+        p = _write_tmp(_PREFS_MD)
+        try:
+            prefs = watcher.load_preferences_md(p)
+        finally:
+            p.unlink()
+        self.assertEqual(prefs["remote_preferred"], True)
+        self.assertEqual(prefs["remote_only"], False)  # "remote" != remote_only
+        self.assertEqual(prefs["preferred_locations"], ["Remote", "Springfield", "Capital City"])
+        self.assertEqual(prefs["compensation_floor"], 150000.0)
+        self.assertEqual(prefs["requires_sponsorship"], False)
+
+    def test_remote_only_value_sets_remote_only(self) -> None:
+        p = _write_tmp(_PREFS_MD_REMOTE_ONLY)
+        try:
+            prefs = watcher.load_preferences_md(p)
+        finally:
+            p.unlink()
+        self.assertTrue(prefs["remote_only"])
+        self.assertTrue(prefs["remote_preferred"])
+
+    def test_ignores_unknown_and_pii_keys(self) -> None:
+        p = _write_tmp(_PREFS_MD)
+        try:
+            prefs = watcher.load_preferences_md(p)
+        finally:
+            p.unlink()
+        for leaked in ("candidate_name", "title", "document_type", "target_titles",
+                       "excluded_keywords", "minimum_compensation", "remote_preference"):
+            self.assertNotIn(leaked, prefs)
+        self.assertTrue(set(prefs).issubset(watcher._SAFE_NORMALIZED_KEYS))
+
+    def test_missing_file_raises_watcher_error(self) -> None:
+        with self.assertRaises(watcher.WatcherError):
+            watcher.load_preferences_md(Path("/nonexistent/prefs-xyz.md"))
+
+    def test_invalid_frontmatter_raises_watcher_error(self) -> None:
+        # Malformed frontmatter raises WatcherError; the CLI catches it, warns,
+        # and continues with no prefs (verified separately).
+        p = _write_tmp("---\njust a scalar line without colon\n---\n")
+        try:
+            with self.assertRaises(watcher.WatcherError):
+                watcher.load_preferences_md(p)
+        finally:
+            p.unlink()
+
+    def test_frontmatterless_mapping_still_parses(self) -> None:
+        # A plain key:value file (no --- fences) is parsed as a mapping.
+        p = _write_tmp("remote_only: true\npreferred_locations:\n  - Remote\n")
+        try:
+            prefs = watcher.load_preferences_md(p)
+        finally:
+            p.unlink()
+        self.assertTrue(prefs["remote_only"])
+
+    def test_normalize_accepts_normalized_names_directly(self) -> None:
+        prefs = watcher.normalize_preferences({
+            "remote_only": True, "blocked_locations": ["India"],
+            "compensation_floor": "200k", "current_location": "Springfield",
+        })
+        self.assertTrue(prefs["remote_only"])
+        self.assertEqual(prefs["blocked_locations"], ["India"])
+        self.assertEqual(prefs["compensation_floor"], 200000.0)
+        self.assertEqual(prefs["current_location"], "Springfield")
+
+
+class PreferenceGatingTest(unittest.TestCase):
+    def _freshness(self):
+        return {"freshness_basis": "posted_at", "timestamp_confidence": "high",
+                "within_window": True, "posted_at": _iso(2), "discovered_at": _iso(30)}
+
+    def _classify(self, lead, prefs):
+        return watcher.classify_readiness(
+            lead=lead, route_decision=_route(), freshness=self._freshness(),
+            lane_ready=True, already_packeted=False, prefs=prefs,
+        )
+
+    def test_remote_only_rejects_onsite_out_of_area(self) -> None:
+        res = self._classify(_lead(location="Gotham City"), {"remote_only": True})
+        self.assertEqual(res["status"], "reject")
+        self.assertIn("remote_only_pref_conflict", res["reasons"])
+
+    def test_remote_preferred_downgrades_onsite_out_of_area(self) -> None:
+        res = self._classify(_lead(location="Gotham City"),
+                             {"remote_preferred": True, "preferred_locations": ["Springfield"]})
+        self.assertEqual(res["status"], "needs_review")
+        self.assertIn("remote_pref_conflict", res["reasons"])
+
+    def test_blocked_location_rejects(self) -> None:
+        res = self._classify(_lead(location="Remote, India"),
+                             {"blocked_locations": ["india"]})
+        self.assertEqual(res["status"], "reject")
+        self.assertIn("blocked_location", res["reasons"])
+
+    def test_preferred_location_does_not_reject(self) -> None:
+        res = self._classify(_lead(location="Springfield, US"),
+                             {"remote_preferred": True, "preferred_locations": ["Springfield"]})
+        self.assertEqual(res["status"], "packet_ready")
+
+    def test_remote_location_satisfies_remote_only(self) -> None:
+        res = self._classify(_lead(location="Remote, US"), {"remote_only": True})
+        self.assertEqual(res["status"], "packet_ready")
+
+    def test_ambiguous_location_needs_review_when_remote_matters(self) -> None:
+        res = self._classify(_lead(location=""), {"remote_preferred": True})
+        self.assertEqual(res["status"], "needs_review")
+        self.assertIn("location_ambiguous", res["reasons"])
+
+    def test_compensation_below_floor_rejects_when_present(self) -> None:
+        lead = _lead(compensation="$90,000 - $110,000")
+        res = self._classify(lead, {"compensation_floor": 150000.0})
+        self.assertEqual(res["status"], "reject")
+        self.assertIn("compensation_below_floor", res["reasons"])
+
+    def test_missing_compensation_does_not_reject(self) -> None:
+        lead = _lead(compensation="")
+        res = self._classify(lead, {"compensation_floor": 150000.0})
+        self.assertEqual(res["status"], "packet_ready")
+
+    def test_compensation_above_floor_ok(self) -> None:
+        lead = _lead(compensation="$180,000 - $220,000")
+        res = self._classify(lead, {"compensation_floor": 150000.0})
+        self.assertEqual(res["status"], "packet_ready")
+
+    def test_work_authorization_conflict_rejects_on_explicit_metadata(self) -> None:
+        lead = _lead(raw_description="Great role. We do not offer sponsorship for this position.")
+        res = self._classify(lead, {"requires_sponsorship": True})
+        self.assertEqual(res["status"], "reject")
+        self.assertIn("work_authorization_conflict", res["reasons"])
+
+    def test_no_work_auth_conflict_when_not_required(self) -> None:
+        lead = _lead(raw_description="We do not offer sponsorship for this position.")
+        res = self._classify(lead, {"requires_sponsorship": False})
+        self.assertEqual(res["status"], "packet_ready")
+
+
+class PreferenceSummaryPrivacyTest(unittest.TestCase):
+    def test_summary_is_booleans_and_counts_only(self) -> None:
+        prefs = watcher.normalize_preferences({
+            "remote_preference": "remote", "preferred_locations": ["Springfield", "Remote"],
+            "minimum_compensation": "$150,000", "current_location": "Springfield",
+            "work_authorization": "citizen",
+        })
+        summary = watcher.preferences_summary(prefs)
+        blob = json.dumps(summary)
+        # No raw values (locations, comp number, auth string) leak into the summary.
+        self.assertNotIn("Springfield", blob)
+        self.assertNotIn("150", blob)
+        self.assertNotIn("citizen", blob)
+        self.assertEqual(summary["preferred_locations_count"], 2)
+        self.assertTrue(summary["compensation_floor_set"])
+        self.assertFalse(summary["remote_only"])
+
+    def test_queue_reasons_carry_codes_not_pref_text(self) -> None:
+        prefs = {"blocked_locations": ["india"], "compensation_floor": 200000.0}
+        lead = _lead(location="Remote, India", compensation="$90,000")
+        q = watcher.build_queue([lead], registry=REGISTRY, now=NOW, since_hours=24,
+                                prefs=prefs, route_fn=lambda l, r: _route())
+        blob = json.dumps(q)
+        self.assertNotIn("200000", blob)  # comp floor value never surfaced
+        self.assertIn("blocked_location", blob)
 
 
 if __name__ == "__main__":
