@@ -1457,6 +1457,8 @@ class RealRegistryLaneTest(unittest.TestCase):
         reg = load_registry(ROOT / "config" / "resume-variants.json")
         self.assertTrue(watcher.lane_is_ready(reg, "generalist_swe"))
         self.assertTrue(watcher.lane_is_ready(reg, "platform_backend"))
+        self.assertTrue(watcher.lane_is_ready(reg, "fullstack_product"))
+        # ai_engineer resume is not authored yet -> not a ready lane.
         self.assertFalse(watcher.lane_is_ready(reg, "ai_engineer"))
 
 

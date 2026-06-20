@@ -59,6 +59,15 @@ class LoadRegistryTest(unittest.TestCase):
         self.assertTrue(v["resume_path"].startswith("profile/resumes/"))
         self.assertNotIn("examples/", v["resume_path"])  # no committed example anchor
 
+    def test_fullstack_product_registered_ready_local_private(self) -> None:
+        # Product/full-stack lane backed by a private, gitignored resume
+        # (metadata only — no file existence / no private content here).
+        reg = load_registry()
+        v = next(x for x in reg["variants"] if x["id"] == "fullstack_product")
+        self.assertEqual(v.get("review_status"), "ready_local")
+        self.assertEqual(v["resume_path"], "profile/resumes/fullstack-product.md")
+        self.assertNotIn("examples/", v["resume_path"])
+
     def test_duplicate_ids_raise(self) -> None:
         with tempfile.TemporaryDirectory() as t:
             p = Path(t) / "r.json"

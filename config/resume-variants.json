@@ -87,11 +87,14 @@
         "forward deployed"
       ],
       "emphasis_skills": [
-        "python",
         "typescript",
+        "javascript",
         "react",
         "node",
+        "python",
         "api",
+        "sql",
+        "postgres",
         "frontend",
         "backend"
       ],
@@ -101,7 +104,8 @@
         "senior"
       ],
       "resume_path": "profile/resumes/fullstack-product.md",
-      "notes": "Use for product-facing / full-stack roles. Author the resume file before relying on this lane in a live run."
+      "review_status": "ready_local",
+      "notes": "Use for product-facing / full-stack roles. Resume authored locally (gitignored), product/full-stack positioning drawn only from approved fullstack_product claims (real employer/titles/dates/education; platform-level revenue wording; Better Business Web framed as a product/project only, no paid-client/agency work; one-of-four-engineers framing on the monolith migration). Like platform_backend/generalist_swe, the file is private/gitignored, so a clean checkout will not have it (profile-doctor reports ready_local as info, never error)."
     },
     {
       "id": "generalist_swe",
