@@ -209,6 +209,30 @@ Inspect a single packet's timeline (read-only, never prints private prose):
 python3 scripts/job_hunt.py packet-history --draft-id <draft-id>
 ```
 
+### Per-packet manual submission checklist
+
+Every prepared packet folder gets a `MANUAL_SUBMISSION.md` checklist so the
+folder is self-contained for finishing the application by hand. It gathers only
+safe completion metadata — company / title / posting URL, draft + lead id,
+resume lane, score / tier / fit, the resume and cover-letter PDF paths (markdown
+fallback when a PDF is unavailable), the ATS warning/error counts, the claims
+approval count (e.g. `3/3 approved`, never claim text), claim-safety flags, a
+short manual review checklist, the exact `mark-packet` post-action commands, and
+a human-submit safety notice. It never contains resume / cover-letter prose or
+claim text. The file is generated automatically when a packet is prepared (and
+is gitignored along with the rest of the packet).
+
+Backfill the checklist into packets prepared before this existed (writes only
+the local, gitignored checklist files — never submits, opens a browser, or
+prints private prose):
+
+```bash
+python3 scripts/job_hunt.py refresh-packet-checklists
+```
+
+`packets-review` and `packet-history` report whether each packet's
+`MANUAL_SUBMISSION.md` is present.
+
 ## Batch 4: Autonomous Indeed Apply
 
 End-to-end pipeline for applying to Indeed postings: lead discovery →

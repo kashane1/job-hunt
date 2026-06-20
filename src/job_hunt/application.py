@@ -1007,6 +1007,16 @@ def prepare_application(
     }
     write_json(draft_dir / "status.json", status)
 
+    # Drop a human-facing manual-submission checklist into the packet dir so the
+    # folder is self-contained for finishing the application by hand. Best-effort
+    # and never submits — a checklist failure must not break packet preparation.
+    try:
+        from .packet_checklist import write_checklist
+
+        write_checklist(draft_dir, data_root=data_root)
+    except Exception:  # noqa: BLE001 — checklist is advisory, never load-bearing
+        pass
+
     return PrepareResult(
         draft_id=draft_id,
         draft_dir=draft_dir,

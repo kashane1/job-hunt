@@ -324,9 +324,12 @@ def assess_packet(
         and manual_status not in ("needs_revision", "follow_up_later")
     )
 
+    checklist_present = (draft_dir / "MANUAL_SUBMISSION.md").exists()
+
     record = {
         "draft_id": draft_id,
         "lead_id": lead_id,
+        "manual_submission_present": checklist_present,
         "company": lead.get("company") or "",
         "title": lead.get("title") or "",
         "lane": lane,
@@ -515,6 +518,7 @@ def packet_history(
             "attention_reasons": rec["attention_reasons"],
             "pdf": (rec.get("pdf") or {}).get("overall"),
             "artifacts_present": rec["artifacts_present"],
+            "manual_submission_present": rec.get("manual_submission_present", False),
         },
         "recommended_action": rec["recommended_action"],
         "manual_timeline": manual_timeline,

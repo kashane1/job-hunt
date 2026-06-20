@@ -342,6 +342,8 @@ def _print_packets_review(packets: list, summary: dict) -> None:
             print(f"   pdf-fix: {pdf['remediation']}")
         if p["claim_safety_warnings"]:
             print(f"   claim-safety: {', '.join(p['claim_safety_warnings'])}")
+        print("   manual-submission checklist: "
+              + ("present" if p.get("manual_submission_present") else "MISSING (run refresh-packet-checklists)"))
         if p["duplicate_of"]:
             print(f"   duplicate_of: {len(p['duplicate_of'])} other packet(s) for same lead")
         if p["attention_reasons"]:
@@ -382,7 +384,8 @@ def _print_packet_history(h: dict) -> None:
     r = h.get("readiness", {})
     print(f"readiness: ready_for_review={r.get('ready_for_review')}  "
           f"needs_attention={r.get('needs_attention')}  pdf={r.get('pdf')}  "
-          f"artifacts_present={r.get('artifacts_present')}")
+          f"artifacts_present={r.get('artifacts_present')}  "
+          f"manual_submission={'present' if r.get('manual_submission_present') else 'missing'}")
     if r.get("attention_reasons"):
         print(f"   attention: {', '.join(r['attention_reasons'])}")
     fu = h.get("follow_up", {})
@@ -2855,6 +2858,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Claims bank for approval check (counts/booleans only)")
     pkt_hist.add_argument("--json", action="store_true")
 
+    refresh_chk = subparsers.add_parser(
+        "refresh-packet-checklists",
+        help="Backfill the MANUAL_SUBMISSION.md checklist into every existing packet "
+             "(writes only gitignored packet files; no apply/browser/form/submit)",
+    )
+    refresh_chk.add_argument("--data-root", default="data")
+    refresh_chk.add_argument(
+        "--claims", default="profile/claims/claims-bank.json",
+        help="Claims bank for approval count (counts/booleans only)")
+    refresh_chk.add_argument("--json", action="store_true")
+
     refresh = subparsers.add_parser(
         "refresh-application",
         help="Re-snapshot the profile into plan.json without regenerating resume",
@@ -4512,6 +4526,30 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "ok", "history": hist}, indent=2))
         else:
             _print_packet_history(hist)
+        return 0
+
+    if args.command == "refresh-packet-checklists":
+        from . import packet_checklist as pc
+
+        claims_path = Path(args.claims) if args.claims else None
+        result = pc.refresh_checklists(
+            data_root=Path(args.data_root),
+            claims_path=claims_path if (claims_path and claims_path.exists()) else None,
+        )
+        if args.json:
+            print(json.dumps({"status": "ok", **result}, indent=2))
+        else:
+            print("=== refresh-packet-checklists (writes only local packet files; no submit) ===")
+            print(f"packets scanned: {result['scanned']}")
+            print(f"checklists written: {result['written']}  updated: {result['updated']}  "
+                  f"skipped: {result['skipped']}")
+            print(f"packets missing posting URL: {result['missing_url']}")
+            print(f"packets missing a PDF: {result['missing_pdf']}")
+            if result["drafts_missing_url"]:
+                print("   missing-url drafts: " + ", ".join(result["drafts_missing_url"]))
+            if result["drafts_missing_pdf"]:
+                print("   missing-pdf drafts: " + ", ".join(result["drafts_missing_pdf"]))
+            print("\nSafety: human-submit only; wrote MANUAL_SUBMISSION.md checklists, nothing submitted.")
         return 0
 
     if args.command == "refresh-application":
