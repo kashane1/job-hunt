@@ -298,16 +298,22 @@ def _print_recent_scan_top(artifact: dict, n: int, since: str) -> None:
     candidates = artifact.get("candidates") or []
     rows = top_candidates(candidates, n)
     total = artifact.get("counts", {}).get("total_in_window", len(candidates))
-    print(f"=== top {len(rows)} leads since {since} (ranked by fit) ===")
+    basis = artifact.get("by", "posted")
+    basis_label = "by posting date" if basis == "posted" else "by when discovered"
+    print(f"=== top {len(rows)} leads {basis_label}, since {since} (ranked by fit) ===")
     if not rows:
-        print("(no leads in window — widen --since, or run discovery to ingest fresh postings)")
+        print("(no leads in window — widen --since, run discovery to ingest fresh "
+              "postings, or try --by seen)")
         return
     for i, c in enumerate(rows, 1):
         company = c.get("company") or "?"
         title = (c.get("title") or "?")
         score = c.get("fit_score")
         score_s = f"score={score}" if score is not None else "unscored"
-        print(f"{i:2}. {company} — {title}  [{c.get('tier') or '?'}, {score_s}]")
+        # Flag rows that only matched because the board gave no posting date.
+        fallback = " (no posting date; matched on when discovered)" \
+            if c.get("timestamp_basis") == "seen_fallback" else ""
+        print(f"{i:2}. {company} — {title}  [{c.get('tier') or '?'}, {score_s}]{fallback}")
         url = c.get("application_url") or ""
         print(f"    {url if url else '(no apply URL recorded — search the company careers page)'}")
     print(f"\nshowing {len(rows)} of {total} in window. These are leads to apply to — "
@@ -2146,6 +2152,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     scan_recent_p.add_argument(
         "--since", default="1h", help="Window: 30m, 1h, 2d, 1w, or an ISO timestamp")
+    scan_recent_p.add_argument(
+        "--by", default="posted", choices=["posted", "seen"],
+        help="Freshness basis: 'posted' = the board's posting date (honest "
+             "'posted in the last X'); 'seen' = when we discovered the lead "
+             "(legacy; everything looks fresh right after a bulk discovery)")
     scan_recent_p.add_argument("--leads-dir", default="data/leads")
     scan_recent_p.add_argument("--output-dir", default="data/runs")
     scan_recent_p.add_argument(
@@ -3068,7 +3079,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "scan-recent-jobs":
         from .copilot import scan_recent
 
-        artifact = scan_recent(Path(args.leads_dir), args.since)
+        artifact = scan_recent(Path(args.leads_dir), args.since, by=args.by)
         out_dir = Path(args.output_dir)
         ensure_dir(out_dir)
         stamp = artifact["scanned_at"].replace(":", "").replace("-", "").replace("+", "")[:15]
@@ -3080,10 +3091,12 @@ def main(argv: list[str] | None = None) -> int:
             _print_recent_scan_top(artifact, args.top, args.since)
         else:
             c = artifact["counts"]
+            unknown = c.get("posting_date_unknown", 0)
+            tail = f", no_posting_date={unknown}" if (args.by == "posted" and unknown) else ""
             print(
-                f"{c['total_in_window']} lead(s) since {args.since} "
+                f"{c['total_in_window']} lead(s) {args.by} since {args.since} "
                 f"(strong_yes={c['strong_yes']}, maybe={c['maybe']}, "
-                f"no={c['no']}, unscored={c['unscored']}) -> {out_path}"
+                f"no={c['no']}, unscored={c['unscored']}{tail}) -> {out_path}"
             )
         return 0
 

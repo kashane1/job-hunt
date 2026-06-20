@@ -90,6 +90,69 @@ def lead_effective_timestamp(lead: dict) -> datetime | None:
     return max(candidates) if candidates else None
 
 
+def lead_posted_timestamp(lead: dict) -> datetime | None:
+    """The board's own posting/listing date (``listing_updated_at``), or None.
+
+    This is *when the job was posted/updated on the board*, independent of when we
+    discovered it. Reads ``listing_updated_at`` from the per-source observation
+    lists (mirrored under ``observed_sources`` and ``discovered_via``) and the
+    top level. Returns None when the board supplied no posting date.
+    """
+    candidates: list[datetime] = []
+    for field in ("observed_sources", "discovered_via"):
+        for source in lead.get(field) or []:
+            if isinstance(source, dict):
+                dt = _parse_iso(str(source.get("listing_updated_at") or ""))
+                if dt is not None:
+                    candidates.append(dt)
+    dt = _parse_iso(str(lead.get("listing_updated_at") or ""))
+    if dt is not None:
+        candidates.append(dt)
+    return max(candidates) if candidates else None
+
+
+def lead_seen_timestamp(lead: dict) -> datetime | None:
+    """When *we* first discovered/ingested the lead, or None.
+
+    Reads per-source ``discovered_at`` plus top-level ``discovered_at`` /
+    ``ingested_at``. This is "new to our store", not "newly posted".
+    """
+    candidates: list[datetime] = []
+    for field in ("observed_sources", "discovered_via"):
+        for source in lead.get(field) or []:
+            if isinstance(source, dict):
+                dt = _parse_iso(str(source.get("discovered_at") or ""))
+                if dt is not None:
+                    candidates.append(dt)
+    for key in ("discovered_at", "ingested_at"):
+        dt = _parse_iso(str(lead.get(key) or ""))
+        if dt is not None:
+            candidates.append(dt)
+    return max(candidates) if candidates else None
+
+
+def lead_window_timestamp(lead: dict, by: str) -> tuple[datetime | None, str | None]:
+    """Resolve the (timestamp, basis) that places a lead in the ``--since`` window.
+
+    ``by="posted"`` (honest freshness): prefer the board's posting date; fall back
+    to the seen date (basis ``"seen_fallback"``) when the board gave no posting
+    date, so those leads are never silently dropped.
+
+    ``by="seen"`` (legacy): when we discovered/ingested it. Useful for "what is
+    new to me since I last looked".
+
+    Returns ``(None, None)`` when no timestamp parses (lead excluded from window).
+    """
+    if by == "seen":
+        ts = lead_seen_timestamp(lead) or lead_posted_timestamp(lead)
+        return (ts, "seen") if ts is not None else (None, None)
+    posted = lead_posted_timestamp(lead)
+    if posted is not None:
+        return posted, "posted"
+    seen = lead_seen_timestamp(lead)
+    return (seen, "seen_fallback") if seen is not None else (None, None)
+
+
 def lead_tier(lead: dict) -> tuple[str, float | None]:
     """Return ``(tier, fit_score)`` for a lead from its fit_assessment."""
     fit = lead.get("fit_assessment")
@@ -120,7 +183,7 @@ def load_leads(leads_dir: Path) -> list[tuple[Path, dict]]:
 
 # --- recent scan -------------------------------------------------------------
 
-def _candidate(path: Path, lead: dict, effective: datetime) -> dict:
+def _candidate(path: Path, lead: dict, effective: datetime, basis: str) -> dict:
     tier, fit_score = lead_tier(lead)
     return {
         "lead_id": lead.get("lead_id", ""),
@@ -131,20 +194,29 @@ def _candidate(path: Path, lead: dict, effective: datetime) -> dict:
         "tier": tier,
         "fit_score": fit_score,
         "effective_timestamp": effective.astimezone(timezone.utc).isoformat(),
+        # Which date placed this lead in the window: "posted" (board's posting
+        # date), "seen" (when we discovered it), or "seen_fallback" (posted-mode
+        # but the board gave no posting date).
+        "timestamp_basis": basis,
         "lead_path": str(path),
     }
 
 
 def filter_recent_leads(
-    leads: list[tuple[Path, dict]], window_start: datetime
+    leads: list[tuple[Path, dict]], window_start: datetime, *, by: str = "posted"
 ) -> list[dict]:
-    """Return candidate dicts for leads whose effective timestamp >= window_start."""
+    """Candidate dicts for leads whose window timestamp >= window_start.
+
+    ``by`` selects the freshness basis: ``"posted"`` (the board's posting date,
+    the default and honest "newly posted" view) or ``"seen"`` (when we first
+    discovered the lead).
+    """
     candidates: list[dict] = []
     for path, lead in leads:
-        effective = lead_effective_timestamp(lead)
+        effective, basis = lead_window_timestamp(lead, by)
         if effective is None or effective < window_start:
             continue
-        candidates.append(_candidate(path, lead, effective))
+        candidates.append(_candidate(path, lead, effective, basis))
     candidates.sort(
         key=lambda c: (TIER_RANK.get(c["tier"], 0), c["effective_timestamp"]),
         reverse=True,
@@ -173,22 +245,35 @@ def scan_recent(
     *,
     now: datetime | None = None,
     discover_ran: bool = False,
+    by: str = "posted",
 ) -> dict:
-    """Build a recent-scan artifact (schemas/recent-scan.schema.json)."""
+    """Build a recent-scan artifact (schemas/recent-scan.schema.json).
+
+    ``by="posted"`` (default) windows on the board's posting date — the honest
+    "posted in the last X" view. ``by="seen"`` windows on when we discovered the
+    lead (legacy behavior; useful right after a bulk discovery run).
+    """
+    if by not in ("posted", "seen"):
+        raise ValueError(f"--by must be 'posted' or 'seen'; got {by!r}")
     window_start = parse_since(since, now=now)
     leads = load_leads(leads_dir)
-    candidates = filter_recent_leads(leads, window_start)
+    candidates = filter_recent_leads(leads, window_start, by=by)
     counts = {
         "total_in_window": len(candidates),
         "strong_yes": sum(1 for c in candidates if c["tier"] == "strong_yes"),
         "maybe": sum(1 for c in candidates if c["tier"] == "maybe"),
         "no": sum(1 for c in candidates if c["tier"] == "no"),
         "unscored": sum(1 for c in candidates if c["tier"] == "unscored"),
+        # In posted-mode, how many matched only because they fell back to the
+        # seen date (board gave no posting date). 0 in seen-mode.
+        "posting_date_unknown": sum(
+            1 for c in candidates if c["timestamp_basis"] == "seen_fallback"),
     }
     return {
         "schema_version": SCAN_SCHEMA_VERSION,
         "scanned_at": now_iso(),
         "since": since,
+        "by": by,
         "window_start": window_start.astimezone(timezone.utc).isoformat(),
         "leads_dir": str(leads_dir),
         "discover_ran": discover_ran,

@@ -15,6 +15,8 @@ if str(SRC) not in sys.path:
 from job_hunt.copilot import (
     filter_recent_leads,
     lead_effective_timestamp,
+    lead_posted_timestamp,
+    lead_seen_timestamp,
     lead_tier,
     parse_since,
     plan_copilot_run,
@@ -144,6 +146,92 @@ class TopCandidatesTest(unittest.TestCase):
     def test_non_positive_n_returns_empty(self) -> None:
         from job_hunt.copilot import top_candidates
         self.assertEqual(top_candidates([self._c("a", 70)], 0), [])
+
+
+def _lead_pd(lead_id: str, posted: str, ingested: str, rec: str = "strong_yes") -> dict:
+    """Lead with a distinct board posting date (observed_sources) and ingest date."""
+    return {
+        "lead_id": lead_id,
+        "title": "Backend Engineer",
+        "company": "Acme",
+        "source": "greenhouse",
+        "application_url": f"https://x/{lead_id}",
+        "ingested_at": ingested,
+        "observed_sources": [
+            {"source": "greenhouse", "discovered_at": ingested, "listing_updated_at": posted},
+        ],
+        "fit_assessment": {"fit_recommendation": rec, "fit_score": 80, "fit_rationale": "t"},
+    }
+
+
+class PostedVsSeenWindowTest(unittest.TestCase):
+    # Posted 10 days before NOW, but ingested 1 minute before NOW.
+    OLD_POSTED = "2026-06-08T12:00:00+00:00"
+    JUST_INGESTED = "2026-06-18T11:59:00+00:00"
+
+    def test_posted_timestamp_reads_listing_date(self) -> None:
+        lead = _lead_pd("a", self.OLD_POSTED, self.JUST_INGESTED)
+        self.assertEqual(
+            lead_posted_timestamp(lead),
+            datetime(2026, 6, 8, 12, 0, tzinfo=timezone.utc))
+        self.assertEqual(
+            lead_seen_timestamp(lead),
+            datetime(2026, 6, 18, 11, 59, tzinfo=timezone.utc))
+
+    def test_posted_mode_excludes_old_posting_ingested_now(self) -> None:
+        # The exact bug: a stale posting freshly ingested floods the seen window
+        # but must NOT appear in the honest posted window.
+        leads = [(Path("a.json"), _lead_pd("a", self.OLD_POSTED, self.JUST_INGESTED))]
+        window = parse_since("1h", now=NOW)
+        self.assertEqual(filter_recent_leads(leads, window, by="posted"), [])
+        seen = filter_recent_leads(leads, window, by="seen")
+        self.assertEqual([c["lead_id"] for c in seen], ["a"])
+        self.assertEqual(seen[0]["timestamp_basis"], "seen")
+
+    def test_posted_mode_includes_fresh_posting(self) -> None:
+        fresh = "2026-06-18T11:50:00+00:00"
+        leads = [(Path("a.json"), _lead_pd("a", fresh, self.JUST_INGESTED))]
+        cands = filter_recent_leads(leads, parse_since("1h", now=NOW), by="posted")
+        self.assertEqual([c["lead_id"] for c in cands], ["a"])
+        self.assertEqual(cands[0]["timestamp_basis"], "posted")
+
+    def test_no_posting_date_falls_back_to_seen(self) -> None:
+        # Only ingested_at, no listing date: posted-mode must still include it,
+        # flagged as seen_fallback (never silently dropped).
+        lead = {"lead_id": "n", "title": "T", "company": "Acme",
+                "ingested_at": self.JUST_INGESTED,
+                "fit_assessment": {"fit_recommendation": "maybe", "fit_score": 50}}
+        self.assertIsNone(lead_posted_timestamp(lead))
+        cands = filter_recent_leads(
+            [(Path("n.json"), lead)], parse_since("1h", now=NOW), by="posted")
+        self.assertEqual([c["lead_id"] for c in cands], ["n"])
+        self.assertEqual(cands[0]["timestamp_basis"], "seen_fallback")
+
+    def test_scan_recent_by_posted_counts_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as t:
+            d = Path(t)
+            _write_leads(d, [
+                _lead_pd("fresh", "2026-06-18T11:50:00+00:00", self.JUST_INGESTED),
+                _lead_pd("stale", self.OLD_POSTED, self.JUST_INGESTED),
+            ])
+            # Lead with no posting date (fallback).
+            write_json(d / "nopd.json", {
+                "lead_id": "nopd", "title": "T", "company": "Acme",
+                "ingested_at": self.JUST_INGESTED,
+                "fit_assessment": {"fit_recommendation": "maybe", "fit_score": 50}})
+            posted = scan_recent(d, "1h", now=NOW, by="posted")
+            ids = {c["lead_id"] for c in posted["candidates"]}
+            self.assertEqual(ids, {"fresh", "nopd"})  # stale excluded
+            self.assertEqual(posted["by"], "posted")
+            self.assertEqual(posted["counts"]["posting_date_unknown"], 1)
+            validate(posted, SCAN_SCHEMA)
+            seen = scan_recent(d, "1h", now=NOW, by="seen")
+            self.assertEqual(seen["counts"]["total_in_window"], 3)  # all freshly ingested
+            self.assertEqual(seen["counts"]["posting_date_unknown"], 0)
+
+    def test_invalid_by_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            scan_recent(Path("."), "1h", now=NOW, by="bogus")
 
 
 class ScanRecentTest(unittest.TestCase):

@@ -114,8 +114,12 @@ not including — submit." Every decision is a concrete artifact. See
 # 1. Recent-job scan: leads inside a wall-clock window, grouped by fit tier
 python3 scripts/job_hunt.py scan-recent-jobs --since 1h
 
-# 1b. Brief, copy-friendly top-N view ranked by fit, with apply URLs
-python3 scripts/job_hunt.py scan-recent-jobs --since 12h --top 10
+# 1b. Brief, copy-friendly top-N view ranked by fit, with apply URLs.
+# --since windows on the board's POSTING date by default (honest "posted in
+# the last X"). Use --by seen for the legacy "new to my store" view, which
+# looks flooded right after a bulk discovery run.
+python3 scripts/job_hunt.py scan-recent-jobs --since 24h --top 10
+python3 scripts/job_hunt.py scan-recent-jobs --since 24h --by seen   # legacy basis
 
 # 2. Route a scored lead to its best resume variant (writes a logged decision)
 python3 scripts/job_hunt.py select-resume-variant --lead data/leads/<id>.json
