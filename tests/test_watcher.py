@@ -615,5 +615,134 @@ class PreferenceSummaryPrivacyTest(unittest.TestCase):
         self.assertIn("blocked_location", blob)
 
 
+class PacketCommandTest(unittest.TestCase):
+    def test_basic_command(self) -> None:
+        cmd = watcher.packet_command("acme-be-1", since_hours=8)
+        self.assertEqual(
+            cmd,
+            "python3 scripts/job_hunt.py watch-new-jobs --since-hours 8 "
+            "--lead-id acme-be-1 --emit-packet",
+        )
+
+    def test_includes_prefs_md_when_given(self) -> None:
+        cmd = watcher.packet_command("x", since_hours=12.0, prefs_md="profile/raw/preferences.md")
+        self.assertIn("--prefs-md profile/raw/preferences.md", cmd)
+        self.assertIn("--since-hours 12", cmd)  # whole float renders as int
+        self.assertIn("--lead-id x", cmd)
+        self.assertIn("--emit-packet", cmd)
+
+
+class ReviewSummaryTest(unittest.TestCase):
+    def _build(self, leads, route_map, *, top=3, **kw):
+        rf = lambda l, r: route_map[l["lead_id"]]
+        q = watcher.build_queue(leads, registry=REGISTRY, now=NOW, since_hours=8, route_fn=rf, **kw)
+        return watcher.finalize_queue(
+            q, since_hours=8, prefs_md="profile/raw/preferences.md", top=top,
+            source_mode="offline", queue_artifact="data/watch/x.json",
+        )
+
+    def _mixed(self, **kw):
+        pr = _lead(lead_id="pr1", company="Acme", title="Backend Engineer")
+        nr = _lead(lead_id="nr1", company="Beta", title="Platform Engineer",
+                   fit_assessment={"fit_score": 60, "fit_recommendation": "maybe", "missing_skills": []})
+        rj = _lead(lead_id="rj1", company="Gamma", title="Backend Engineer")
+        routes = {"pr1": _route(), "nr1": _route(), "rj1": _route(selected_variant_id="generalist_swe")}
+        return self._build([pr, nr, rj], routes, **kw)
+
+    def test_summary_includes_packet_ready_top(self) -> None:
+        rs = self._mixed()["review_summary"]
+        self.assertEqual(len(rs["packet_ready"]), 1)
+        self.assertEqual(rs["packet_ready"][0]["company"], "Acme")
+        self.assertIn("packet_command", rs["packet_ready"][0])
+
+    def test_summary_includes_needs_review_top(self) -> None:
+        rs = self._mixed()["review_summary"]
+        self.assertEqual(len(rs["needs_review"]), 1)
+        self.assertEqual(rs["needs_review"][0]["company"], "Beta")
+        # needs_review rows carry no packet command.
+        self.assertNotIn("packet_command", rs["needs_review"][0])
+
+    def test_summary_suppresses_individual_rejects(self) -> None:
+        rs = self._mixed()["review_summary"]
+        self.assertEqual(rs["reject"]["total"], 1)
+        self.assertEqual(rs["reject"]["reason_counts"], {"no_ready_lane:generalist_swe": 1})
+        # The summary's reject section is counts only — no per-lead rows.
+        self.assertNotIn("items", rs["reject"])
+
+    def test_packet_command_targets_best_lead(self) -> None:
+        rs = self._mixed()["review_summary"]
+        cmd = rs["packet_ready"][0]["packet_command"]
+        self.assertIn("--lead-id pr1", cmd)
+        self.assertIn("--emit-packet", cmd)
+        self.assertTrue(cmd.startswith("python3 scripts/job_hunt.py watch-new-jobs"))
+
+    def test_no_packet_command_when_no_packet_ready(self) -> None:
+        rj = _lead(lead_id="rj1", company="Gamma")
+        q = self._build([rj], {"rj1": _route(selected_variant_id="generalist_swe")})
+        self.assertEqual(q["review_summary"]["packet_ready"], [])
+        self.assertFalse(any("packet_command" in it for it in q["items"]))
+
+    def test_top_limits_displayed_rows(self) -> None:
+        leads = [_lead(lead_id=f"p{i}", company=f"Co{i}",
+                       fit_assessment={"fit_score": 90 - i, "fit_recommendation": "strong_yes",
+                                       "missing_skills": []})
+                 for i in range(5)]
+        routes = {f"p{i}": _route() for i in range(5)}
+        q = self._build(leads, routes, top=2)
+        self.assertEqual(len(q["review_summary"]["packet_ready"]), 2)
+        # Underlying items are NOT truncated by --top.
+        self.assertEqual(q["totals"]["packet_ready"], 5)
+
+    def test_reason_counts_correct(self) -> None:
+        a = _lead(lead_id="a")
+        b = _lead(lead_id="b")
+        c = _lead(lead_id="c")
+        routes = {
+            "a": _route(selected_variant_id="generalist_swe"),
+            "b": _route(selected_variant_id="generalist_swe"),
+            "c": _route(selected_variant_id="ai_engineer"),
+        }
+        q = self._build([a, b, c], routes)
+        self.assertEqual(
+            q["reason_counts"]["reject"],
+            {"no_ready_lane:generalist_swe": 2, "no_ready_lane:ai_engineer": 1},
+        )
+
+    def test_items_carry_handoff_fields(self) -> None:
+        q = self._mixed()
+        for it in q["items"]:
+            self.assertIn("rank", it)
+            self.assertIn("primary_reason", it)
+            self.assertIn("packet_recommended", it)
+        pr = next(it for it in q["items"] if it["status"] == "packet_ready")
+        self.assertTrue(pr["packet_recommended"])
+        self.assertIn("packet_command", pr)
+        self.assertEqual(pr["rank"], 1)
+        self.assertIn("reason_counts", q)
+        self.assertIn("review_summary", q)
+
+    def test_rank_is_per_status(self) -> None:
+        leads = [_lead(lead_id=f"p{i}",
+                       fit_assessment={"fit_score": 90 - i, "fit_recommendation": "strong_yes",
+                                       "missing_skills": []})
+                 for i in range(3)]
+        routes = {f"p{i}": _route() for i in range(3)}
+        q = self._build(leads, routes)
+        ranks = [it["rank"] for it in q["items"] if it["status"] == "packet_ready"]
+        self.assertEqual(sorted(ranks), [1, 2, 3])
+
+    def test_summary_has_no_private_content(self) -> None:
+        # Inject PII-like rationale; the summary + handoff fields must not leak it.
+        pr = _lead(lead_id="pr1", company="Acme", fit_assessment={
+            "fit_score": 90, "fit_recommendation": "strong_yes", "missing_skills": [],
+            "fit_rationale": "candidate Kashane private@example.com",
+        })
+        q = self._build([pr], {"pr1": _route()})
+        blob = json.dumps(q)
+        self.assertNotIn("Kashane", blob)
+        self.assertNotIn("@example.com", blob)
+        self.assertNotIn("fit_rationale", blob)
+
+
 if __name__ == "__main__":
     unittest.main()

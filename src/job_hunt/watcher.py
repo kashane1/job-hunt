@@ -672,3 +672,137 @@ def build_queue(
         "dropped_for_cap": dropped_for_cap,
         "items": items,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Review summary + packet handoff (human-facing, non-private)
+# --------------------------------------------------------------------------- #
+CLI_PROG = "python3 scripts/job_hunt.py"
+
+
+def _fmt_hours(hours: float) -> str:
+    """Render a lookback as a clean int when whole (8, not 8.0)."""
+    if isinstance(hours, (int, float)) and float(hours).is_integer():
+        return str(int(hours))
+    return str(hours)
+
+
+def primary_reason(item: dict) -> str:
+    """The first (most decisive) reason code for an item, or '' if none."""
+    reasons = item.get("reasons") or []
+    return reasons[0] if reasons else ""
+
+
+def packet_command(
+    lead_id: str, *, since_hours: float, prefs_md: str | None = None
+) -> str:
+    """A copy-pasteable, browserless command to generate ONE packet for a lead.
+
+    Uses the watcher's own capped (--emit-packet => max one) emission targeted at
+    a single lead via --lead-id. Preserves the human-submit invariant; never
+    applies or opens a browser.
+    """
+    parts = [CLI_PROG, "watch-new-jobs", "--since-hours", _fmt_hours(since_hours)]
+    if prefs_md:
+        parts += ["--prefs-md", prefs_md]
+    parts += ["--lead-id", lead_id, "--emit-packet"]
+    return " ".join(parts)
+
+
+def _reason_counts(items: list[dict]) -> dict:
+    """Counts of primary reason codes, grouped by status."""
+    out: dict = {s: {} for s in READINESS_STATUSES}
+    for it in items:
+        bucket = out.setdefault(it.get("status", "reject"), {})
+        code = primary_reason(it)
+        bucket[code] = bucket.get(code, 0) + 1
+    return out
+
+
+def finalize_queue(
+    queue: dict,
+    *,
+    since_hours: float,
+    prefs_md: str | None = None,
+    top: int = 3,
+    source_mode: str = "offline",
+    queue_artifact: str | None = None,
+) -> dict:
+    """Enrich a built queue with non-private handoff fields + a review summary.
+
+    Adds per-item ``rank`` (within status group), ``primary_reason``,
+    ``packet_recommended``, and ``packet_command`` (packet_ready only), plus
+    top-level ``reason_counts`` and ``review_summary``. Adds no private content.
+    """
+    items = queue.get("items", [])
+
+    # Per-status rank in the already-sorted order.
+    counters: dict = {}
+    for it in items:
+        status = it.get("status", "reject")
+        counters[status] = counters.get(status, 0) + 1
+        it["rank"] = counters[status]
+        it["primary_reason"] = primary_reason(it)
+        it["packet_recommended"] = bool(it.get("recommend_packet"))
+        if it.get("status") == "packet_ready" and it.get("lead_id"):
+            it["packet_command"] = packet_command(
+                it["lead_id"], since_hours=since_hours, prefs_md=prefs_md
+            )
+
+    queue["reason_counts"] = _reason_counts(items)
+    queue["review_summary"] = build_review_summary(
+        queue, top=top, source_mode=source_mode, queue_artifact=queue_artifact
+    )
+    return queue
+
+
+def _summary_row(item: dict, *, include_command: bool) -> dict:
+    row = {
+        "rank": item.get("rank"),
+        "company": item.get("company", ""),
+        "title": (item.get("title") or "").strip(),
+        "source": item.get("source", ""),
+        "selected_lane": item.get("selected_lane"),
+        "score": item.get("score"),
+        "freshness_basis": item.get("freshness_basis"),
+        "reasons": list(item.get("reasons") or [])[:3],
+        "recommended_next_action": item.get("recommended_next_action"),
+    }
+    if include_command and item.get("packet_command"):
+        row["packet_command"] = item["packet_command"]
+    return row
+
+
+def build_review_summary(
+    queue: dict,
+    *,
+    top: int = 3,
+    source_mode: str = "offline",
+    queue_artifact: str | None = None,
+) -> dict:
+    """A compact, non-private structured summary of a (finalized) queue."""
+    items = queue.get("items", [])
+    by_status = {s: [it for it in items if it.get("status") == s] for s in READINESS_STATUSES}
+    rejects = by_status["reject"]
+    reject_counts: dict = {}
+    for it in rejects:
+        code = primary_reason(it)
+        reject_counts[code] = reject_counts.get(code, 0) + 1
+
+    return {
+        "lookback_hours": queue.get("lookback_hours"),
+        "source_mode": source_mode,
+        "queue_artifact": queue_artifact,
+        "prefs_applied": queue.get("prefs_applied", {}),
+        "counts": dict(queue.get("totals", {})),
+        "dropped_stale": queue.get("dropped_stale", 0),
+        "dropped_for_cap": queue.get("dropped_for_cap", 0),
+        "already_packeted": queue.get("already_packeted", 0),
+        "packet_ready": [
+            _summary_row(it, include_command=True) for it in by_status["packet_ready"][:top]
+        ],
+        "needs_review": [
+            _summary_row(it, include_command=False) for it in by_status["needs_review"][:top]
+        ],
+        "reject": {"total": len(rejects), "reason_counts": reject_counts},
+    }

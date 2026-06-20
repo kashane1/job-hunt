@@ -285,6 +285,83 @@ def _humanize_override_from_args(args: argparse.Namespace) -> dict | None:
     return override
 
 
+def _print_watch_summary(queue: dict, *, verbose_rejects: bool = False) -> None:
+    """Render the compact, non-private watch-new-jobs review summary.
+
+    Reads the finalized queue's ``review_summary`` (booleans/counts + public
+    posting metadata only). Never prints private profile or preference values.
+    """
+    rs = queue.get("review_summary", {})
+    ps = rs.get("prefs_applied", {})
+    counts = rs.get("counts", {})
+    hrs = rs.get("lookback_hours")
+    if isinstance(hrs, (int, float)) and float(hrs).is_integer():
+        hrs = int(hrs)
+    artifact = rs.get("queue_artifact") or "(not written, dry run)"
+
+    print(f"watch-new-jobs — lookback {hrs}h | mode: {rs.get('source_mode', 'offline')} "
+          f"| artifact: {artifact}")
+    if ps:
+        print(f"prefs: remote_only={ps.get('remote_only')} "
+              f"remote_preferred={ps.get('remote_preferred')} "
+              f"preferred_locations={ps.get('preferred_locations_count')} "
+              f"blocked_locations={ps.get('blocked_locations_count')} "
+              f"comp_floor_set={ps.get('compensation_floor_set')} "
+              f"requires_sponsorship={ps.get('requires_sponsorship')}")
+    print(f"counts: packet_ready={counts.get('packet_ready', 0)} "
+          f"needs_review={counts.get('needs_review', 0)} "
+          f"reject={counts.get('reject', 0)} "
+          f"(dropped stale={rs.get('dropped_stale', 0)}, cap={rs.get('dropped_for_cap', 0)}, "
+          f"already packeted={rs.get('already_packeted', 0)})")
+    for w in queue.get("prefs_warnings", []):
+        print(f"  warning: {w}")
+
+    pr = rs.get("packet_ready", [])
+    print(f"\nPACKET-READY (top {len(pr)}):" if pr else "\nPACKET-READY: none")
+    for row in pr:
+        print(f"  {row['rank']}. {row['company']} — {row['title']}  [{row['source']}]")
+        print(f"     lane={row['selected_lane']} score={row['score']} "
+              f"freshness={row['freshness_basis']}")
+        if row.get("reasons"):
+            print(f"     why: {', '.join(row['reasons'])}")
+        if row.get("packet_command"):
+            print("     -> generate packet (human-submit only):")
+            print(f"        {row['packet_command']}")
+
+    nr = rs.get("needs_review", [])
+    print(f"\nNEEDS-REVIEW (top {len(nr)}):" if nr else "\nNEEDS-REVIEW: none")
+    for row in nr:
+        print(f"  {row['rank']}. {row['company']} — {row['title']}  [{row['source']}]")
+        print(f"     lane={row['selected_lane']} score={row['score']} "
+              f"freshness={row['freshness_basis']}")
+        if row.get("reasons"):
+            print(f"     why: {', '.join(row['reasons'])}")
+        print(f"     -> action: {row.get('recommended_next_action')}")
+
+    rej = rs.get("reject", {})
+    rej_total = rej.get("total", 0)
+    print(f"\nREJECTS: {rej_total} total")
+    if rej_total:
+        if verbose_rejects:
+            for it in queue.get("items", []):
+                if it.get("status") == "reject":
+                    print(f"  - {it['company']} — {(it['title'] or '').strip()}  "
+                          f"[{it.get('primary_reason', '')}]")
+        else:
+            counts_str = ", ".join(
+                f"{code} x{n}" for code, n in
+                sorted(rej.get("reason_counts", {}).items(), key=lambda kv: -kv[1])
+            )
+            print(f"  {counts_str}")
+            print("  (use --verbose-rejects to list individually)")
+
+    packet = queue.get("packet")
+    if packet:
+        print(f"\npacket: {packet.get('status')}"
+              + (f" (draft_id={packet.get('draft_id')}, tier={packet.get('tier')})"
+                 if packet.get("status") == "prepared" else ""))
+
+
 def _deep_merge_humanize_override(
     apply_policy: dict, humanize_override: dict
 ) -> dict:
@@ -2073,6 +2150,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--emit-packet", action="store_true",
         help="Generate ONE packet for the single best packet_ready lead (still human-submit only)",
     )
+    watch_parser.add_argument(
+        "--lead-id", default="",
+        help="Focus on a single lead by lead_id (used by the printed packet command)",
+    )
+    watch_parser.add_argument(
+        "--top", type=int, default=3,
+        help="How many packet_ready / needs_review rows to show in the summary (default 3)",
+    )
+    watch_parser.add_argument(
+        "--verbose-rejects", action="store_true",
+        help="List rejected leads individually instead of just reason-code counts",
+    )
     watch_parser.add_argument("--runtime-config", default="config/runtime.yaml")
     watch_parser.add_argument("--dry-run", action="store_true")
     watch_parser.add_argument("--json", action="store_true")
@@ -2971,6 +3060,15 @@ def main(argv: list[str] | None = None) -> int:
                 if isinstance(lead, dict) and lead.get("lead_id"):
                     leads.append(lead)
 
+        # Optional single-lead focus (used by the copy-pasteable packet command).
+        if args.lead_id:
+            leads = [l for l in leads if l.get("lead_id") == args.lead_id]
+            if not leads:
+                print(json.dumps({"status": "error", "error_code": "lead_not_found",
+                                  "message": f"no lead with lead_id {args.lead_id!r} in {leads_dir}"},
+                                 indent=2))
+                return 2
+
         if args.rescore and profile:
             for lead in leads:
                 try:
@@ -3059,41 +3157,33 @@ def main(argv: list[str] | None = None) -> int:
                 packet_result = {"status": "no_packet_ready_lead"}
         queue["packet"] = packet_result
 
+        # Determine artifact path up front so the review summary can reference it.
         queue_path = None
         if not args.dry_run:
             queue_dir = Path(args.queue_dir)
             queue_dir.mkdir(parents=True, exist_ok=True)
             queue_path = queue_dir / f"new-jobs-queue-{stamp}.json"
-            write_json(queue_path, queue)
         queue["queue_artifact"] = str(queue_path) if queue_path else None
+
+        # Enrich with handoff fields (rank, primary_reason, packet_command) and a
+        # compact review summary. --prefs-md path is non-private (a path, not a
+        # value) and is echoed into the packet command only when supplied.
+        watcher.finalize_queue(
+            queue,
+            since_hours=since_hours,
+            prefs_md=(args.prefs_md or None),
+            top=args.top,
+            source_mode="discovery" if args.discover else "offline",
+            queue_artifact=queue["queue_artifact"],
+        )
+
+        if queue_path is not None:
+            write_json(queue_path, queue)
 
         if args.json:
             print(json.dumps(queue, indent=2))
         else:
-            t = queue["totals"]
-            print(f"watch-new-jobs (--since-hours {since_hours})")
-            print(f"  leads considered: {queue['leads_considered']}  "
-                  f"(already packeted: {queue['already_packeted']}, "
-                  f"dropped stale: {queue['dropped_stale']}, dropped for cap: {queue['dropped_for_cap']})")
-            print(f"  packet_ready={t['packet_ready']}  needs_review={t['needs_review']}  reject={t['reject']}")
-            ps = queue["prefs_applied"]
-            print(f"  prefs: remote_only={ps['remote_only']} remote_preferred={ps['remote_preferred']} "
-                  f"preferred_locations={ps['preferred_locations_count']} "
-                  f"blocked_locations={ps['blocked_locations_count']} "
-                  f"comp_floor_set={ps['compensation_floor_set']} "
-                  f"requires_sponsorship={ps['requires_sponsorship']}")
-            for w in queue.get("prefs_warnings", []):
-                print(f"  warning: {w}")
-            for it in queue["items"][:15]:
-                print(f"  [{it['status']}] {it['company']} — {it['title']} "
-                      f"(score={it['score']}, lane={it['selected_lane']}, "
-                      f"freshness={it['freshness_basis']}/{it['timestamp_confidence']})")
-                if it["reasons"]:
-                    print(f"      reasons: {', '.join(it['reasons'])}")
-            if packet_result:
-                print(f"  packet: {packet_result.get('status')}")
-            if queue_path:
-                print(f"  queue artifact: {queue_path}")
+            _print_watch_summary(queue, verbose_rejects=args.verbose_rejects)
         return 0
 
     if args.command == "discovery-state":
