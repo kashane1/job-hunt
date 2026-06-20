@@ -29,6 +29,75 @@ from job_hunt.schema_checks import ValidationError, validate
 from job_hunt.utils import StructuredError
 
 
+class EnsurePdfAssetTest(unittest.TestCase):
+    """_ensure_pdf_asset records success or a clear, structured failure reason."""
+
+    def setUp(self) -> None:
+        import json
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.record_path = self.root / "rec.json"
+        self.record_path.write_text(
+            json.dumps({"content_id": "x", "output_path": str(self.root / "x.md")}),
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_already_ready_short_circuits(self) -> None:
+        from job_hunt.application import _ensure_pdf_asset
+        rec = {"content_id": "x", "pdf_path": "/already/x.pdf"}
+        # No export attempted; returned as-is.
+        out = _ensure_pdf_asset(self.record_path, rec)
+        self.assertEqual(out["pdf_path"], "/already/x.pdf")
+        self.assertNotIn("pdf_export_error_code", out)
+
+    def test_success_records_pdf_path_no_error(self) -> None:
+        import job_hunt.pdf_export as pe
+        from job_hunt.application import _ensure_pdf_asset
+
+        def fake_export(path):
+            return {"content_id": "x", "pdf_path": str(self.root / "x.pdf")}
+
+        orig = pe.export_pdf
+        pe.export_pdf = fake_export
+        try:
+            out = _ensure_pdf_asset(self.record_path, {"content_id": "x"})
+        finally:
+            pe.export_pdf = orig
+        self.assertTrue(out["pdf_path"].endswith("x.pdf"))
+        self.assertNotIn("pdf_export_error_code", out)
+
+    def test_failure_records_clear_reason_and_remediation(self) -> None:
+        import json
+        import job_hunt.pdf_export as pe
+        from job_hunt.application import _ensure_pdf_asset
+        from job_hunt.pdf_export import PdfExportError
+
+        def fake_export(path):
+            raise PdfExportError(
+                "weasyprint is not installed",
+                error_code="weasyprint_missing",
+                remediation="pip install 'job-hunt[pdf]'",
+            )
+
+        orig = pe.export_pdf
+        pe.export_pdf = fake_export
+        try:
+            out = _ensure_pdf_asset(self.record_path, {"content_id": "x"})
+        finally:
+            pe.export_pdf = orig
+        self.assertEqual(out["pdf_export_error_code"], "weasyprint_missing")
+        self.assertIn("not installed", out["pdf_export_error"])
+        self.assertIn("pip install", out["pdf_export_remediation"])
+        # Persisted to disk (so packets-review can read the reason later).
+        on_disk = json.loads(self.record_path.read_text(encoding="utf-8"))
+        self.assertEqual(on_disk["pdf_export_error_code"], "weasyprint_missing")
+        self.assertIn("pip install", on_disk["pdf_export_remediation"])
+
+
 class ErrorCatalogTest(unittest.TestCase):
     def test_application_error_is_structured(self) -> None:
         exc = ApplicationError("boom", error_code="session_expired")

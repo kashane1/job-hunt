@@ -577,6 +577,9 @@ def _ensure_pdf_asset(record_path: Path, record: dict) -> dict:
         refreshed = read_json(record_path)
         refreshed["pdf_export_error_code"] = exc.error_code
         refreshed["pdf_export_error"] = str(exc)
+        # Persist the remediation (e.g. the install command for a missing optional
+        # engine) so packets-review can surface the fix without re-deriving it.
+        refreshed["pdf_export_remediation"] = exc.remediation
         write_json(record_path, refreshed)
         return refreshed
 

@@ -40,12 +40,14 @@ def _scaffold(
     claim_ids: tuple[str, ...] = ("c-approved-1", "c-approved-2"),
     gen_warnings: tuple[str, ...] = (),
     write_generated: bool = True,
+    pdf: str = "ready",  # "ready" | "failed" | "none"
 ) -> None:
     """Create a synthetic packet under data_root/applications + generated."""
     data_root = root
     d = data_root / "applications" / draft_id
     resume_cid = f"{lead_id}-{lane}-20260620T000000"
     cover_cid = f"{lead_id}-cover-letter-20260620T000000"
+    pdf_ref_status = {"ready": "ready", "failed": "failed", "none": "not_attempted"}[pdf]
     _write(d / "status.json", {
         "draft_id": draft_id,
         "lead_id": lead_id,
@@ -66,8 +68,8 @@ def _scaffold(
         },
         "coherence_warnings": [f"c{i}" for i in range(coherence)],
         "generated_asset_refs": {
-            "resume": {"available": write_generated},
-            "cover_letter": {"available": write_generated},
+            "resume": {"available": write_generated, "pdf_export_status": pdf_ref_status},
+            "cover_letter": {"available": write_generated, "pdf_export_status": pdf_ref_status},
         },
     })
     # Lead with public metadata + a freshness signal.
@@ -83,16 +85,34 @@ def _scaffold(
     })
     if write_generated:
         sources = [f"claim:{c}" for c in claim_ids]
+
+        def _pdf_fields(md_path: str) -> dict:
+            if pdf == "ready":
+                return {"pdf_path": md_path.replace(".md", ".pdf")}
+            if pdf == "failed":
+                return {
+                    "pdf_export_error_code": "weasyprint_missing",
+                    "pdf_export_error": "weasyprint is not installed",
+                    "pdf_export_remediation": "pip install 'job-hunt[pdf]'",
+                }
+            return {}
+
+        resume_md = f"data/generated/resumes/{resume_cid}.md"
+        cover_md = f"data/generated/cover-letters/{cover_cid}.md"
         _write(data_root / "generated" / "resumes" / f"{resume_cid}.json", {
             "content_id": resume_cid,
             "variant_style": lane,
             "source_document_ids": sources,
+            "output_path": resume_md,
+            **_pdf_fields(resume_md),
         })
         _write(data_root / "generated" / "cover-letters" / f"{cover_cid}.json", {
             "content_id": cover_cid,
             "lane_id": "platform_internal_tools",
             "source_document_ids": sources,
             "generation_warnings": [{"code": w} for w in gen_warnings],
+            "output_path": cover_md,
+            **_pdf_fields(cover_md),
         })
 
 
@@ -140,6 +160,31 @@ class PacketReviewTest(unittest.TestCase):
         # Freshness derived from listing_updated_at (24h before NOW).
         self.assertEqual(p["freshness"]["basis"], "posted_at")
         self.assertEqual(p["freshness"]["age_hours"], 24.0)
+        # PDF export succeeded for both assets.
+        self.assertEqual(p["pdf"]["overall"], "ready")
+        self.assertEqual(p["pdf"]["resume"], "ready")
+        self.assertEqual(p["pdf"]["cover_letter"], "ready")
+        self.assertIsNone(p["pdf"]["error_code"])
+
+    def test_failed_pdf_export_needs_attention(self) -> None:
+        _scaffold(self.root, draft_id="nopdf-apply-1", lead_id="nopdf", pdf="failed")
+        p = self._review()[0]
+        self.assertEqual(p["pdf"]["overall"], "failed")
+        self.assertEqual(p["pdf"]["error_code"], "weasyprint_missing")
+        self.assertIn("pip install", p["pdf"]["remediation"])
+        self.assertIn("pdf_export_failed", p["attention_reasons"])
+        self.assertTrue(p["needs_attention"])
+        self.assertFalse(p["ready_for_review"])  # failed PDF must not look ready
+        self.assertEqual(p["recommended_action"], "revise")
+
+    def test_unattempted_pdf_is_soft_note_not_ready(self) -> None:
+        _scaffold(self.root, draft_id="softpdf-apply-1", lead_id="softpdf", pdf="none")
+        p = self._review()[0]
+        self.assertEqual(p["pdf"]["overall"], "not_attempted")
+        self.assertIn("pdf_not_ready", p["notes"])
+        self.assertFalse(p["needs_attention"])  # soft, not a blocker
+        # Soft note downgrades a would-be manual_submit to review.
+        self.assertEqual(p["recommended_action"], "review")
 
     def test_missing_human_submit_is_safety_error(self) -> None:
         _scaffold(self.root, draft_id="x-apply-1", lead_id="x", requires_human_submit=False)

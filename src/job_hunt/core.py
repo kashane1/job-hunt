@@ -328,6 +328,16 @@ def _print_packets_review(packets: list, summary: dict) -> None:
             f"claims: {cl['approved']}/{cl['total']} approved"
             + ("" if cl["all_approved"] else " (NOT all approved)")
         )
+        pdf = p.get("pdf") or {}
+        pdf_line = (
+            f"   pdf: {pdf.get('overall', '?')} "
+            f"(resume={pdf.get('resume', '?')}, cover={pdf.get('cover_letter', '?')})"
+        )
+        if pdf.get("error_code"):
+            pdf_line += f" [{pdf['error_code']}]"
+        print(pdf_line)
+        if pdf.get("overall") == "failed" and pdf.get("remediation"):
+            print(f"   pdf-fix: {pdf['remediation']}")
         if p["claim_safety_warnings"]:
             print(f"   claim-safety: {', '.join(p['claim_safety_warnings'])}")
         if p["duplicate_of"]:

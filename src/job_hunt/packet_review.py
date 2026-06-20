@@ -20,6 +20,12 @@ from typing import Iterable
 
 from .utils import repo_root
 
+# Fix hints for known PDF-export error codes, used when a record predates the
+# persisted remediation field. Tooling text only — never private content.
+_KNOWN_REMEDIATION = {
+    "weasyprint_missing": "pip install 'job-hunt[pdf]'  (or: pip install weasyprint)",
+}
+
 # Lifecycle states that mean the packet is finished / out of the review queue.
 _TERMINAL_STATES = frozenset({
     "submitted",
@@ -118,6 +124,53 @@ def _warning_codes(descriptor: dict) -> list[str]:
     return out
 
 
+def _pdf_asset_status(ref: dict, descriptor: dict) -> str:
+    """PDF status for a single asset: ready / failed / not_attempted / unavailable.
+
+    Prefers ground truth from the generated record (a real ``pdf_path`` means
+    ready; a recorded ``pdf_export_error_code`` means failed), then falls back to
+    whatever packet-prepare stamped into the plan's asset ref.
+    """
+    if descriptor.get("pdf_path"):
+        return "ready"
+    if descriptor.get("pdf_export_error_code"):
+        return "failed"
+    return str(ref.get("pdf_export_status") or "not_attempted")
+
+
+def _pdf_export(refs: dict, resume: dict, cover: dict) -> dict:
+    """Combined PDF-export view for a packet (statuses + tooling diagnostics).
+
+    Diagnostics here are tooling-level only (error code + remediation command) —
+    never resume/cover-letter prose.
+    """
+    statuses = {
+        "resume": _pdf_asset_status(refs.get("resume") or {}, resume),
+        "cover_letter": _pdf_asset_status(refs.get("cover_letter") or {}, cover),
+    }
+    present = list(statuses.values())
+    if any(s == "failed" for s in present):
+        overall = "failed"
+    elif present and all(s == "ready" for s in present):
+        overall = "ready"
+    elif any(s == "unavailable" for s in present):
+        overall = "unavailable"
+    else:
+        overall = "not_attempted"
+    error_code = resume.get("pdf_export_error_code") or cover.get("pdf_export_error_code") or None
+    remediation = resume.get("pdf_export_remediation") or cover.get("pdf_export_remediation") or None
+    if remediation is None and error_code:
+        # Records written before remediation was persisted still get a fix hint.
+        remediation = _KNOWN_REMEDIATION.get(error_code)
+    return {
+        "overall": overall,
+        "resume": statuses["resume"],
+        "cover_letter": statuses["cover_letter"],
+        "error_code": error_code,
+        "remediation": remediation,
+    }
+
+
 def _find_generated(generated_dir: Path, content_id: str) -> dict:
     """Locate a generated content descriptor JSON by content_id under any subdir."""
     if not content_id:
@@ -203,6 +256,8 @@ def assess_packet(
         "all_approved": all_approved,
     }
 
+    pdf = _pdf_export(refs, resume, cover)
+
     safety_warnings = sorted(set(_warning_codes(cover) + _warning_codes(resume)))
 
     requires_human_submit = status.get("requires_human_submit")
@@ -227,6 +282,8 @@ def assess_packet(
         attention.append("claims_not_all_approved")
     if not artifacts_present:
         attention.append("missing_artifacts")
+    if pdf["overall"] == "failed":
+        attention.append("pdf_export_failed")
     needs_attention = bool(attention)
 
     # Soft notes worth a glance but not blockers.
@@ -237,6 +294,9 @@ def assess_packet(
         notes.append("ats_warnings")
     if duplicate_of:
         notes.append("duplicate_existing_packet")
+    if pdf["overall"] not in ("ready", "failed"):
+        # Not failed, but no PDF yet either — don't let it look cleanly ready.
+        notes.append("pdf_not_ready")
 
     ready_for_review = (
         not safety_error
@@ -261,6 +321,7 @@ def assess_packet(
         "artifacts": artifacts,
         "artifacts_present": artifacts_present,
         "ats": {"errors": ats_errors, "warnings": ats_warnings, "status": ats.get("status")},
+        "pdf": pdf,
         "coherence_warnings": coherence,
         "claims": claims,
         "claim_safety_warnings": safety_warnings,
