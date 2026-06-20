@@ -139,6 +139,41 @@ tie, confidence is low, or the lead was never scored. Drop your variants under
 `profile/resumes/` (see `profile/resumes/README.md`). `copilot-run` stops at the
 human submit gate by construction — it prepares, it never submits.
 
+### Scheduled review (cron / launchd friendly)
+
+`run-scheduled-review` wraps the whole safe chain into one repeatable command for
+"jobs from the last X hours": scoped public discovery → readiness ranking →
+prepare up to a hard-capped number of packets (PDFs auto-exported) → read-only
+packet review → a safe aggregate summary. It never applies, opens a browser,
+fills a form, creates an account, or submits — generated packets are
+human-submit only.
+
+```bash
+# Typical scheduled run: last 12h, generate at most 2 packets
+python3 scripts/job_hunt.py run-scheduled-review --hours 12 --max-packets 2
+
+# Review-only (no generation), offline over already-stored leads
+python3 scripts/job_hunt.py run-scheduled-review --hours 6 --max-packets 0 --no-discover
+```
+
+Built-in guardrails (each can `warn` or `fail` the run): `--max-packets` is a
+hard ceiling on generation per run (0 disables it); `profile-doctor` must be
+clean (`--strict-doctor` upgrades warnings to a failure); every private path
+must be gitignored; and PDF export of generated packets must succeed
+(`--strict-pdf`). A failing guardrail returns a non-zero exit so a scheduler can
+gate on it. Private preferences are summarized as counts/booleans only; no
+resume/cover-letter prose is ever printed.
+
+A suggested daily schedule (review only, generate by hand) — not installed for
+you:
+
+```cron
+# 8:00am local, weekdays — last 24h, prepare up to 2 packets, log safely
+0 8 * * 1-5  cd /path/to/job-hunt && SSL_CERT_FILE="$(python3 -m certifi)" \
+  python3 scripts/job_hunt.py run-scheduled-review --hours 24 --max-packets 2 \
+  >> data/watch/scheduled-review.log 2>&1
+```
+
 ## Batch 4: Autonomous Indeed Apply
 
 End-to-end pipeline for applying to Indeed postings: lead discovery →

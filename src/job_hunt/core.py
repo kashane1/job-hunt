@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Iterable
 
+from . import scheduled_review
 from .humanize import HUMANIZE_DEFAULTS
 from .schema_checks import validate
 from .simple_yaml import loads as load_yaml
@@ -346,6 +347,79 @@ def _print_packets_review(packets: list, summary: dict) -> None:
             print(f"   attention: {', '.join(p['attention_reasons'])}")
         print(f"   -> recommended: {p['recommended_action'].upper()}")
     print("\nNote: all packets are human-submit only; this tool never applies or submits.")
+
+
+def _print_scheduled_review(report: dict) -> None:
+    """Render the safe aggregate scheduled-run report.
+
+    Non-private only: counts, booleans, public posting metadata, lane IDs, and
+    reason codes. Never prints resume/cover-letter prose or claim text.
+    """
+    w = report.get("window", {})
+    hrs = w.get("since_hours")
+    if isinstance(hrs, (int, float)) and float(hrs).is_integer():
+        hrs = int(hrs)
+    print("=== run-scheduled-review (no apply/browser/form/submit) ===")
+    print(f"window: last {hrs}h  source={w.get('source_mode')}  "
+          f"leads_considered={w.get('leads_considered')}")
+
+    d = report.get("discovery", {})
+    if d.get("ran"):
+        print(f"discovery: {d.get('companies_contacted')} company source(s) "
+              f"[{', '.join(d.get('sources_contacted') or []) or 'none'}]  "
+              f"newly_ingested={d.get('newly_ingested')}  "
+              f"already_known={d.get('already_known')}  "
+              f"url_guard_drops={d.get('dropped_by_url_guard')}")
+    elif d.get("mode") == "skipped_gap":
+        print(f"discovery: skipped ({d.get('error_code') or 'gap'})")
+    else:
+        print("discovery: offline (not run)")
+
+    q = report.get("queue", {})
+    print(f"queue: packet_ready={q.get('packet_ready')}  "
+          f"needs_review={q.get('needs_review')}  reject={q.get('reject')}  "
+          f"(already_packeted={q.get('already_packeted')}, "
+          f"dropped_stale={q.get('dropped_stale')})")
+
+    pg = report.get("packets_generated", {})
+    pdf = pg.get("pdf", {})
+    cap_note = " [DRY-RUN]" if pg.get("dry_run") else ""
+    print(f"packets generated this run: {pg.get('count')}/{pg.get('cap')} cap{cap_note}  "
+          f"pdf: {pdf.get('pdf_ready', 0)} ready / {pdf.get('pdf_failed', 0)} failed "
+          f"/ {pdf.get('pdf_pending', 0)} pending")
+    for g in pg.get("drafts", []):
+        if g.get("status") == "prepared":
+            print(f"   + {g.get('lead_id')} -> {g.get('draft_id')} "
+                  f"(tier={g.get('tier')}, pdf={g.get('pdf_status')}, "
+                  f"attention={g.get('needs_attention')})")
+        else:
+            print(f"   ! {g.get('lead_id')}: {g.get('error_code') or g.get('status')}")
+
+    pq = report.get("packet_queue", {})
+    print(f"packet queue (all): total={pq.get('total')}  "
+          f"ready_for_review={pq.get('ready_for_review')}  "
+          f"needs_attention={pq.get('needs_attention')}  "
+          f"safety_errors={pq.get('safety_errors')}")
+
+    top = report.get("top_packets", [])
+    if top:
+        print("top candidates:")
+        for i, r in enumerate(top, 1):
+            score = r.get("score")
+            score_s = f"{score}" if score is not None else "?"
+            print(f"   {i}. [{r.get('status')}] {r.get('company') or '?'} — "
+                  f"{(r.get('title') or '?')[:50]}  lane={r.get('lane') or '?'}  "
+                  f"score={score_s}")
+
+    print(f"guardrails: {report.get('guardrail_status', '?').upper()}")
+    for g in report.get("guardrails", []):
+        print(f"   [{g.get('status', '?').upper()}] {g.get('check')}: {g.get('detail')}")
+
+    na = report.get("next_action", {})
+    print(f"\nNEXT: {na.get('message')}")
+    if na.get("command"):
+        print(f"   $ {na['command']}")
+    print("\nSafety: human-submit only; no apply/browser/form/account/submit actions taken.")
 
 
 def _print_watch_summary(queue: dict, *, verbose_rejects: bool = False) -> None:
@@ -2393,6 +2467,61 @@ def build_parser() -> argparse.ArgumentParser:
     watch_parser.add_argument("--dry-run", action="store_true")
     watch_parser.add_argument("--json", action="store_true")
 
+    sched_parser = subparsers.add_parser(
+        "run-scheduled-review",
+        help="Scheduled end-to-end safe review: discover -> rank -> prepare up to "
+             "--max-packets packets (auto-PDF) -> review -> safe summary. "
+             "No apply/browser/form/submit; packets are human-submit only.",
+    )
+    sched_parser.add_argument(
+        "--hours", default="12",
+        help="Lookback window in hours for 'jobs from the last X hours' (default 12).",
+    )
+    sched_parser.add_argument(
+        "--max-packets", type=int, default=None,
+        help=f"Hard cap on packets generated this run (default "
+             f"{scheduled_review.DEFAULT_MAX_PACKETS}; 0 = review only, never generate).",
+    )
+    sched_parser.add_argument(
+        "--no-discover", action="store_true",
+        help="Skip the network discovery pass (rank already-stored leads only).",
+    )
+    sched_parser.add_argument(
+        "--max-ingest", type=int, default=50,
+        help="Ingest budget for the discovery pass (raised default 50 for the watchlist).",
+    )
+    sched_parser.add_argument(
+        "--max-candidates", type=int, default=25,
+        help="Cap on ranked queue items considered after discovery.",
+    )
+    sched_parser.add_argument("--watchlist", default="config/watchlist.yaml")
+    sched_parser.add_argument("--leads-dir", default="data/leads")
+    sched_parser.add_argument("--registry", default="config/resume-variants.json")
+    sched_parser.add_argument(
+        "--candidate-profile", default="profile/normalized/candidate-profile.json")
+    sched_parser.add_argument("--scoring-config", default="config/scoring.yaml")
+    sched_parser.add_argument("--data-root", default="data")
+    sched_parser.add_argument("--runtime-config", default="config/runtime.yaml")
+    sched_parser.add_argument(
+        "--claims", default="profile/claims/claims-bank.json",
+        help="Claims bank for doctor + packet-review approval checks (counts only).")
+    sched_parser.add_argument(
+        "--prefs-md", default="",
+        help="Optional private markdown preferences file; values never printed/committed.")
+    sched_parser.add_argument(
+        "--prefs-json", default="",
+        help="Optional JSON prefs; overrides --prefs-md keys.")
+    sched_parser.add_argument(
+        "--strict-doctor", action="store_true",
+        help="Treat profile-doctor warnings as a failing guardrail (default: warn).")
+    sched_parser.add_argument(
+        "--strict-pdf", action="store_true",
+        help="Treat any failed PDF export as a failing guardrail (default: warn).")
+    sched_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Plan and review only; generate no packets.")
+    sched_parser.add_argument("--json", action="store_true")
+
     state_parser = subparsers.add_parser(
         "discovery-state",
         help="Show the discovery cursor or query the most recent run artifact",
@@ -3566,6 +3695,217 @@ def main(argv: list[str] | None = None) -> int:
             if state_written:
                 print(f"state: written -> {state_written}")
         return 0
+
+    if args.command == "run-scheduled-review":
+        from datetime import datetime, timezone
+
+        from . import packet_review as pr
+        from . import scheduled_review as sr
+        from . import watcher
+        from .application import _draft_id_for_lead
+        from .profile_doctor import run_doctor
+        from .resume_registry import load_registry
+        from .utils import StructuredError
+
+        try:
+            since_hours = watcher.parse_since_hours(args.hours)
+        except watcher.WatcherError as exc:
+            print(json.dumps({"status": "error", "error_code": "invalid_hours",
+                              "message": str(exc)}, indent=2))
+            return 2
+        max_packets = sr.resolve_max_packets(args.max_packets)
+
+        data_root = Path(args.data_root)
+        leads_dir = Path(args.leads_dir)
+        profile_path = Path(args.candidate_profile)
+        profile = read_json(profile_path) if profile_path.exists() else {}
+        scoring_config = load_yaml_file(Path(args.scoring_config), {})
+        registry = load_registry(Path(args.registry))
+        claims_path = Path(args.claims) if args.claims else None
+
+        # Private preferences — only a booleans/counts summary is ever surfaced.
+        prefs: dict = {}
+        prefs_warnings: list[str] = []
+        if args.prefs_md:
+            try:
+                prefs.update(watcher.load_preferences_md(Path(args.prefs_md)))
+            except watcher.WatcherError as exc:
+                prefs_warnings.append(f"prefs_md_unavailable: {exc}")
+        if args.prefs_json:
+            pj = Path(args.prefs_json)
+            if pj.exists():
+                raw_json = read_json(pj)
+                if isinstance(raw_json, dict):
+                    prefs.update(watcher.normalize_preferences(raw_json))
+            else:
+                prefs_warnings.append("prefs_json_unavailable: file not found")
+        prefs = prefs or None
+
+        # 1) Optional scoped public discovery (raised ingest budget for the watchlist).
+        discovery_summary: dict | None = None
+        if not args.no_discover:
+            from .discovery import DiscoveryConfig, discover_jobs
+
+            try:
+                config = DiscoveryConfig(
+                    max_ingest=args.max_ingest,
+                    sources=("greenhouse", "lever", "ashby"),
+                    dry_run=args.dry_run,
+                    auto_score=bool(profile),
+                    scoring_config=scoring_config,
+                    candidate_profile=profile if profile else None,
+                )
+                disc = discover_jobs(
+                    watchlist_path=Path(args.watchlist),
+                    leads_dir=leads_dir,
+                    discovery_root=data_root / "discovery",
+                    config=config,
+                )
+                discovery_summary = disc.to_dict()
+            except StructuredError as exc:
+                discovery_summary = {"status": "skipped_gap", **exc.to_dict()}
+            except Exception as exc:  # network/TLS/etc — report the gap, don't crash
+                discovery_summary = {"status": "skipped_gap", "error": str(exc)}
+
+        # 2) Load stored leads (public metadata only) and build the readiness queue.
+        leads: list[dict] = []
+        if leads_dir.exists():
+            for path in sorted(leads_dir.glob("*.json")):
+                try:
+                    lead = read_json(path)
+                except Exception:
+                    continue
+                if isinstance(lead, dict) and lead.get("lead_id"):
+                    leads.append(lead)
+
+        packeted_lead_ids = {
+            lead["lead_id"]
+            for lead in leads
+            if (data_root / "applications" / _draft_id_for_lead(lead["lead_id"])).exists()
+        }
+        now = datetime.now(timezone.utc)
+        queue = watcher.build_queue(
+            leads,
+            registry=registry,
+            now=now,
+            since_hours=since_hours,
+            packeted_lead_ids=packeted_lead_ids,
+            max_candidates=args.max_candidates,
+            prefs=prefs,
+            drop_stale=True,
+        )
+        queue["leads_considered"] = len(leads)
+        queue["already_packeted"] = len(packeted_lead_ids)
+
+        # 3) Prepare up to the hard cap of packets (human-submit only; PDF auto-
+        #    exported inside prepare_application). Never on --dry-run.
+        candidates = sr.select_packet_candidates(queue, max_packets=max_packets)
+        generated: list[dict] = []
+        generated_draft_ids: set[str] = set()
+        if candidates and not args.dry_run and profile:
+            from .application import PlanError, prepare_application
+
+            policy = {**DEFAULT_RUNTIME_POLICY, **load_yaml_file(Path(args.runtime_config), {})}
+            for lead_id in candidates:
+                lead = next((l for l in leads if l.get("lead_id") == lead_id), None)
+                if lead is None:
+                    continue
+                try:
+                    res = prepare_application(
+                        lead, profile, policy,
+                        output_root=data_root / "applications",
+                        data_root=data_root,
+                    )
+                    generated.append({
+                        "status": "prepared",
+                        "lead_id": lead_id,
+                        "draft_id": res.draft_id,
+                        "tier": res.tier,
+                        "requires_human_submit": True,
+                    })
+                    generated_draft_ids.add(res.draft_id)
+                except PlanError as exc:
+                    generated.append({"status": "error", "lead_id": lead_id, **exc.to_dict()})
+
+        # 4) Read-only packet review over the full packet store.
+        reviews = pr.review_packets(
+            data_root=data_root,
+            claims_path=claims_path if (claims_path and claims_path.exists()) else None,
+        )
+        review_summary = pr.summarize(reviews)
+        generated_reviews = [r for r in reviews if r.get("draft_id") in generated_draft_ids]
+        generated_pdf = sr.generated_pdf_summary(generated_reviews)
+        for g in generated:
+            if g.get("status") == "prepared":
+                match = next((r for r in generated_reviews
+                              if r.get("draft_id") == g.get("draft_id")), None)
+                if match is not None:
+                    g["pdf_status"] = (match.get("pdf") or {}).get("overall")
+                    g["needs_attention"] = bool(match.get("needs_attention"))
+
+        # 5) Guardrails: doctor clean, private paths gitignored, PDFs exported.
+        doctor = run_doctor(registry_path=Path(args.registry), claims_path=claims_path)
+        doctor_counts = doctor.get("counts", {})
+        private_paths = list(sr.PRIVATE_PATHS)
+        resumes_dir = Path("profile/resumes")
+        if resumes_dir.exists():
+            for f in sorted(resumes_dir.glob("*.md")):
+                if f.name.lower() != "readme.md":
+                    private_paths.append(str(f))
+        ignore_map: dict[str, bool] = {}
+        for p in private_paths:
+            try:
+                rc = subprocess.run(
+                    ["git", "check-ignore", "-q", p], capture_output=True
+                ).returncode
+                ignore_map[p] = rc == 0
+            except Exception:
+                ignore_map[p] = False
+        guardrails = [
+            sr.evaluate_doctor_guardrail(
+                errors=doctor_counts.get("error", 0),
+                warnings=doctor_counts.get("warn", 0),
+                strict=args.strict_doctor),
+            sr.evaluate_gitignore_guardrail(ignore_map),
+            sr.evaluate_pdf_guardrail(generated_pdf, strict=args.strict_pdf),
+        ]
+
+        # 6) Assemble + emit the safe aggregate report.
+        top_rows = [it for it in queue.get("items", [])
+                    if it.get("status") in ("packet_ready", "needs_review")][:5]
+        packets_review_cmd = f"{watcher.CLI_PROG} packets-review"
+        prepared_count = sum(1 for g in generated if g.get("status") == "prepared")
+        next_action = sr.next_human_action(
+            guardrail_status=sr.overall_guardrail_status(guardrails),
+            generated_count=prepared_count,
+            queue_counts=queue.get("totals", {}),
+            review_summary=review_summary,
+            max_packets=max_packets,
+            packets_review_cmd=packets_review_cmd,
+        )
+        report = sr.build_report(
+            since_hours=since_hours,
+            max_packets=max_packets,
+            dry_run=args.dry_run,
+            generated_at=now.isoformat(),
+            discovery=discovery_summary,
+            queue=queue,
+            generated=generated,
+            generated_pdf=generated_pdf,
+            review_summary=review_summary,
+            guardrails=guardrails,
+            top_rows=top_rows,
+            next_action=next_action,
+        )
+        report["prefs_applied"] = watcher.preferences_summary(prefs)
+        if prefs_warnings:
+            report["prefs_warnings"] = prefs_warnings
+
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            _print_scheduled_review(report)
+        return 1 if report["guardrail_status"] == sr.GUARDRAIL_FAIL else 0
 
     if args.command == "discovery-state":
         from .discovery import BUCKETS, load_cursor
