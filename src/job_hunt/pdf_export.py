@@ -14,7 +14,9 @@ Security:
 from __future__ import annotations
 
 import html as html_module
+import os
 import re
+import sys
 import types
 from pathlib import Path
 from typing import Final
@@ -24,6 +26,44 @@ from .utils import StructuredError, ensure_dir, now_iso, read_json, write_json
 PDF_EXPORT_ERROR_CODES: Final = frozenset({
     "weasyprint_missing", "source_missing", "render_failed", "pdf_fetch_blocked",
 })
+
+# Apple Silicon Homebrew dylib directory. WeasyPrint resolves its native
+# Cairo/Pango libraries via ctypes at import time; with the python.org framework
+# Python this directory is not on the loader's fallback path, so the import
+# "succeeds" but rendering fails. See ensure_macos_library_path.
+_HOMEBREW_LIB: Final = "/opt/homebrew/lib"
+
+
+def ensure_macos_library_path() -> bool:
+    """Make Homebrew's dylib dir discoverable to WeasyPrint's ctypes loader.
+
+    On Apple Silicon macOS the python.org framework Python does not search
+    ``/opt/homebrew/lib`` for the Cairo/Pango dylibs WeasyPrint needs, so users
+    otherwise have to prefix every command with
+    ``DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib``. This appends that directory
+    to the loader fallback path in-process, which works because WeasyPrint loads
+    its native libraries lazily (``dlopen`` reads the env var at call time) and
+    we run BEFORE ``import weasyprint``.
+
+    Safe by construction — it is a no-op unless ALL hold:
+    - the platform is macOS (``sys.platform == "darwin"``),
+    - ``/opt/homebrew/lib`` actually exists,
+    - it is not already present in ``DYLD_FALLBACK_LIBRARY_PATH``.
+
+    Never overrides an existing user value — it appends, so the user's own
+    entries keep priority. Returns True iff it modified the environment.
+    """
+    if sys.platform != "darwin":
+        return False
+    if not os.path.isdir(_HOMEBREW_LIB):
+        return False
+    current = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+    parts = [p for p in current.split(os.pathsep) if p]
+    if _HOMEBREW_LIB in parts:
+        return False
+    parts.append(_HOMEBREW_LIB)
+    os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = os.pathsep.join(parts)
+    return True
 
 
 class PdfExportError(StructuredError):
@@ -54,6 +94,9 @@ _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 
 
 def _weasyprint_or_raise() -> types.ModuleType:
+    # Make Homebrew dylibs discoverable on macOS BEFORE the import resolves the
+    # native libraries (no-op off macOS / when already set).
+    ensure_macos_library_path()
     try:
         import weasyprint
         return weasyprint

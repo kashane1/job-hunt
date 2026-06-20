@@ -11,14 +11,64 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
+import os
+from unittest import mock
+
 from job_hunt.pdf_export import (
     PDF_EXPORT_ERROR_CODES,
     PdfExportError,
     _render_inline,
     _safe_url_fetcher,
+    ensure_macos_library_path,
     markdown_to_html,
     resolve_content_record_path,
 )
+
+
+class EnsureMacosLibraryPathTest(unittest.TestCase):
+    """ensure_macos_library_path is a safe, idempotent macOS-only env shim."""
+
+    HB = "/opt/homebrew/lib"
+
+    def _run(self, *, platform, isdir, env):
+        with mock.patch("job_hunt.pdf_export.sys.platform", platform), \
+             mock.patch("job_hunt.pdf_export.os.path.isdir", return_value=isdir), \
+             mock.patch.dict(os.environ, env, clear=True):
+            changed = ensure_macos_library_path()
+            return changed, os.environ.get("DYLD_FALLBACK_LIBRARY_PATH")
+
+    def test_macos_missing_env_adds_path(self) -> None:
+        changed, val = self._run(platform="darwin", isdir=True, env={})
+        self.assertTrue(changed)
+        self.assertEqual(val, self.HB)
+
+    def test_already_present_no_duplicate(self) -> None:
+        changed, val = self._run(
+            platform="darwin", isdir=True,
+            env={"DYLD_FALLBACK_LIBRARY_PATH": self.HB},
+        )
+        self.assertFalse(changed)
+        self.assertEqual(val, self.HB)
+        self.assertEqual(val.count(self.HB), 1)
+
+    def test_existing_user_value_preserved_and_appended(self) -> None:
+        changed, val = self._run(
+            platform="darwin", isdir=True,
+            env={"DYLD_FALLBACK_LIBRARY_PATH": "/custom/lib"},
+        )
+        self.assertTrue(changed)
+        # User's own entry keeps priority (comes first); Homebrew appended.
+        self.assertEqual(val, f"/custom/lib{os.pathsep}{self.HB}")
+
+    def test_non_macos_no_change(self) -> None:
+        changed, val = self._run(platform="linux", isdir=True, env={})
+        self.assertFalse(changed)
+        self.assertIsNone(val)
+
+    def test_missing_homebrew_path_no_change(self) -> None:
+        changed, val = self._run(platform="darwin", isdir=False, env={})
+        self.assertFalse(changed)
+        self.assertIsNone(val)
 
 
 class MarkdownToHtmlTest(unittest.TestCase):
