@@ -121,6 +121,49 @@ class MarkdownToHtmlTest(unittest.TestCase):
         p_open = html.index("<p>")
         self.assertLess(ul_close, p_open)
 
+    def test_strips_leading_yaml_frontmatter(self) -> None:
+        # Generated resumes lead with a YAML frontmatter block; it must NOT
+        # render as a text blob at the top of the PDF.
+        md = (
+            "---\n"
+            "document_type: resume\n"
+            "lane: platform_backend\n"
+            "tags:\n"
+            "  - backend\n"
+            "  - python\n"
+            "---\n"
+            "\n"
+            "# Jane Candidate\n"
+            "\n"
+            "Backend engineer.\n"
+        )
+        html = markdown_to_html(md)
+        self.assertIn("<h1>Jane Candidate</h1>", html)
+        self.assertNotIn("document_type", html)
+        self.assertNotIn("platform_backend", html)
+        self.assertNotIn("---", html)
+        self.assertNotIn(">backend<", html)  # the YAML tag, not a body word
+
+    def test_no_frontmatter_left_unchanged(self) -> None:
+        md = "# Title\n\nBody paragraph."
+        html = markdown_to_html(md)
+        self.assertIn("<h1>Title</h1>", html)
+        self.assertIn("<p>Body paragraph.</p>", html)
+
+    def test_literal_triple_dash_in_body_preserved(self) -> None:
+        # A --- that is NOT a top-of-file fence must survive (rendered as text).
+        md = "# Title\n\nbefore\n\n---\n\nafter"
+        html = markdown_to_html(md)
+        self.assertIn("<h1>Title</h1>", html)
+        self.assertIn("---", html)
+        self.assertIn("<p>after</p>", html)
+
+    def test_crlf_frontmatter_stripped(self) -> None:
+        md = "---\r\nlane: x\r\n---\r\n\r\n# Name\r\n"
+        html = markdown_to_html(md)
+        self.assertIn("<h1>Name</h1>", html)
+        self.assertNotIn("lane: x", html)
+
 
 class SafeUrlFetcherTest(unittest.TestCase):
     def test_rejects_file_scheme(self) -> None:

@@ -92,6 +92,18 @@ strong { font-weight: 600; }
 
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 
+# Leading YAML frontmatter block: a ``---`` fence on the very first line, the
+# metadata body, and a closing ``---`` fence. Generated resumes carry this
+# (document_type/lane/tags/...); without stripping it WeasyPrint renders the raw
+# keys as a text blob at the top of the PDF. Only the FIRST top-of-file block is
+# removed, so a literal ``---`` later in the body is untouched.
+_FRONTMATTER_RE = re.compile(r"\A﻿?---[ \t]*\r?\n.*?\r?\n---[ \t]*\r?\n?", re.DOTALL)
+
+
+def strip_frontmatter(md_text: str) -> str:
+    """Remove a leading YAML frontmatter block, if present (else unchanged)."""
+    return _FRONTMATTER_RE.sub("", md_text, count=1)
+
 
 def _weasyprint_or_raise() -> types.ModuleType:
     # Make Homebrew dylibs discoverable on macOS BEFORE the import resolves the
@@ -132,6 +144,7 @@ def markdown_to_html(md_text: str) -> str:
     """Minimal markdown → HTML renderer.
 
     Handles the bounded set of markdown that generation.py emits:
+    - a leading YAML frontmatter block (stripped, never rendered)
     - #, ##, ### headings
     - `- ` unordered lists
     - **bold**
@@ -144,6 +157,7 @@ def markdown_to_html(md_text: str) -> str:
     - Adding a new markdown construct requires extending this renderer AND the
       negative-invariant tests.
     """
+    md_text = strip_frontmatter(md_text)
     lines_out: list[str] = []
     in_list = False
     for line in md_text.splitlines():
