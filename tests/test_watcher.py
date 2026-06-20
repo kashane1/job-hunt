@@ -28,7 +28,10 @@ def _iso(hours_ago: float) -> str:
     return (NOW - timedelta(hours=hours_ago)).isoformat()
 
 
-# Registry where only platform_backend is ready_local (mirrors the real repo).
+# Controlled fixture: only platform_backend is ready_local here (generalist_swe
+# is deliberately non-ready so reject/no-ready-lane paths can be exercised). The
+# real repo registry also marks generalist_swe ready_local — see
+# RealRegistryLaneTest for that.
 REGISTRY = {
     "schema_version": 1,
     "default_variant": "generalist_swe",
@@ -1442,6 +1445,19 @@ class RunDeltaCliTest(unittest.TestCase):
             d = json.loads(out)
             self.assertIn("delta_command", d)
             self.assertIn("--review-report", d["delta_command"])
+
+
+class RealRegistryLaneTest(unittest.TestCase):
+    """The real repo registry must mark generalist_swe ready_local so the watcher
+    stops rejecting generalist leads as no_ready_lane (metadata only — no private
+    resume content read here)."""
+
+    def test_generalist_swe_recognized_ready(self) -> None:
+        from job_hunt.resume_registry import load_registry
+        reg = load_registry(ROOT / "config" / "resume-variants.json")
+        self.assertTrue(watcher.lane_is_ready(reg, "generalist_swe"))
+        self.assertTrue(watcher.lane_is_ready(reg, "platform_backend"))
+        self.assertFalse(watcher.lane_is_ready(reg, "ai_engineer"))
 
 
 if __name__ == "__main__":

@@ -50,6 +50,15 @@ class LoadRegistryTest(unittest.TestCase):
         with self.assertRaises(RegistryError):
             load_registry(Path("/nonexistent/registry.json"))
 
+    def test_generalist_swe_registered_ready_local_private(self) -> None:
+        # The default lane is a ready_local lane backed by a private, gitignored
+        # resume (metadata only — no file existence / no private content here).
+        reg = load_registry()
+        v = next(x for x in reg["variants"] if x["id"] == "generalist_swe")
+        self.assertEqual(v.get("review_status"), "ready_local")
+        self.assertTrue(v["resume_path"].startswith("profile/resumes/"))
+        self.assertNotIn("examples/", v["resume_path"])  # no committed example anchor
+
     def test_duplicate_ids_raise(self) -> None:
         with tempfile.TemporaryDirectory() as t:
             p = Path(t) / "r.json"
@@ -132,12 +141,14 @@ class RouteLeadTest(unittest.TestCase):
 
 
 class PickRegistryResumeTest(unittest.TestCase):
-    def test_default_lane_resolves_existing_file(self) -> None:
-        # Generic title -> default lane -> bundled example resume (exists).
+    def test_default_lane_routes_for_generic_title(self) -> None:
+        # Generic title -> default lane (generalist_swe). Its resume is now a
+        # private, gitignored ready_local file (like platform_backend), so the
+        # path resolves only when present locally; a clean checkout lacks it.
         path, decision = pick_registry_resume(_scored_lead("Widget Analyst", []))
-        self.assertIsNotNone(path)
-        self.assertTrue(path.exists())
         self.assertEqual(decision["selected_variant_id"], "generalist_swe")
+        if path is not None:
+            self.assertTrue(path.exists())
 
     def test_specialized_missing_file_falls_through(self) -> None:
         # AI title routes to ai_engineer whose file is absent -> (None, decision).

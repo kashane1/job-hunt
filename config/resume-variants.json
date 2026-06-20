@@ -109,9 +109,15 @@
       "title_patterns": [],
       "emphasis_skills": [
         "python",
+        "typescript",
+        "javascript",
+        "react",
+        "node",
         "backend",
+        "frontend",
         "api",
         "sql",
+        "postgres",
         "aws",
         "automation"
       ],
@@ -121,8 +127,9 @@
         "senior",
         "staff"
       ],
-      "resume_path": "examples/profile/raw/resume.md",
-      "notes": "Catch-all default (empty title_patterns = wildcard). Anchored to the bundled example resume so a fresh checkout resolves; replace with your real generalist resume under profile/resumes/."
+      "resume_path": "profile/resumes/generalist-swe.md",
+      "review_status": "ready_local",
+      "notes": "Catch-all default (empty title_patterns = wildcard) AND a ready lane. Resume authored locally (gitignored), broad full-stack-leaning SWE positioning drawn only from approved generalist_swe claims (real employer/titles/dates/education; platform-level revenue wording; no agency/paid-client, no K8s, no unverified percentages). Like platform_backend, the file is private/gitignored, so a clean checkout will not have it (profile-doctor reports ready_local as info, never error)."
     }
   ]
 }
