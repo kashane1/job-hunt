@@ -29,6 +29,7 @@ data/leads/
 data/runs/
 data/discovery/
 data/calibration/
+data/watch/
 docs/reports/*-report.md
 examples/results/
 

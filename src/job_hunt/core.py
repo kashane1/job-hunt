@@ -2025,6 +2025,53 @@ def build_parser() -> argparse.ArgumentParser:
     disc_parser.add_argument("--profile", default="profile/normalized/candidate-profile.json")
     disc_parser.add_argument("--scoring-config", default="config/scoring.yaml")
 
+    watch_parser = subparsers.add_parser(
+        "watch-new-jobs",
+        help="Rank recently-seen leads into a packet-readiness queue (no apply, no browser)",
+    )
+    watch_parser.add_argument(
+        "--since-hours", default="24",
+        help="Lookback window in hours (e.g. 1, 8, 12, 24; floats allowed). Must be > 0.",
+    )
+    watch_parser.add_argument("--leads-dir", default="data/leads")
+    watch_parser.add_argument("--registry", default="config/resume-variants.json")
+    watch_parser.add_argument("--profile", default="profile/normalized/candidate-profile.json")
+    watch_parser.add_argument("--scoring-config", default="config/scoring.yaml")
+    watch_parser.add_argument("--watchlist", default="config/watchlist.yaml")
+    watch_parser.add_argument("--queue-dir", default="data/watch")
+    watch_parser.add_argument("--data-root", default="data")
+    watch_parser.add_argument(
+        "--prefs-json", default="",
+        help="Optional JSON file with {remote_only, blocked_locations} for location gating",
+    )
+    watch_parser.add_argument(
+        "--max-candidates", type=int, default=25,
+        help="Cap on emitted queue items after ranking",
+    )
+    watch_parser.add_argument(
+        "--max-ingest", type=int, default=25,
+        help="Cap on leads ingested when --discover is set",
+    )
+    watch_parser.add_argument(
+        "--discover", action="store_true",
+        help="Run a scoped public discovery pass (Greenhouse/Lever/Ashby) before ranking",
+    )
+    watch_parser.add_argument(
+        "--rescore", action="store_true",
+        help="Re-score leads against the profile before ranking (default: reuse stored scores)",
+    )
+    watch_parser.add_argument(
+        "--include-stale", action="store_true",
+        help="Keep window-stale leads in the queue as rejects instead of dropping them",
+    )
+    watch_parser.add_argument(
+        "--emit-packet", action="store_true",
+        help="Generate ONE packet for the single best packet_ready lead (still human-submit only)",
+    )
+    watch_parser.add_argument("--runtime-config", default="config/runtime.yaml")
+    watch_parser.add_argument("--dry-run", action="store_true")
+    watch_parser.add_argument("--json", action="store_true")
+
     state_parser = subparsers.add_parser(
         "discovery-state",
         help="Show the discovery cursor or query the most recent run artifact",
@@ -2860,6 +2907,161 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
             return 2
         print(json.dumps(result.to_dict(), indent=2))
+        return 0
+
+    if args.command == "watch-new-jobs":
+        from datetime import datetime, timezone
+
+        from . import watcher
+        from .application import _draft_id_for_lead
+        from .resume_registry import load_registry
+        from .utils import StructuredError
+
+        try:
+            since_hours = watcher.parse_since_hours(args.since_hours)
+        except watcher.WatcherError as exc:
+            print(json.dumps({"status": "error", "error_code": "invalid_since_hours",
+                              "message": str(exc)}, indent=2))
+            return 2
+
+        profile_path = Path(args.profile)
+        profile = read_json(profile_path) if profile_path.exists() else {}
+        scoring_config = load_yaml_file(Path(args.scoring_config), {})
+        data_root = Path(args.data_root)
+        leads_dir = Path(args.leads_dir)
+
+        discovery_summary: dict | None = None
+        if args.discover:
+            from .discovery import DiscoveryConfig, discover_jobs
+
+            try:
+                config = DiscoveryConfig(
+                    max_ingest=args.max_ingest,
+                    sources=("greenhouse", "lever", "ashby"),
+                    dry_run=args.dry_run,
+                    auto_score=bool(profile),
+                    scoring_config=scoring_config,
+                    candidate_profile=profile if profile else None,
+                )
+                disc = discover_jobs(
+                    watchlist_path=Path(args.watchlist),
+                    leads_dir=leads_dir,
+                    discovery_root=data_root / "discovery",
+                    config=config,
+                )
+                discovery_summary = disc.to_dict()
+            except StructuredError as exc:
+                discovery_summary = {"status": "skipped_gap", **exc.to_dict()}
+            except Exception as exc:  # network/TLS/etc — report the gap, don't crash
+                discovery_summary = {"status": "skipped_gap", "error": str(exc)}
+
+        # Load leads from the local store (public metadata only).
+        leads: list[dict] = []
+        if leads_dir.exists():
+            for path in sorted(leads_dir.glob("*.json")):
+                try:
+                    lead = read_json(path)
+                except Exception:
+                    continue
+                if isinstance(lead, dict) and lead.get("lead_id"):
+                    leads.append(lead)
+
+        if args.rescore and profile:
+            for lead in leads:
+                try:
+                    score_lead(lead, profile, scoring_config)
+                except Exception:
+                    pass
+
+        registry = load_registry(Path(args.registry))
+
+        prefs = None
+        if args.prefs_json:
+            prefs_path = Path(args.prefs_json)
+            if prefs_path.exists():
+                prefs = read_json(prefs_path)
+
+        packeted_lead_ids = {
+            lead["lead_id"]
+            for lead in leads
+            if (data_root / "applications" / _draft_id_for_lead(lead["lead_id"])).exists()
+        }
+
+        now = datetime.now(timezone.utc)
+        queue = watcher.build_queue(
+            leads,
+            registry=registry,
+            now=now,
+            since_hours=since_hours,
+            packeted_lead_ids=packeted_lead_ids,
+            max_candidates=args.max_candidates,
+            prefs=prefs,
+            drop_stale=not args.include_stale,
+        )
+        stamp = now.strftime("%Y%m%dT%H%M%SZ")
+        queue["generated_at"] = now.isoformat()
+        queue["leads_considered"] = len(leads)
+        queue["already_packeted"] = len(packeted_lead_ids)
+        if discovery_summary is not None:
+            queue["discovery"] = discovery_summary
+
+        # Optional single-packet handoff (capped to exactly one, human-submit only).
+        packet_result: dict | None = None
+        if args.emit_packet and not args.dry_run:
+            ready = [it for it in queue["items"] if it["status"] == "packet_ready"]
+            if ready:
+                from .application import PlanError, prepare_application
+
+                best = ready[0]
+                lead = next((l for l in leads if l.get("lead_id") == best["lead_id"]), None)
+                if lead is not None and profile:
+                    policy = {**DEFAULT_RUNTIME_POLICY, **load_yaml_file(Path(args.runtime_config), {})}
+                    try:
+                        res = prepare_application(
+                            lead, profile, policy,
+                            output_root=data_root / "applications",
+                            data_root=data_root,
+                        )
+                        packet_result = {
+                            "status": "prepared",
+                            "lead_id": best["lead_id"],
+                            "draft_id": res.draft_id,
+                            "tier": res.tier,
+                            "requires_human_submit": True,
+                        }
+                    except PlanError as exc:
+                        packet_result = {"status": "error", "lead_id": best["lead_id"], **exc.to_dict()}
+            else:
+                packet_result = {"status": "no_packet_ready_lead"}
+        queue["packet"] = packet_result
+
+        queue_path = None
+        if not args.dry_run:
+            queue_dir = Path(args.queue_dir)
+            queue_dir.mkdir(parents=True, exist_ok=True)
+            queue_path = queue_dir / f"new-jobs-queue-{stamp}.json"
+            write_json(queue_path, queue)
+        queue["queue_artifact"] = str(queue_path) if queue_path else None
+
+        if args.json:
+            print(json.dumps(queue, indent=2))
+        else:
+            t = queue["totals"]
+            print(f"watch-new-jobs (--since-hours {since_hours})")
+            print(f"  leads considered: {queue['leads_considered']}  "
+                  f"(already packeted: {queue['already_packeted']}, "
+                  f"dropped stale: {queue['dropped_stale']}, dropped for cap: {queue['dropped_for_cap']})")
+            print(f"  packet_ready={t['packet_ready']}  needs_review={t['needs_review']}  reject={t['reject']}")
+            for it in queue["items"][:15]:
+                print(f"  [{it['status']}] {it['company']} — {it['title']} "
+                      f"(score={it['score']}, lane={it['selected_lane']}, "
+                      f"freshness={it['freshness_basis']}/{it['timestamp_confidence']})")
+                if it["reasons"]:
+                    print(f"      reasons: {', '.join(it['reasons'])}")
+            if packet_result:
+                print(f"  packet: {packet_result.get('status')}")
+            if queue_path:
+                print(f"  queue artifact: {queue_path}")
         return 0
 
     if args.command == "discovery-state":
