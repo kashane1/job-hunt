@@ -248,6 +248,48 @@ SKILL_ALIAS_PATTERNS = {
     skill: tuple(re.compile(rf"(?<![a-z0-9]){re.escape(alias.lower())}(?![a-z0-9])") for alias in aliases)
     for skill, aliases in SKILL_ALIASES.items()
 }
+
+# Curated single-token tech terms that the SKILL_ALIASES map (tuned for the
+# candidate's own stack + skills-gap analysis) does not cover. Keeping this list
+# focused on unambiguous engineering vocabulary — NOT generic English — is what
+# lets `_extract_lead_keywords` favor skill-like terms without a brittle,
+# company-specific denylist. Single tokens only (see SKILL_LEXICON below).
+SKILL_LEXICON_EXTRA: Final[frozenset[str]] = frozenset({
+    "node", "azure", "go", "golang", "java", "rust", "kotlin", "swift",
+    "scala", "elixir", "erlang", "graphql", "rest", "grpc", "terraform",
+    "ansible", "jenkins", "nginx", "linux", "bash", "microservices",
+    "serverless", "lambda", "dynamodb", "mongodb", "elasticsearch",
+    "rabbitmq", "celery", "spark", "airflow", "pytorch", "tensorflow",
+    "numpy", "pandas", "observability", "prometheus", "grafana", "datadog",
+    "oauth", "jwt", "websocket", "websockets", "webpack", "vue", "angular",
+    "svelte", "tailwind", "redux", "express", "nestjs", "spring", "graphene",
+    "distributed", "scalability", "concurrency", "latency", "throughput",
+})
+
+# Token-level skills lexicon: the set of tokens that count as "skill-like" when
+# choosing lead keywords. Built from the existing SKILL_ALIASES + the candidate
+# skill_keywords defaults so the three sources stay in sync, plus the curated
+# extension above. Multi-word aliases (e.g. "amazon web services", "google
+# cloud") are deliberately NOT exploded into their component tokens — doing so
+# would inject brand/blurb words like "google", "amazon", "web", "cloud" into
+# the lexicon and reintroduce exactly the noise we are filtering out. We keep
+# only single-token canonicals/aliases; the canonical (aws, gcp, ai) already
+# carries the concept.
+def _build_skill_lexicon() -> frozenset[str]:
+    lex: set[str] = set(SKILL_LEXICON_EXTRA)
+    for canonical, aliases in SKILL_ALIASES.items():
+        for term in (canonical, *aliases):
+            if " " in term:
+                continue  # skip multi-word aliases — see note above
+            lex.update(tokens(term))
+    for keyword in DEFAULT_SKILL_KEYWORDS:
+        if " " in keyword:
+            continue
+        lex.update(tokens(keyword))
+    return frozenset(lex)
+
+
+SKILL_LEXICON: Final[frozenset[str]] = _build_skill_lexicon()
 REMOTE_POSITIVE_PATTERNS = (
     re.compile(r"\bremote[-\s]?friendly\b", re.I),
     re.compile(r"\bfully remote\b", re.I),
@@ -1538,6 +1580,65 @@ def extract_requirement_lines(sections: dict[str, list[str]], names: tuple[str, 
     return unique_preserve_order(items)
 
 
+# How many lead keywords to emit. The ATS coverage check measures the fraction
+# of these that appear in a tailored resume, so every keyword should be a term a
+# well-matched resume would plausibly contain. We cap modestly — a short list of
+# real skills beats a long list padded with blurb nouns.
+LEAD_KEYWORD_LIMIT: Final = 20
+
+
+def _extract_lead_keywords(title: str, body: str, company: str, location: str) -> list[str]:
+    """Select skill-like keywords for a lead, not the most frequent words.
+
+    Pure top-N frequency over the posting is dominated by the company "about
+    us" blurb, so it surfaces marketing/product nouns (``app``, ``audio``,
+    ``chrome``, ``text-to-speech``), the company name (``speechify``), and
+    location tokens (``boulder``, ``usa``) as if they were required skills.
+    Those never appear in any resume, so the ATS `low_keyword_coverage` check
+    fires spuriously and forces packets to tier_2.
+
+    The fix keeps only terms that are skill-like *by construction*:
+
+    1. tokens recognized by the skills lexicon (:data:`SKILL_LEXICON`), found
+       anywhere in the title or body and ordered by frequency, and
+    2. meaningful tokens from the job *title* (which describes the role, never
+       the marketing blurb).
+
+    Both sources exclude the lead's own company/location tokens (derived from
+    the lead, so no hard-coded company list) and the generic stopwords. The
+    company blurb can therefore only contribute through recognized skill terms,
+    never through arbitrary product/brand nouns. This is deliberately precision-
+    biased: when in doubt a term is dropped, which keeps ATS coverage honest
+    (the failure mode is a shorter list of real skills, not false low coverage).
+    """
+    dynamic_noise = set(tokens(company)) | set(tokens(location))
+
+    def is_noise(word: str) -> bool:
+        return (
+            len(word) < 3
+            or word in KEYWORD_STOPWORDS
+            or word in WEB_NOISE_STOPWORDS
+            or word in dynamic_noise
+        )
+
+    # Strip HTML before tokenizing so markup/attribute artifacts (span,
+    # data-sheets-root, etc.) don't crowd out real role keywords.
+    body_counts = Counter(tokens(strip_html(body)))
+    title_tokens = tokens(strip_html(title))
+
+    lexicon_hits = [
+        word
+        for word, _ in body_counts.most_common()
+        if word in SKILL_LEXICON and not is_noise(word)
+    ]
+    # Title tokens also pass through the lexicon ordering above when present in
+    # the body; include any remaining non-noise title tokens for role nouns
+    # ("software", "engineer", "developer") that aren't in the lexicon.
+    title_terms = [word for word in title_tokens if not is_noise(word)]
+
+    return unique_preserve_order(lexicon_hits + title_terms)[:LEAD_KEYWORD_LIMIT]
+
+
 def extract_lead(input_path: Path, output_dir: Path) -> dict:
     ensure_dir(output_dir)
     if input_path.suffix.lower() == ".json":
@@ -1581,16 +1682,7 @@ def extract_lead(input_path: Path, output_dir: Path) -> dict:
         sections, ("requirement", "qualification", "must", "about you")
     )
     preferred = extract_requirement_lines(sections, ("preferred", "nice to have", "bonus"))
-    # Strip HTML before tokenizing so markup/attribute artifacts (span,
-    # data-sheets-root, etc.) don't crowd out real role keywords.
-    keyword_counts = Counter(tokens(strip_html(f"{title}\n{body}")))
-    keywords = [
-        word
-        for word, _ in keyword_counts.most_common(100)
-        if word not in KEYWORD_STOPWORDS
-        and word not in WEB_NOISE_STOPWORDS
-        and len(word) >= 3
-    ][:20]
+    keywords = _extract_lead_keywords(title, body, company, location)
 
     lead = {
         "lead_id": lead_id,

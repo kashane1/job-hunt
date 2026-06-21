@@ -594,6 +594,115 @@ company: NoiseCorp
                 msg=f"too few meaningful keywords: {sorted(keywords)}",
             )
 
+    # Reproduction of the real Speechify "Software Engineer, Platform" posting
+    # (data/leads/speechify-...-c2015042.json is gitignored, so the fixture is
+    # inlined). The intro is a marketing/product blurb; the real skills live in
+    # the requirement bullets. Pure top-N frequency extracted 14 noise tokens
+    # (company name, location, product/brand words) and only 6 real skills.
+    _SPEECHIFY_JOB = """---
+source: greenhouse
+company: Speechify
+title: Software Engineer, Platform - Boulder, CO, USA
+location: Boulder, CO, USA
+---
+# Software Engineer, Platform - Boulder, CO, USA
+
+The mission of Speechify is to make sure that reading is never a barrier to learning.
+Over 50 million people use Speechify text-to-speech products to turn whatever they are
+reading into audio, so they can read faster and read more. Speechify products include its
+iOS app, Android App, Mac App, Chrome Extension, and Web App. Google named Speechify the
+Chrome Extension of the Year.
+
+## What You will Do
+- Design, develop, and maintain robust APIs including a public TTS API and internal APIs
+- Oversee the full backend API landscape, optimizing for performance and maintainability
+- Align backend architecture with overall product strategy and user experience
+
+## An Ideal Candidate Should Have
+- Proven experience in backend development: TS/Node
+- Direct experience with GCP and knowledge of AWS, Azure, or other cloud providers
+- Preferred: Experience with Docker and containerized deployments
+- Preferred: Proficiency in deploying high availability applications on Kubernetes
+"""
+
+    def test_speechify_keywords_drop_blurb_and_keep_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            src = root / "speechify.md"
+            src.write_text(self._SPEECHIFY_JOB, encoding="utf-8")
+            lead = extract_lead(src, root / "leads")
+            keywords = set(lead["normalized_requirements"]["keywords"])
+
+            # The 14 noise tokens the frequency extractor used to surface:
+            # company name, location parts, and product/marketing/brand words.
+            for noise in ("speechify", "boulder", "usa", "app", "audio", "chrome",
+                          "extension", "google", "make", "more", "people", "read",
+                          "reading", "text-to-speech"):
+                self.assertNotIn(noise, keywords, f"{noise!r} leaked into keywords")
+
+            # The real stack from the requirement bullets / title should lead —
+            # several of these (gcp/aws/docker/kubernetes/node) were missed
+            # entirely by frequency ranking because they appear only once.
+            expected_skills = {"backend", "platform", "api", "gcp", "aws",
+                               "azure", "docker", "kubernetes", "node", "software",
+                               "engineer"}
+            self.assertTrue(
+                expected_skills.issubset(keywords),
+                msg=f"missing real skills {sorted(expected_skills - keywords)}; "
+                    f"got {sorted(keywords)}",
+            )
+
+    def test_speechify_well_matched_resume_passes_ats_coverage(self) -> None:
+        """A resume covering the real stack must NOT trip low_keyword_coverage.
+
+        Before the fix, noise keywords (boulder/usa/speechify/text-to-speech)
+        could never appear in a resume, so coverage was dragged below the error
+        threshold and the packet was spuriously forced to tier_2.
+        """
+        from job_hunt.ats_check import check_resume
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            src = root / "speechify.md"
+            src.write_text(self._SPEECHIFY_JOB, encoding="utf-8")
+            lead = extract_lead(src, root / "leads")
+
+            resume = """# Jane Engineer
+
+## Technical Skills
+Languages: TypeScript, Node, Python. Cloud: GCP, AWS, Azure. Containers and
+orchestration: Docker, Kubernetes. Backend APIs and distributed platform services.
+
+## Professional Experience
+
+Senior Platform Engineer, Acme Cloud — 2021 to present
+As a platform engineer I designed and operated the backend that powered our flagship
+product for a fast growing customer base. My team owned the public API as well as the
+internal services that other groups depended on every single day. I cared a great deal
+about making those interfaces clear, stable, and pleasant for other engineers to build
+against, and I spent a lot of my time reviewing designs and mentoring teammates so the
+whole organization could move faster together over the long run without breaking things.
+
+Most of our compute ran on the cloud, and over the years I worked across more than one
+provider as the business grew and our needs changed. I led the migration that moved a
+large set of services into containers, which made our deployments far more repeatable and
+much easier to reason about whenever something went wrong late at night during an incident.
+We invested heavily in availability and in keeping latency low even as traffic climbed, and
+I am proud of the reliability story we were able to tell our customers as a direct result.
+
+I also partnered closely with the product organization to turn fuzzy ideas into shippable
+software, and I genuinely enjoyed translating a rough goal into a concrete plan that the
+rest of the team could execute on with confidence and a clear sense of ownership.
+
+## Education
+B.S. in Computer Science
+"""
+            report = check_resume(resume, lead)
+            error_codes = {e["code"] for e in report["errors"]}
+            self.assertNotIn("low_keyword_coverage", error_codes)
+            self.assertNotIn("keyword_stuffing", error_codes)
+            self.assertGreaterEqual(report["metrics"]["keyword_coverage"], 0.60)
+
 
 if __name__ == "__main__":
     unittest.main()
