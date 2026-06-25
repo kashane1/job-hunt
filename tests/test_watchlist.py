@@ -34,8 +34,13 @@ companies:
   - name: "AnotherCorp"
     lever: "anothercorp"
     workable: "anothercorp"
+    smartrecruiters: "AnotherCorp"
+    recruitee: "anothercorp"
+    personio: "anothercorp"
   - name: "Federal"
     usajobs_search_profile: "federal_remote"
+  - name: "Remotive search"
+    remotive_search: "platform engineer"
 
 usajobs_profiles:
   - name: "federal_remote"
@@ -59,10 +64,14 @@ class ParseWatchlistTest(unittest.TestCase):
         from job_hunt.simple_yaml import loads as load_yaml
         data = load_yaml(VALID_YAML)
         wl = parse_watchlist(data)
-        self.assertEqual(len(wl.companies), 3)
+        self.assertEqual(len(wl.companies), 4)
         self.assertEqual(wl.companies[0].name, "ExampleCo")
         self.assertEqual(wl.companies[0].greenhouse, "exampleco")
         self.assertEqual(wl.companies[0].ashby, "exampleco")
+        self.assertEqual(wl.companies[1].smartrecruiters, "AnotherCorp")
+        self.assertEqual(wl.companies[1].recruitee, "anothercorp")
+        self.assertEqual(wl.companies[1].personio, "anothercorp")
+        self.assertEqual(wl.companies[3].remotive_search, "platform engineer")
         self.assertEqual(wl.filters.keywords_any, ("engineer",))
         self.assertEqual(wl.companies[2].usajobs_profile.name, "federal_remote")
 

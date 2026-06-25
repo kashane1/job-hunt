@@ -221,5 +221,56 @@ class DiscoveryErrorCodeCoverageTest(unittest.TestCase):
             self.assertIn(m.group(1), DISCOVERY_ERROR_CODES)
 
 
+class SourceCatalogDriftGuardTest(unittest.TestCase):
+    """Single-source-of-truth guard: the provider registry, lead-schema
+    enums, and the operator-facing source catalog must all stay in lockstep
+    with source_provenance.SOURCE_DEFINITIONS. This is the drift the
+    expand-official-job-api-integrations plan and todo 067 warned about."""
+
+    def setUp(self) -> None:
+        from job_hunt.source_provenance import (
+            DISCOVERY_SOURCE_TOKENS,
+            SOURCE_DEFINITIONS,
+        )
+
+        self.tokens = DISCOVERY_SOURCE_TOKENS
+        self.defs = SOURCE_DEFINITIONS
+
+    def test_registry_matches_source_definitions(self) -> None:
+        from job_hunt.discovery_providers.registry import _PROVIDERS
+
+        self.assertEqual(set(_PROVIDERS), set(self.tokens))
+
+    def test_every_provider_token_is_lead_schema_valid(self) -> None:
+        primary = LEAD_SCHEMA["properties"]["primary_source"]["properties"][
+            "provider"
+        ]["enum"]
+        observed = LEAD_SCHEMA["properties"]["observed_sources"]["items"][
+            "properties"
+        ]["provider"]["enum"]
+        discovered = LEAD_SCHEMA["properties"]["discovered_via"]["items"][
+            "properties"
+        ]["source"]["enum"]
+        for token, definition in self.defs.items():
+            self.assertIn(token, primary, f"{token} missing from primary_source enum")
+            self.assertIn(token, observed, f"{token} missing from observed_sources enum")
+            self.assertIn(
+                definition.discovered_via_source,
+                discovered,
+                f"{definition.discovered_via_source} missing from discovered_via enum",
+            )
+
+    def test_sources_catalog_is_in_lockstep(self) -> None:
+        from job_hunt.utils import load_yaml_file
+
+        catalog = load_yaml_file(ROOT / "config" / "sources.yaml")
+        self.assertEqual(
+            catalog["supported_sources"],
+            list(self.tokens),
+            "config/sources.yaml supported_sources must match "
+            "DISCOVERY_SOURCE_TOKENS exactly (order included)",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

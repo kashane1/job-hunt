@@ -263,7 +263,20 @@ Active discovery now supports:
 - `indeed_search`
 - `ashby`
 - `workable`
+- `smartrecruiters`
+- `recruitee`
+- `personio`
 - `usajobs`
+- `remotive` (Phase 3 aggregator — lower authority than direct ATS feeds)
+
+Public-ATS sources (`greenhouse`, `lever`, `ashby`, `workable`,
+`smartrecruiters`, `recruitee`, `personio`) and the government `usajobs`
+API are `system_of_record`; `careers`/`indeed_search` are derived board
+searches; `remotive` is a derived aggregator. Source authority and
+precedence are single-sourced in `src/job_hunt/source_provenance.py`; when
+one canonical posting appears from several feeds the higher-precedence
+observation wins and the rest are retained for audit. See
+[`docs/guides/job-discovery.md`](docs/guides/job-discovery.md#discovery-source-categories).
 
 The discovery/source catalog is tracked in `config/sources.yaml` and is
 kept in lockstep with the runtime provider registry. `watchlist-validate`

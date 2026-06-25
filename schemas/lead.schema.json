@@ -64,7 +64,11 @@
               "indeed_search",
               "ashby_public_api",
               "workable_public_api",
-              "usajobs_api"
+              "smartrecruiters_public_api",
+              "recruitee_public_api",
+              "personio_public_api",
+              "usajobs_api",
+              "remotive_api"
             ]
           },
           "company": { "type": "string" },
@@ -86,7 +90,11 @@
             "indeed_search",
             "ashby",
             "workable",
-            "usajobs"
+            "smartrecruiters",
+            "recruitee",
+            "personio",
+            "usajobs",
+            "remotive"
           ]
         },
         "authority": { "enum": ["system_of_record", "derived"] },
@@ -116,7 +124,11 @@
               "indeed_search",
               "ashby",
               "workable",
-              "usajobs"
+              "smartrecruiters",
+              "recruitee",
+              "personio",
+              "usajobs",
+              "remotive"
             ]
           },
           "authority": { "enum": ["system_of_record", "derived"] },

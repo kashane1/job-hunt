@@ -16,11 +16,20 @@
           "lever": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
           "ashby": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
           "workable": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "smartrecruiters": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "recruitee": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "personio": { "type": "string", "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
           "careers_url": { "type": "string", "pattern": "^https://" },
           "indeed_search_url": {
             "type": "string",
             "pattern": "^https://(?:www\\.|secure\\.)?indeed\\.com/jobs",
             "description": "Batch 4 (Indeed auto-apply). Full Indeed search URL including q and optionally l, radius."
+          },
+          "remotive_search": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "description": "Phase 3 aggregator. Free-text query passed to the public Remotive remote-jobs API (lower-authority than direct ATS feeds)."
           },
           "usajobs_search_profile": {
             "type": "string",

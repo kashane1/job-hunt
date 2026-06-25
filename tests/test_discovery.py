@@ -36,6 +36,11 @@ from job_hunt.discovery import (
     write_review_entry,
 )
 from job_hunt.discovery_providers.ashby import discover_ashby_board
+from job_hunt.discovery_providers.personio import discover_personio_company
+from job_hunt.discovery_providers.registry import get_discovery_provider
+from job_hunt.discovery_providers.remotive import discover_remotive_search
+from job_hunt.discovery_providers.recruitee import discover_recruitee_account
+from job_hunt.discovery_providers.smartrecruiters import discover_smartrecruiters_company
 from job_hunt.discovery_providers.usajobs import USAJobsSearchProfile, discover_usajobs_profile
 from job_hunt.discovery_providers.workable import discover_workable_account
 from job_hunt.ingestion import (
@@ -222,6 +227,166 @@ class WorkableBoardTest(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0].source, "workable")
         self.assertEqual(entries[0].location, "London, United Kingdom")
+
+
+class SmartRecruitersBoardTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.limiter = DomainRateLimiter(default_interval_s=0.0)
+
+    def test_public_postings_are_normalized(self) -> None:
+        body = (FIXTURES / "smartrecruiters-postings-valid.json").read_text(encoding="utf-8")
+        with patch(
+            "job_hunt.discovery_providers.smartrecruiters.fetch",
+            return_value=_fetch_ok(body),
+        ):
+            entries, truncated = discover_smartrecruiters_company("exampleco", self.limiter)
+        self.assertFalse(truncated)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].source, "smartrecruiters")
+        self.assertEqual(entries[0].location, "Remote")
+        self.assertEqual(
+            entries[0].posting_url,
+            "https://jobs.smartrecruiters.com/exampleco/743999000000111111",
+        )
+        self.assertEqual(entries[1].location, "Austin, TX")
+        self.assertIn("remote", entries[0].signals)
+
+    def test_unknown_company_returns_empty(self) -> None:
+        def raise_404(*a, **kw):
+            raise IngestionError("not found", error_code="not_found", url="x")
+
+        with patch(
+            "job_hunt.discovery_providers.smartrecruiters.fetch",
+            side_effect=raise_404,
+        ):
+            entries, truncated = discover_smartrecruiters_company("nope", self.limiter)
+        self.assertEqual(entries, [])
+        self.assertFalse(truncated)
+
+
+class RecruiteeBoardTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.limiter = DomainRateLimiter(default_interval_s=0.0)
+
+    def test_published_offers_only_are_normalized(self) -> None:
+        body = (FIXTURES / "recruitee-offers-valid.json").read_text(encoding="utf-8")
+        with patch(
+            "job_hunt.discovery_providers.recruitee.fetch",
+            return_value=_fetch_ok(body),
+        ):
+            entries, truncated = discover_recruitee_account("exampleco", self.limiter)
+        self.assertFalse(truncated)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].source, "recruitee")
+        self.assertEqual(entries[0].location, "Remote")
+        self.assertEqual(
+            entries[0].posting_url,
+            "https://exampleco.recruitee.com/o/senior-platform-engineer",
+        )
+        self.assertIn("remote", entries[0].signals)
+
+
+class PersonioBoardTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.limiter = DomainRateLimiter(default_interval_s=0.0)
+
+    def test_public_xml_feed_is_normalized(self) -> None:
+        body = (FIXTURES / "personio-feed-valid.xml").read_text(encoding="utf-8")
+        with patch(
+            "job_hunt.discovery_providers.personio.fetch",
+            return_value=_fetch_ok(body),
+        ):
+            entries, truncated = discover_personio_company("exampleco", self.limiter)
+        self.assertFalse(truncated)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].source, "personio")
+        self.assertEqual(entries[0].title, "Senior Platform Engineer")
+        self.assertEqual(entries[0].location, "Munich")
+        self.assertEqual(
+            entries[0].posting_url,
+            "https://exampleco.jobs.personio.com/job/1000001",
+        )
+
+    def test_doctype_feed_is_refused(self) -> None:
+        hostile = (
+            '<?xml version="1.0"?>\n'
+            '<!DOCTYPE lolz [ <!ENTITY lol "lol"> ]>\n'
+            "<workzag-jobs><position><id>1</id><name>x</name></position></workzag-jobs>"
+        )
+        with patch(
+            "job_hunt.discovery_providers.personio.fetch",
+            return_value=_fetch_ok(hostile),
+        ):
+            with self.assertRaises(IngestionError) as ctx:
+                discover_personio_company("exampleco", self.limiter)
+        self.assertEqual(ctx.exception.error_code, "xml_entity_blocked")
+
+    def test_falls_back_to_de_on_com_miss(self) -> None:
+        body = (FIXTURES / "personio-feed-valid.xml").read_text(encoding="utf-8")
+
+        def by_tld(url, *a, **kw):
+            if ".jobs.personio.com/" in url:
+                raise IngestionError("not found", error_code="not_found", url=url)
+            return _fetch_ok(body)
+
+        with patch(
+            "job_hunt.discovery_providers.personio.fetch",
+            side_effect=by_tld,
+        ):
+            entries, _ = discover_personio_company("exampleco", self.limiter)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(
+            entries[0].posting_url,
+            "https://exampleco.jobs.personio.de/job/1000001",
+        )
+
+
+class RemotiveBoardTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.limiter = DomainRateLimiter(default_interval_s=0.0)
+
+    def test_public_search_feed_is_normalized(self) -> None:
+        body = (FIXTURES / "remotive-search-valid.json").read_text(encoding="utf-8")
+        with patch(
+            "job_hunt.discovery_providers.remotive.fetch",
+            return_value=_fetch_ok(body),
+        ):
+            entries, truncated = discover_remotive_search("platform engineer", self.limiter)
+        self.assertFalse(truncated)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0].source, "remotive")
+        self.assertEqual(entries[0].source_company, "remotive")
+        self.assertEqual(entries[0].employer_name, "ExampleCo")
+        self.assertEqual(entries[0].location, "Worldwide")
+        self.assertEqual(
+            entries[0].posting_url,
+            "https://remotive.com/remote-jobs/software-dev/senior-platform-engineer-5500001",
+        )
+
+    def test_provider_rewrites_source_company_to_virtual_company(self) -> None:
+        body = (FIXTURES / "remotive-search-valid.json").read_text(encoding="utf-8")
+        company = type(
+            "RemotiveCo", (), {"name": "Remotive remote search", "remotive_search": "platform engineer"}
+        )()
+        provider = get_discovery_provider("remotive")
+        with patch(
+            "job_hunt.discovery_providers.remotive.fetch",
+            return_value=_fetch_ok(body),
+        ):
+            page = provider.list_entries(
+                company, rate_limiter=self.limiter, watchlist_company="Remotive remote search"
+            )
+        self.assertEqual(len(page.entries), 2)
+        self.assertEqual(page.entries[0].source_company, "Remotive remote search")
+        self.assertEqual(page.entries[0].employer_name, "ExampleCo")
+
+    def test_aggregator_precedence_is_lowest(self) -> None:
+        self.assertEqual(
+            compare_source_precedence("ats_public", "aggregator"), 1
+        )
+        self.assertEqual(
+            compare_source_precedence("aggregator", "government_api"), -1
+        )
 
 
 class USAJobsProviderTest(unittest.TestCase):

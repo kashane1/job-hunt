@@ -455,6 +455,9 @@ _ATS_SUBDOMAIN_PATTERNS: Final = (
     ("greenhouse", re.compile(r"^https?://job-boards\.greenhouse\.io/([^/]+)/?$", re.I)),
     ("lever", re.compile(r"^https?://jobs\.lever\.co/([^/]+)/?$", re.I)),
     ("ashby", re.compile(r"^https?://jobs\.ashbyhq\.com/([^/]+)/?$", re.I)),
+    ("smartrecruiters", re.compile(
+        r"^https?://(?:jobs|careers)\.smartrecruiters\.com/([^/]+)/?$", re.I
+    )),
     ("workday", re.compile(r"^https?://[^/]+\.myworkdayjobs\.com/", re.I)),
 )
 _JSON_LD_RE = re.compile(
@@ -1075,6 +1078,14 @@ def _run_source(
                 from .discovery_providers.ashby import discover_ashby_board
 
                 extra, extra_truncated = discover_ashby_board(slug, rate_limiter)
+            elif platform == "smartrecruiters":
+                from .discovery_providers.smartrecruiters import (
+                    discover_smartrecruiters_company,
+                )
+
+                extra, extra_truncated = discover_smartrecruiters_company(
+                    slug, rate_limiter
+                )
             else:
                 continue
         except IngestionError as exc:

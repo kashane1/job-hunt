@@ -4,6 +4,10 @@ from dataclasses import replace
 
 from .ashby import AshbyDiscoveryProvider
 from .base import DiscoveryLowConfidenceEntry, DiscoveryPage
+from .personio import PersonioDiscoveryProvider
+from .recruitee import RecruiteeDiscoveryProvider
+from .remotive import RemotiveDiscoveryProvider
+from .smartrecruiters import SmartRecruitersDiscoveryProvider
 from .usajobs import USAJobsDiscoveryProvider
 from .workable import WorkableDiscoveryProvider
 
@@ -123,6 +127,10 @@ _PROVIDERS = {
     "careers": CareersDiscoveryProvider(),
     "ashby": AshbyDiscoveryProvider(),
     "workable": WorkableDiscoveryProvider(),
+    "smartrecruiters": SmartRecruitersDiscoveryProvider(),
+    "recruitee": RecruiteeDiscoveryProvider(),
+    "personio": PersonioDiscoveryProvider(),
+    "remotive": RemotiveDiscoveryProvider(),
     "usajobs": USAJobsDiscoveryProvider(),
 }
 

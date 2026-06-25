@@ -20,7 +20,11 @@ class StubCompany:
     lever = "exampleco"
     ashby = "exampleco"
     workable = "exampleco"
+    smartrecruiters = "exampleco"
+    recruitee = "exampleco"
+    personio = "exampleco"
     indeed_search_url = "https://www.indeed.com/jobs?q=exampleco"
+    remotive_search = "platform engineer"
     careers_url = "https://example.com/careers"
     usajobs_search_profile = "federal_remote_platform"
     usajobs_profile = object()
@@ -28,7 +32,11 @@ class StubCompany:
 
 class DiscoveryRegistryTest(unittest.TestCase):
     def test_all_expected_providers_are_registered(self) -> None:
-        for name in ("greenhouse", "lever", "indeed_search", "careers", "ashby", "workable", "usajobs"):
+        for name in (
+            "greenhouse", "lever", "indeed_search", "careers", "ashby",
+            "workable", "smartrecruiters", "recruitee", "personio", "usajobs",
+            "remotive",
+        ):
             self.assertIsNotNone(get_discovery_provider(name))
 
     @patch("job_hunt.discovery.discover_greenhouse_board")
@@ -92,6 +100,106 @@ class DiscoveryRegistryTest(unittest.TestCase):
         page = provider.list_entries(StubCompany(), rate_limiter=object())
         self.assertEqual(len(page.entries), 1)
         self.assertFalse(page.truncated)
+
+    @patch("job_hunt.discovery_providers.smartrecruiters.discover_smartrecruiters_company")
+    def test_smartrecruiters_provider_delegates_to_fetcher(self, mock_fetch) -> None:
+        mock_fetch.return_value = ([
+            ListingEntry(
+                title="Engineer",
+                location="Remote",
+                posting_url="https://jobs.smartrecruiters.com/exampleco/123",
+                source="smartrecruiters",
+                source_company="exampleco",
+                internal_id="123",
+                updated_at="2026-04-20T00:00:00Z",
+            )
+        ], False)
+        provider = get_discovery_provider("smartrecruiters")
+        page = provider.list_entries(StubCompany(), rate_limiter=object())
+        self.assertEqual(len(page.entries), 1)
+        self.assertFalse(page.truncated)
+
+    def test_smartrecruiters_provider_returns_empty_when_slug_missing(self) -> None:
+        provider = get_discovery_provider("smartrecruiters")
+        company = type("NoSR", (), {"name": "NoSR", "smartrecruiters": ""})()
+        page = provider.list_entries(company, rate_limiter=object())
+        self.assertEqual(page.entries, ())
+
+    @patch("job_hunt.discovery_providers.recruitee.discover_recruitee_account")
+    def test_recruitee_provider_delegates_to_fetcher(self, mock_fetch) -> None:
+        mock_fetch.return_value = ([
+            ListingEntry(
+                title="Engineer",
+                location="Remote",
+                posting_url="https://exampleco.recruitee.com/o/eng",
+                source="recruitee",
+                source_company="exampleco",
+                internal_id="1",
+                updated_at="2026-04-20T00:00:00Z",
+            )
+        ], False)
+        provider = get_discovery_provider("recruitee")
+        page = provider.list_entries(StubCompany(), rate_limiter=object())
+        self.assertEqual(len(page.entries), 1)
+        self.assertFalse(page.truncated)
+
+    def test_recruitee_provider_returns_empty_when_slug_missing(self) -> None:
+        provider = get_discovery_provider("recruitee")
+        company = type("NoRec", (), {"name": "NoRec", "recruitee": ""})()
+        page = provider.list_entries(company, rate_limiter=object())
+        self.assertEqual(page.entries, ())
+
+    @patch("job_hunt.discovery_providers.personio.discover_personio_company")
+    def test_personio_provider_delegates_to_fetcher(self, mock_fetch) -> None:
+        mock_fetch.return_value = ([
+            ListingEntry(
+                title="Engineer",
+                location="Munich",
+                posting_url="https://exampleco.jobs.personio.com/job/1",
+                source="personio",
+                source_company="exampleco",
+                internal_id="1",
+                updated_at="2026-04-20",
+            )
+        ], False)
+        provider = get_discovery_provider("personio")
+        page = provider.list_entries(StubCompany(), rate_limiter=object())
+        self.assertEqual(len(page.entries), 1)
+        self.assertFalse(page.truncated)
+
+    def test_personio_provider_returns_empty_when_slug_missing(self) -> None:
+        provider = get_discovery_provider("personio")
+        company = type("NoPer", (), {"name": "NoPer", "personio": ""})()
+        page = provider.list_entries(company, rate_limiter=object())
+        self.assertEqual(page.entries, ())
+
+    @patch("job_hunt.discovery_providers.remotive.discover_remotive_search")
+    def test_remotive_provider_delegates_and_rewrites_company(self, mock_fetch) -> None:
+        mock_fetch.return_value = ([
+            ListingEntry(
+                title="Engineer",
+                location="Worldwide",
+                posting_url="https://remotive.com/remote-jobs/x-1",
+                source="remotive",
+                source_company="remotive",
+                internal_id="1",
+                updated_at="2026-04-20T00:00:00",
+                employer_name="RealemployerCo",
+            )
+        ], False)
+        provider = get_discovery_provider("remotive")
+        page = provider.list_entries(
+            StubCompany(), rate_limiter=object(), watchlist_company="My Remotive Search"
+        )
+        self.assertEqual(len(page.entries), 1)
+        self.assertEqual(page.entries[0].source_company, "My Remotive Search")
+        self.assertEqual(page.entries[0].employer_name, "RealemployerCo")
+
+    def test_remotive_provider_returns_empty_when_query_missing(self) -> None:
+        provider = get_discovery_provider("remotive")
+        company = type("NoRemotive", (), {"name": "NoRemotive", "remotive_search": ""})()
+        page = provider.list_entries(company, rate_limiter=object())
+        self.assertEqual(page.entries, ())
 
     @patch("job_hunt.discovery_providers.usajobs.discover_usajobs_profile")
     def test_usajobs_provider_passes_cursor(self, mock_fetch) -> None:
