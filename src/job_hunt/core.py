@@ -3565,8 +3565,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "pipeline-summary":
         from .analytics import report_pipeline
 
-        result = report_pipeline(Path(args.data_root))
-        print(json.dumps(result, indent=2))
+        print(json.dumps(report_pipeline(Path(args.data_root)), indent=2))
         return 0
 
     if args.command == "analyze-skills-gap":
