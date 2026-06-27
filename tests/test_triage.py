@@ -453,6 +453,38 @@ class TriageInboxAntiSpoofTest(unittest.TestCase):
                 "applied",
             )
 
+    def test_allowlisted_forged_dkim_without_correlation_quarantined(self) -> None:
+        # C1 regression (check-replies plan review): on the agent-assembled
+        # payload path, From + Authentication-Results are author-controlled, so
+        # a spoofer CAN clear the allowlist + dkim=pass gate. The load-bearing
+        # last line of defense is correlation: with no posting_url/jk matching
+        # any draft, the message MUST quarantine — never auto-advance an
+        # unrelated lead — even though it cleared the sender gate.
+        from job_hunt.triage import triage_inbox
+        with tempfile.TemporaryDirectory() as t:
+            root = Path(t)
+            (root / "leads").mkdir(parents=True)
+            write_json(root / "leads" / "L1.json", {
+                "lead_id": "L1", "company": "Acme",
+            })
+            _status(root, "L1", "applied")
+            e = ParsedEmail(
+                sender="no-reply@greenhouse.io",      # allowlisted string
+                message_id="spoof1",
+                subject="Your application — offer",
+                body="we're excited to offer you the role",
+                authentication_results="dkim=pass",   # forged on this path
+                event_type="offer",
+                posting_url=None, indeed_jk=None,      # NO correlation key
+            )
+            roll = triage_inbox([e], data_root=root)
+            self.assertEqual(roll["advanced"], 0)
+            self.assertEqual(roll["quarantined"], 1)
+            self.assertEqual(
+                read_json(root / "applications" / "L1-status.json")["current_stage"],
+                "applied",
+            )
+
 
 class TrustInvariantTest(unittest.TestCase):
     def test_triage_module_has_no_llm_or_runtime_config(self) -> None:
