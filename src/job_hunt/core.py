@@ -3037,6 +3037,13 @@ def build_parser() -> argparse.ArgumentParser:
     mae.add_argument("--data-root", default="data")
     mae.add_argument("--dry-run", action="store_true")
 
+    bfp = subparsers.add_parser(
+        "backfill-pipeline",
+        help="Synthesize flat tracking records from application packets so pipeline-summary reflects packet-submitted applications",
+    )
+    bfp.add_argument("--data-root", default="data")
+    bfp.add_argument("--dry-run", action="store_true")
+
     wdr = subparsers.add_parser(
         "withdraw-application",
         help="Withdraw an application (user retracted)",
@@ -4753,6 +4760,13 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"status": "error", **exc.to_dict()}, indent=2))
             return 2
         print(json.dumps({"status": "ok", "lead_id": args.lead_id, "lifecycle_state": status["lifecycle_state"]}, indent=2))
+        return 0
+
+    if args.command == "backfill-pipeline":
+        from .tracking import backfill_from_packets
+
+        rollup = backfill_from_packets(Path(args.data_root), dry_run=args.dry_run)
+        print(json.dumps(rollup, indent=2))
         return 0
 
     if args.command == "withdraw-application":

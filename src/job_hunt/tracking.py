@@ -584,3 +584,127 @@ def check_integrity(data_root: Path) -> dict:
         "issue_counts": {k: len(v) for k, v in report.items() if isinstance(v, list) and k not in informational},
     }
     return report
+
+
+# =============================================================================
+# Backfill: synthesize the flat tracking model from application packets
+# =============================================================================
+
+def _packet_applied_at(disposition: dict, packet: dict) -> str:
+    """Earliest ``manually_submitted`` timestamp for a packet, with fallbacks.
+
+    Prefers the oldest submission event in ``manual_disposition.history`` so
+    the synthesized applied_date matches when the user actually applied (not
+    when the backfill ran). Falls back to the disposition's then the packet's
+    ``updated_at``.
+    """
+    stamps = [
+        h.get("at")
+        for h in disposition.get("history", [])
+        if h.get("status") == "manually_submitted" and h.get("at")
+    ]
+    if stamps:
+        return min(stamps)
+    return disposition.get("updated_at") or packet.get("updated_at") or now_iso()
+
+
+def _packet_target_stage(packet: dict) -> tuple[str, str] | None:
+    """Map a packet's real signals to a tracking stage + timestamp.
+
+    Returns ``(stage, timestamp)`` for packets that represent a real
+    application event, or ``None`` for ones that don't (drafted-but-never-acted,
+    explicitly skipped). The packet ``current_stage`` is ignored — it is always
+    ``not_applied`` in the packet model; ``manual_disposition`` and
+    ``lifecycle_state`` carry the truth.
+    """
+    disposition = packet.get("manual_disposition")
+    if isinstance(disposition, dict) and disposition.get("status") == "manually_submitted":
+        return "applied", _packet_applied_at(disposition, packet)
+    if packet.get("lifecycle_state") == "withdrawn":
+        return "withdrawn", packet.get("updated_at") or now_iso()
+    return None
+
+
+def backfill_from_packets(data_root: Path, *, dry_run: bool = False) -> dict:
+    """Synthesize flat ``{lead_id}-status.json`` tracking records from the
+    application packets under ``data_root/applications/*/status.json``.
+
+    The packet model (application.py) and the analytics tracking model (this
+    module) are separate stores in the same directory. Analytics/pipeline
+    reports read the flat ``{lead_id}-status.json`` files; the packets are
+    nested ``<draft_id>/status.json``. This bridges them so a user who applied
+    through packets sees those applications in ``pipeline-summary``.
+
+    Only real application events are backfilled — ``manually_submitted`` →
+    ``applied`` (with the historical submit timestamp) and ``withdrawn`` →
+    ``withdrawn``. Drafted-but-never-submitted and explicitly skipped packets
+    are reported under ``skipped`` but never invented as applications.
+
+    Idempotent and non-destructive: an existing flat record is never
+    overwritten (so a lead already advanced past ``applied`` by ``triage`` is
+    left untouched). Records carry a ``backfilled: True`` provenance marker.
+    """
+    apps_dir = data_root / "applications"
+    rollup: dict = {
+        "applied": 0,
+        "withdrawn": 0,
+        "skipped_not_an_application": 0,
+        "skipped_already_present": 0,
+        "total_packets": 0,
+        "dry_run": dry_run,
+        "created": [],
+    }
+    if not apps_dir.is_dir():
+        return rollup
+
+    for packet_path in sorted(apps_dir.glob("*/status.json")):
+        try:
+            packet = read_json(packet_path)
+        except (json.JSONDecodeError, KeyError, OSError):
+            continue
+        rollup["total_packets"] += 1
+
+        lead_id = packet.get("lead_id")
+        if not lead_id:
+            rollup["skipped_not_an_application"] += 1
+            continue
+
+        target = _packet_target_stage(packet)
+        if target is None:
+            rollup["skipped_not_an_application"] += 1
+            continue
+        stage, timestamp = target
+
+        flat_path = apps_dir / f"{lead_id}-status.json"
+        if flat_path.exists():
+            rollup["skipped_already_present"] += 1
+            continue
+
+        suppress = stage in TERMINAL_STAGES | SEMI_TERMINAL_STAGES
+        record = {
+            "lead_id": lead_id,
+            "current_stage": stage,
+            "transitions": [{
+                "from_stage": "not_applied",
+                "to_stage": stage,
+                "timestamp": timestamp,
+                "note": "backfilled from application packet",
+            }],
+            "generated_content_ids": packet.get("generated_content_ids", []),
+            "follow_up": {
+                "next_follow_up_date": "",
+                "follow_up_count": 0,
+                "suppress_follow_up": suppress,
+            },
+            "outcome_notes": packet.get("outcome_notes", ""),
+            "created_at": packet.get("created_at", timestamp),
+            "updated_at": timestamp,
+            "backfilled": True,
+        }
+        if not dry_run:
+            ensure_dir(apps_dir)
+            write_json(flat_path, record)
+        rollup["applied" if stage == "applied" else "withdrawn"] += 1
+        rollup["created"].append({"lead_id": lead_id, "stage": stage, "timestamp": timestamp})
+
+    return rollup

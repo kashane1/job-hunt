@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
 from job_hunt.tracking import (
     TERMINAL_STAGES,
     VALID_STAGES,
+    backfill_from_packets,
     check_integrity,
     create_application_status,
     link_generated_content,
@@ -297,6 +298,128 @@ class TrackingTest(unittest.TestCase):
             self.assertIn("issue_counts", report["summary"])
             # All counts should exist and be 0 for an empty data root
             self.assertEqual(report["summary"]["issue_counts"]["orphaned_pdfs"], 0)
+
+
+def _write_packet(
+    data_root: Path,
+    draft_id: str,
+    lead_id: str,
+    *,
+    lifecycle_state: str = "drafted",
+    disposition_status: str | None = None,
+    history: list[dict] | None = None,
+) -> None:
+    """Write a nested application-packet status.json (the application.py model)."""
+    d = data_root / "applications" / draft_id
+    d.mkdir(parents=True, exist_ok=True)
+    packet: dict = {
+        "schema_version": 1,
+        "lead_id": lead_id,
+        "draft_id": draft_id,
+        "current_stage": "not_applied",
+        "lifecycle_state": lifecycle_state,
+        "transitions": [],
+        "attempts": [],
+        "events": [],
+        "generated_content_ids": [],
+        "created_at": "2026-06-01T00:00:00+00:00",
+        "updated_at": "2026-06-10T00:00:00+00:00",
+    }
+    if disposition_status is not None:
+        packet["manual_disposition"] = {
+            "status": disposition_status,
+            "updated_at": "2026-06-10T00:00:00+00:00",
+            "history": history or [],
+        }
+    write_json(d / "status.json", packet)
+
+
+class BackfillFromPacketsTest(unittest.TestCase):
+    def _schema(self) -> dict:
+        return json.loads(
+            (ROOT / "schemas" / "application-status.schema.json").read_text(encoding="utf-8")
+        )
+
+    def test_manually_submitted_becomes_applied_with_historical_ts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_packet(
+                root, "acme-apply-1", "acme-lead",
+                lifecycle_state="applying", disposition_status="manually_submitted",
+                history=[
+                    {"at": "2026-06-05T12:00:00+00:00", "status": "manually_submitted"},
+                    {"at": "2026-06-07T12:00:00+00:00", "status": "manually_submitted"},
+                ],
+            )
+            roll = backfill_from_packets(root)
+            self.assertEqual(roll["applied"], 1)
+            rec = read_json(root / "applications" / "acme-lead-status.json")
+            self.assertEqual(rec["current_stage"], "applied")
+            self.assertTrue(rec["backfilled"])
+            # earliest manually_submitted history entry wins
+            self.assertEqual(rec["transitions"][0]["timestamp"], "2026-06-05T12:00:00+00:00")
+            validate(rec, self._schema())
+
+    def test_withdrawn_lifecycle_becomes_withdrawn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_packet(root, "wd-apply-1", "wd-lead", lifecycle_state="withdrawn")
+            roll = backfill_from_packets(root)
+            self.assertEqual(roll["withdrawn"], 1)
+            rec = read_json(root / "applications" / "wd-lead-status.json")
+            self.assertEqual(rec["current_stage"], "withdrawn")
+            self.assertTrue(rec["follow_up"]["suppress_follow_up"])
+
+    def test_drafted_and_skipped_are_not_applications(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_packet(root, "d-apply-1", "d-lead", lifecycle_state="drafted")
+            _write_packet(root, "s-apply-1", "s-lead", lifecycle_state="drafted",
+                          disposition_status="skipped")
+            roll = backfill_from_packets(root)
+            self.assertEqual(roll["applied"], 0)
+            self.assertEqual(roll["withdrawn"], 0)
+            self.assertEqual(roll["skipped_not_an_application"], 2)
+            self.assertFalse((root / "applications" / "d-lead-status.json").exists())
+            self.assertFalse((root / "applications" / "s-lead-status.json").exists())
+
+    def test_idempotent_never_clobbers_existing_flat_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_packet(root, "x-apply-1", "x-lead",
+                          disposition_status="manually_submitted",
+                          history=[{"at": "2026-06-05T12:00:00+00:00", "status": "manually_submitted"}])
+            # Pretend triage already advanced this lead past applied.
+            apps = root / "applications"
+            apps.mkdir(parents=True, exist_ok=True)
+            write_json(apps / "x-lead-status.json", {
+                "lead_id": "x-lead", "current_stage": "onsite",
+                "transitions": [], "created_at": "2026-06-01T00:00:00+00:00",
+                "updated_at": "2026-06-20T00:00:00+00:00",
+            })
+            roll = backfill_from_packets(root)
+            self.assertEqual(roll["skipped_already_present"], 1)
+            self.assertEqual(roll["applied"], 0)
+            # existing record untouched
+            rec = read_json(apps / "x-lead-status.json")
+            self.assertEqual(rec["current_stage"], "onsite")
+
+    def test_dry_run_writes_nothing_but_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_packet(root, "dr-apply-1", "dr-lead",
+                          disposition_status="manually_submitted",
+                          history=[{"at": "2026-06-05T12:00:00+00:00", "status": "manually_submitted"}])
+            roll = backfill_from_packets(root, dry_run=True)
+            self.assertEqual(roll["applied"], 1)
+            self.assertTrue(roll["dry_run"])
+            self.assertFalse((root / "applications" / "dr-lead-status.json").exists())
+
+    def test_empty_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            roll = backfill_from_packets(Path(tmpdir))
+            self.assertEqual(roll["applied"], 0)
+            self.assertEqual(roll["total_packets"], 0)
 
 
 if __name__ == "__main__":
