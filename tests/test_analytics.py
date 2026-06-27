@@ -20,6 +20,7 @@ from job_hunt.analytics import (
     TERMINAL_STAGES,
     build_aggregator,
     report_dashboard,
+    report_pipeline,
     report_rejection_patterns,
     report_skills_gap,
 )
@@ -332,6 +333,122 @@ class RejectionPatternsTest(unittest.TestCase):
             result = report_rejection_patterns(root)
             obs_text = " ".join(result["observations"]).lower()
             self.assertIn("ghost", obs_text)
+
+
+class PipelineSummaryTest(unittest.TestCase):
+    def test_empty_data_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r = report_pipeline(Path(tmpdir))
+            self.assertEqual(r["open_count"], 0)
+            self.assertEqual(r["open_ranked"], [])
+            self.assertEqual(r["totals"], {})
+            self.assertEqual(r["closed_counts"], {})
+            self.assertEqual(r["quarantine"], [])
+
+    def test_ranks_furthest_along_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_lead(root, "l-applied")
+            _write_status(root, "l-applied", "applied", "2026-06-01T00:00:00+00:00")
+            _write_lead(root, "l-onsite")
+            _write_status(root, "l-onsite", "onsite", "2026-06-02T00:00:00+00:00")
+            _write_lead(root, "l-phone")
+            _write_status(root, "l-phone", "phone_screen", "2026-06-03T00:00:00+00:00")
+            r = report_pipeline(root)
+            self.assertEqual(r["open_count"], 3)
+            self.assertEqual(
+                [a["current_stage"] for a in r["open_ranked"]],
+                ["onsite", "phone_screen", "applied"],
+            )
+
+    def test_terminal_and_not_applied_excluded_from_open(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            for lid, stage in [
+                ("l-rej", "rejected"),
+                ("l-acc", "accepted"),
+                ("l-gh", "ghosted"),
+                ("l-wd", "withdrawn"),
+                ("l-na", "not_applied"),
+                ("l-open", "phone_screen"),
+            ]:
+                _write_lead(root, lid)
+                _write_status(root, lid, stage, "2026-06-01T00:00:00+00:00")
+            r = report_pipeline(root)
+            self.assertEqual([a["lead_id"] for a in r["open_ranked"]], ["l-open"])
+            self.assertEqual(
+                r["closed_counts"],
+                {"rejected": 1, "accepted": 1, "ghosted": 1, "withdrawn": 1},
+            )
+            # not_applied is a scaffold: counted in totals, neither open nor closed
+            self.assertEqual(r["totals"].get("not_applied"), 1)
+
+    def test_reactivated_ghost_is_open(self) -> None:
+        # A ghost reactivated to onsite is LIVE (current-state semantics), and
+        # must surface in the open roster, not the closed bucket.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_lead(root, "l-react")
+            d = root / "applications"
+            d.mkdir(parents=True, exist_ok=True)
+            write_json(d / "l-react-status.json", {
+                "lead_id": "l-react",
+                "current_stage": "onsite",
+                "transitions": [
+                    {"from_stage": "not_applied", "to_stage": "applied", "timestamp": "2026-05-01T00:00:00+00:00"},
+                    {"from_stage": "applied", "to_stage": "ghosted", "timestamp": "2026-05-20T00:00:00+00:00"},
+                    {"from_stage": "ghosted", "to_stage": "onsite", "timestamp": "2026-06-01T00:00:00+00:00"},
+                ],
+            })
+            r = report_pipeline(root)
+            self.assertEqual([a["lead_id"] for a in r["open_ranked"]], ["l-react"])
+            self.assertNotIn("ghosted", r["closed_counts"])
+
+    def test_no_sample_size_gate(self) -> None:
+        # report_dashboard gates at <10; report_pipeline must NOT — the user
+        # wants furthest-along leads even with a tiny corpus.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_lead(root, "l1")
+            _write_status(root, "l1", "onsite", "2026-06-01T00:00:00+00:00")
+            _write_lead(root, "l2")
+            _write_status(root, "l2", "applied", "2026-06-02T00:00:00+00:00")
+            r = report_pipeline(root)
+            self.assertNotIn("confidence", r)
+            self.assertEqual(r["open_count"], 2)
+
+    def test_surfaces_timeline_applied_date_and_follow_up(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_lead(root, "l1")
+            d = root / "applications"
+            d.mkdir(parents=True, exist_ok=True)
+            write_json(d / "l1-status.json", {
+                "lead_id": "l1",
+                "current_stage": "phone_screen",
+                "transitions": [
+                    {"from_stage": "not_applied", "to_stage": "applied", "timestamp": "2026-06-01T00:00:00+00:00"},
+                    {"from_stage": "applied", "to_stage": "phone_screen", "timestamp": "2026-06-05T00:00:00+00:00"},
+                ],
+                "follow_up": {"next_follow_up_date": "2026-06-12", "follow_up_count": 0, "suppress_follow_up": False},
+            })
+            r = report_pipeline(root)
+            app = r["open_ranked"][0]
+            self.assertEqual(len(app["transitions"]), 2)
+            self.assertEqual(app["applied_date"], "2026-06-01T00:00:00+00:00")
+            self.assertEqual(app["next_follow_up_date"], "2026-06-12")
+
+    def test_is_pure_read_no_writes(self) -> None:
+        # The read path must touch nothing — proves the compose-at-tail step in
+        # check-replies is side-effect-free (e.g. never creates _suspicious/).
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_lead(root, "l1")
+            _write_status(root, "l1", "onsite", "2026-06-01T00:00:00+00:00")
+            before = {p: p.stat().st_mtime_ns for p in root.rglob("*") if p.is_file()}
+            report_pipeline(root)
+            after = {p: p.stat().st_mtime_ns for p in root.rglob("*") if p.is_file()}
+            self.assertEqual(before, after)
 
 
 if __name__ == "__main__":

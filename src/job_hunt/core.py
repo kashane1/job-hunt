@@ -2444,6 +2444,12 @@ def build_parser() -> argparse.ArgumentParser:
     dash_parser.add_argument("--since", default="", help="ISO date cutoff (e.g. 2026-04-01)")
     dash_parser.add_argument("--weeks", type=int, default=None, help="Shorthand for since = now - N weeks")
 
+    pipe_parser = subparsers.add_parser(
+        "pipeline-summary",
+        help="Live applications ranked furthest-along first with full timelines, plus closed counts and quarantine queue",
+    )
+    pipe_parser.add_argument("--data-root", default="data")
+
     # Batch 2 Phase 5a: skills gap analyzer
     gap_parser = subparsers.add_parser(
         "analyze-skills-gap",
@@ -3553,6 +3559,13 @@ def main(argv: list[str] | None = None) -> int:
             since=args.since,
             weeks=args.weeks,
         )
+        print(json.dumps(result, indent=2))
+        return 0
+
+    if args.command == "pipeline-summary":
+        from .analytics import report_pipeline
+
+        result = report_pipeline(Path(args.data_root))
         print(json.dumps(result, indent=2))
         return 0
 

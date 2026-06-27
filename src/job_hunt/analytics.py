@@ -55,6 +55,7 @@ class AggregatedRow(TypedDict):
     current_stage: str
     transitions: list[dict]
     applied_date: NotRequired[str | None]
+    next_follow_up_date: NotRequired[str | None]
     lead_title: str
     lead_company: str
     fit_score: NotRequired[float | None]
@@ -194,6 +195,7 @@ def build_aggregator(data_root: Path) -> tuple[list[AggregatedRow], dict[str, in
             "current_stage": status.get("current_stage", ""),
             "transitions": status.get("transitions", []),
             "applied_date": _applied_date(status.get("transitions", [])),
+            "next_follow_up_date": (status.get("follow_up") or {}).get("next_follow_up_date") or None,
             "lead_title": lead.get("title", ""),
             "lead_company": lead.get("company", ""),
             "fit_score": fit_assessment.get("fit_score"),
@@ -332,6 +334,100 @@ def report_dashboard(
         "variant_rates": _variant_rates(rows),
         "stage_conversions": _stage_conversions(rows),
         "applications_per_week": _weekly_counts(rows),
+        "missing_refs": missing_refs,
+    }
+
+
+# =============================================================================
+# Pipeline summary (live roster for check-replies / pipeline-summary)
+# =============================================================================
+
+class OpenApplication(TypedDict):
+    """One live (non-terminal) application, with its full transition timeline."""
+    lead_id: str
+    company: str
+    title: str
+    current_stage: str
+    applied_date: NotRequired[str | None]
+    next_follow_up_date: NotRequired[str | None]
+    transitions: list[dict]
+
+
+class PipelineSummary(TypedDict):
+    """Current-state roster for the check-replies / pipeline-summary view.
+
+    Unlike report_dashboard (funnel rates, sample-size gated) this is an
+    always-on snapshot: every live application ranked furthest-along first
+    with its full timeline, plus closed-by-current-stage counts and the
+    triage quarantine queue awaiting human review.
+    """
+    generated_at: str
+    totals: dict[str, int]
+    open_count: int
+    open_ranked: list[OpenApplication]
+    closed_counts: dict[str, int]
+    quarantine: list[dict]
+    missing_refs: dict[str, int]
+
+
+def _open_rank_key(row: AggregatedRow) -> tuple[int, str]:
+    """Sort key for live applications: furthest-along stage first, then
+    longest-waiting (oldest applied_date) first within a stage."""
+    try:
+        stage_idx = STAGE_SEQUENCE.index(row.get("current_stage", ""))
+    except ValueError:
+        stage_idx = -1
+    return (-stage_idx, row.get("applied_date") or "")
+
+
+def report_pipeline(data_root: Path) -> PipelineSummary:
+    """Always-on pipeline roster: live apps ranked furthest-along first with
+    full timelines, closed-outcome counts, and the quarantine review queue.
+
+    "Live/open" is read from ``current_stage`` (the present truth) against the
+    module-local ``TERMINAL_STAGES`` (which includes ``ghosted``). This is
+    deliberately current-state, NOT history-based like report_rejection_patterns:
+    a ghosted→reactivated lead whose ``current_stage`` is e.g. ``onsite`` is
+    live again and SHOULD surface here. ``not_applied`` scaffolds are excluded
+    (no application is in flight). No sample-size gate — the user wants to see
+    their furthest-along leads even with a tiny corpus.
+
+    Pure read: builds the aggregator and lists quarantine; writes nothing.
+    """
+    from .triage import list_triage_quarantine
+
+    rows, missing_refs = build_aggregator(data_root)
+
+    open_rows = [
+        r for r in rows
+        if r.get("current_stage") not in TERMINAL_STAGES
+        and r.get("current_stage") != "not_applied"
+    ]
+    open_rows.sort(key=_open_rank_key)
+
+    open_ranked: list[OpenApplication] = [
+        {
+            "lead_id": r["lead_id"],
+            "company": r.get("lead_company", ""),
+            "title": r.get("lead_title", ""),
+            "current_stage": r.get("current_stage", ""),
+            "applied_date": r.get("applied_date"),
+            "next_follow_up_date": r.get("next_follow_up_date"),
+            "transitions": r.get("transitions", []),
+        }
+        for r in open_rows
+    ]
+
+    return {
+        "generated_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
+        "totals": dict(Counter(r.get("current_stage", "") for r in rows)),
+        "open_count": len(open_ranked),
+        "open_ranked": open_ranked,
+        "closed_counts": dict(Counter(
+            r.get("current_stage", "") for r in rows
+            if r.get("current_stage") in TERMINAL_STAGES
+        )),
+        "quarantine": list_triage_quarantine(data_root),
         "missing_refs": missing_refs,
     }
 
